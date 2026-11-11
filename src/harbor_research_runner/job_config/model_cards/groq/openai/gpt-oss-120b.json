@@ -1,0 +1,20 @@
+{
+  "id": "groq/openai/gpt-oss-120b",
+  "upstream_model": "openai/gpt-oss-120b",
+  "api": "chat",
+  "endpoints": [
+    "https://api.groq.com/openai/v1/chat/completions"
+  ],
+  "key_env": [
+    "GROQ_API_KEY"
+  ],
+  "tokens_per_minute": 8000,
+  "pricing": {
+    "input": 0,
+    "output": 0,
+    "cached_read": 0
+  },
+  "variants": {},
+  "withdrawn": false,
+  "reason": null
+}
