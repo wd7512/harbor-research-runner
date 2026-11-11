@@ -1,0 +1,1 @@
+[ -f ~/.nvm/nvm.sh ] && . ~/.nvm/nvm.sh; /usr/local/bin/opencode run --model=ahe/mimo-v2.5 --format=json --thinking --dangerously-skip-permissions -- 'write fizz buzz' 2>&1 </dev/null | stdbuf -oL tee /logs/agent/opencode.txt
