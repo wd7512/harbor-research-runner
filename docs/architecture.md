@@ -378,6 +378,8 @@ The rendered config pins sampling to `temperature` 0.6 and `top_p` 0.95. `varian
 
 Agent settings (the `kwargs` in Harbor's job config) are produced by `harness.agents.agent_settings(arm, proxy, manifest_path)` and parsed by the agent class. No other module reads or writes them.
 
+The eight settings keys are `arm_label`, `harness`, `commit`, `manifest_path`, `container_host`, `proxy_port`, `variant` and `model_card`. `OpenCodeAgent` declares an options model that adds those keys to Harbor's OpenCode kwargs, so Harbor's preflight and the agent constructor validate the same dictionary; an unknown, missing or mistyped key is refused before a trial is queued, and the local serializer and parser stay authoritative. Config registration, skill registration and the agent command run with a fixed environment — `OPENCODE_FAKE_VCS=git`, `XDG_DATA_HOME=/logs/agent/opencode/xdg-data` and `XDG_STATE_HOME=/logs/agent/opencode/xdg-state` — and no provider credentials are forwarded into the task container.
+
 The commit manifest (`harness-manifest.toml`, path given in the job folder or by `--manifest`):
 
 ```toml
