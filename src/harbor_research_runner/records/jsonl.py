@@ -20,6 +20,10 @@ def append_row(fd: int, row: dict) -> None:
     os.write(fd, line.encode("utf-8"))
 
 
+def append_newline(fd: int) -> None:
+    os.write(fd, b"\n")
+
+
 def read_rows(path: Path) -> ReadResult:
     try:
         content = path.read_bytes()

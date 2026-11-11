@@ -1,6 +1,11 @@
 import os
 
-from harbor_research_runner.records.jsonl import append_row, open_for_append, read_rows
+from harbor_research_runner.records.jsonl import (
+    append_newline,
+    append_row,
+    open_for_append,
+    read_rows,
+)
 
 
 def test_round_trip_three_rows(tmp_path):
@@ -65,3 +70,13 @@ def test_keys_are_written_sorted(tmp_path):
     os.close(fd)
 
     assert path.read_text(encoding="utf-8") == '{"a":2,"type":"row","z":1}\n'
+
+
+def test_append_newline_separates_damaged_tail(tmp_path):
+    path = tmp_path / "rows.jsonl"
+    path.write_bytes(b"not-json")
+    fd = open_for_append(path)
+    append_newline(fd)
+    os.close(fd)
+
+    assert path.read_bytes() == b"not-json\n"
