@@ -380,6 +380,7 @@ The commit manifest (`harness-manifest.toml`, path given in the job folder or by
 [opencode."<40-hex commit>"]
 version = "1.19.3"            # informational
 withdrawn = false
+withdrawn_reason = ""        # optional; shown when a launch is refused
 [opencode."<40-hex commit>".images.amd64]
 ref = "hrr/opencode:<12-hex>-amd64"
 digest = "sha256:..."
