@@ -370,6 +370,8 @@ class OpenCodeAgent(
 class FakeHarnessAgent(PinnedHarness, BaseInstalledAgent): ...  # harness/fake.py, test fixture
 ```
 
+The rendered config pins sampling to `temperature` 0.6 and `top_p` 0.95. `variants` is the model's declared variant ladder: 1.x emits it as a map keyed by variant id, 2.x as a list of `{id, settings}`; the `default_variant` settings are folded into the model's base `options` or `settings`. A selected or default variant absent from the supplied map is refused before any config is written.
+
 `PinnedHarness` implements `install` (verify the image digest against the manifest, extract the binary, upload it, probe) and `run` (write config files, execute the run command, on cancellation run the stop script before re-raising). The proxy base URL given to the harness is `http://<container_host>:<port>/trial/<trial>/v1`, where `<trial>` is Harbor's `session_id` with the suffix `__agent` removed.
 
 Agent settings (the `kwargs` in Harbor's job config) are produced by `harness.agents.agent_settings(arm, proxy, manifest_path)` and parsed by the agent class. No other module reads or writes them.
@@ -405,3 +407,5 @@ The secret scan runs before anything is written: it searches every output for th
 Three views of every rate, always reported together: `first_attempt` (trials with `is_first_attempt`; an invalid first attempt counts as it scored, a missing reward counts as a failure), `final` (trials with `is_final`), `final_excluding_reruns` (slots in which no trial was set aside).
 
 Per arm: passes, trials, pass rate, Wilson 95% interval. Per task and arm: passes out of valid trials. Paired comparison of two arms: per-task difference in mean reward, its mean over tasks, and a bootstrap 95% interval over tasks (10,000 resamples, seed 0). Completeness table: slots planned, complete, incomplete; trials valid, set aside by reason, unmeasured; tokens spent on set-aside trials.
+
+The pure era renderer in harness/opencode_eras.py exposes `config_files(facts, model, proxy_base_url, variant, *, variants=None, default_variant=None)`. The PinnedHarness instance methods keep the abstract signatures above and supply the embedded model card’s variant settings when calling this renderer.
