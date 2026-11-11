@@ -18,7 +18,7 @@ The gate is `uv run gate` (format, lint, types, unit and integration tests, lock
 ## Rules for every test
 
 1. **Assert on outputs.** Call the public function, or run the command, and check the return value or the files on disk. Do not assert on which internal functions were called.
-2. **Fakes exist at three boundaries only:** the upstream (`tests/support/fake_upstream.py`), the harness (`harness/fake.py`) and the clock (pass a `now` function or a timestamp argument). Do not patch, mock or monkeypatch any `harbor_research_runner` module.
+2. **Fakes exist at three boundaries only:** the upstream (`tests/support/fake_upstream.py`), the harness (`harness/fake.py`) and the clock (pass a `now` function or a timestamp argument). Do not patch, mock or monkeypatch any `harbor_research_runner` module. One narrow exception is allowed for the unchanged process-group lifecycle port: a test may stub `os.killpg` directly and pass a fake `time.sleep` clock, provided it calls the public function, uses a plain process-like value, starts no process and signals no real PID. A test may also pass an explicit callable external-command input when the public API named by a brief accepts one, as the manifest API does.
 3. **Unit tests do not sleep, start processes, or open sockets.** If a test needs one of those, it is an integration test.
 4. **Use real shapes.** A test of a parser uses a real sample of what it parses, from `tests/fixtures/`. A test of a rule uses rows in the exact record format from `architecture.md`.
 5. **Red first.** Write the test, run it, and see it fail for the reason you expect, before writing the code. Put the failing output in your report.

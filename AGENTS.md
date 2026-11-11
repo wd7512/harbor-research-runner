@@ -34,7 +34,7 @@ Use `uv` for everything. No pip, no direct `python`. Never pipe a gate or test c
 ## Rules for tests (full text in `docs/testing.md`)
 
 - Assert on outputs: return values, files on disk, exit codes. Not on which internal functions were called.
-- Fakes exist at three boundaries only: the upstream (`tests/support/fake_upstream.py`), the harness (`harness/fake.py`) and the clock (pass a `now` function or a timestamp). Do not patch, mock or monkeypatch any `harbor_research_runner` module.
+- Fakes exist at three boundaries only: the upstream (`tests/support/fake_upstream.py`), the harness (`harness/fake.py`) and the clock (pass a `now` function or a timestamp). Do not patch, mock or monkeypatch any `harbor_research_runner` module. One narrow exception applies to the unchanged process-group lifecycle port: stub `os.killpg` directly and a fake `time.sleep` clock, call the public function with a plain process-like value, and start no process or signal no real PID. A callable external-command input is also allowed when the public API named by a brief accepts one, as the manifest API does.
 - Unit tests do not sleep, start processes or open sockets; `tests/conftest.py` enforces this and a 0.1 s CPU budget. Integration tests have 5 s, end-to-end tests 5 minutes.
 - Unit tests mirror the source path: `src/harbor_research_runner/records/jsonl.py` is tested by `tests/unit/records/test_jsonl.py`.
 - One behaviour per test, named for the behaviour. No issue numbers in names or comments.
