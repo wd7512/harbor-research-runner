@@ -32,6 +32,7 @@
       "reasoningEffort": "max"
     }
   },
+  "default_variant": null,
   "withdrawn": false,
   "reason": null
 }

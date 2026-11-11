@@ -29,6 +29,7 @@
       "reasoningEffort": "xhigh"
     }
   },
+  "default_variant": null,
   "withdrawn": false,
   "reason": null
 }
