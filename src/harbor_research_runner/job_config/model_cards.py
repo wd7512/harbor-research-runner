@@ -17,6 +17,7 @@ class ModelCard:
     variants: dict
     withdrawn: bool
     reason: str | None
+    default_variant: str | None = None
 
 
 class ModelCardError(ValueError):
@@ -35,7 +36,9 @@ _FIELDS = {
     "variants",
     "withdrawn",
     "reason",
+    "default_variant",
 }
+_OPTIONAL_FIELDS = {"default_variant"}
 
 
 def _card_relative_path(model_id: str) -> Path:
@@ -56,7 +59,7 @@ def load_card(model_id: str, extra_dir: Path | None = None) -> ModelCard:
     unknown = sorted(set(raw) - _FIELDS)
     if unknown:
         raise ModelCardError(f"unknown model card key(s): {', '.join(unknown)}")
-    missing = sorted(_FIELDS - set(raw))
+    missing = sorted(_FIELDS - _OPTIONAL_FIELDS - set(raw))
     if missing:
         raise ModelCardError(f"model card missing required field(s): {', '.join(missing)}")
     if raw["id"] != model_id:
@@ -81,8 +84,29 @@ def load_card(model_id: str, extra_dir: Path | None = None) -> ModelCard:
         not isinstance(value, (int, float)) or isinstance(value, bool) for value in pricing.values()
     ):
         raise ModelCardError("model card pricing values must be numbers")
-    if not isinstance(raw["variants"], dict):
+    variants = raw["variants"]
+    if not isinstance(variants, dict):
         raise ModelCardError("model card variants must be a mapping")
+    for variant_id, settings in variants.items():
+        if not variant_id:
+            raise ModelCardError("model card has an empty variant id")
+        if not isinstance(settings, dict):
+            raise ModelCardError(f"model card variant {variant_id!r} must be a dictionary")
+        if not settings:
+            raise ModelCardError(f"model card variant {variant_id!r} has empty settings")
+    default_variant = raw.get("default_variant")
+    if default_variant is not None:
+        if not isinstance(default_variant, str):
+            raise ModelCardError("model card default_variant must be a string or null")
+        if not variants:
+            raise ModelCardError(
+                f"model card names default_variant {default_variant!r} but declares no variants"
+            )
+        if default_variant not in variants:
+            raise ModelCardError(
+                f"model card names default_variant {default_variant!r}, "
+                "which is not a declared variant"
+            )
     if not isinstance(raw["withdrawn"], bool):
         raise ModelCardError("model card withdrawn must be a boolean")
     if raw["reason"] is not None and not isinstance(raw["reason"], str):

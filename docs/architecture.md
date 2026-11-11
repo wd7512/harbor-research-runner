@@ -240,7 +240,7 @@ Unknown keys are an error. Arm labels match `[a-z0-9][a-z0-9.-]*` and are unique
 
 A slot is a (task, arm) pair. Each slot needs `repetitions` valid, measured trials.
 
-A model card (`job_config/model_cards/<provider>/<model>.json`) has: `id`, `upstream_model` (the exact identifier sent upstream and expected back), `api` (`chat` or `responses`), `endpoints` (list of base URLs), `key_env` (list of environment variable names), `tokens_per_minute`, `pricing` (`input`, `output`, `cached_read` per million tokens), `variants`, `withdrawn` (bool, with `reason`). Secrets are read from the environment only and are never written to any file.
+A model card (`job_config/model_cards/<provider>/<model>.json`) has: `id`, `upstream_model` (the exact identifier sent upstream and expected back), `api` (`chat` or `responses`), `endpoints` (list of base URLs), `key_env` (list of environment variable names), `tokens_per_minute`, `pricing` (`input`, `output`, `cached_read` per million tokens), `variants` (nonempty string ids mapped to nonempty settings dictionaries), `default_variant` (optional, null by default; when set, a string naming a declared variant), `withdrawn` (bool, with `reason`). Secrets are read from the environment only and are never written to any file.
 
 ## 6. Trial validity
 
