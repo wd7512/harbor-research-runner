@@ -1,3 +1,5 @@
+import math
+import types
 from dataclasses import dataclass
 
 UPSTREAM_STATUSES = (
@@ -167,6 +169,24 @@ _ROW_TYPES = {
 }
 
 
+def _matches(value: object, annotation: object) -> bool:
+    if annotation is int:
+        return type(value) is int
+    if annotation is float:
+        if type(value) is int:
+            return True
+        return type(value) is float and math.isfinite(value)
+    if annotation is bool:
+        return type(value) is bool
+    if annotation is str:
+        return type(value) is str
+    if annotation is type(None):
+        return value is None
+    if isinstance(annotation, types.UnionType):
+        return any(_matches(value, item) for item in annotation.__args__)
+    raise ValueError(f"unsupported proxy ledger field type {annotation!r}")
+
+
 def parse_row(row: dict) -> ProxyStart | Open | RequestStart | RequestEnd | Refused | Close:
     try:
         row_type = row["type"]
@@ -181,6 +201,11 @@ def parse_row(row: dict) -> ProxyStart | Open | RequestStart | RequestEnd | Refu
         raise ValueError(f"missing field: {missing[0]}")
     if record_type is RequestEnd and row["upstream_status"] not in UPSTREAM_STATUSES:
         raise ValueError("unknown upstream status")
+    for name in names:
+        if not _matches(row[name], record_type.__annotations__[name]):
+            raise ValueError(f"invalid field: {name}")
+    if row["seq"] <= 0:
+        raise ValueError("seq must be positive")
     try:
         return record_type(**{name: row[name] for name in names})
     except TypeError as exc:

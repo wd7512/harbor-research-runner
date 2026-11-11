@@ -14,7 +14,7 @@ A study flows top to bottom through six steps. Five helper modules are shared.
 | helper | `job_config` | The job file and model cards | nothing |
 | helper | `trial_validity` | The verdict for one trial; the halt rules for a run | `records` |
 | helper | `statistics` | Pass rates, intervals, paired comparison, completeness table | `records` |
-| helper | `harbor_adapter` | Harbor command lines, reading Harbor's job folder, the set-aside move, the Harbor plugin | `records`, `job_config` |
+| helper | `harbor_adapter` | Harbor command lines, reading Harbor's job folder, the set-aside move, the Harbor plugin | `records`, `job_config`, `trial_validity` |
 | helper | `docker_host` | Docker cleanup, resource check, resource sampler | `records` |
 | step | `harness` | Commit manifest, image build, extraction, `PinnedHarness`, `OpenCodeAgent`, the fake harness | `records` |
 | step | `run` | Launch checks, canary, machine check, the run loop | `job_config`, `records`, `trial_validity`, `harbor_adapter`, `docker_host`, `harness` |
