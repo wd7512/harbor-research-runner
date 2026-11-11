@@ -138,6 +138,8 @@ A failover that the proxy absorbed (a later key or endpoint answered) is an `ok`
 
 Write policy: flush after every row; `fsync` after every `close` row and at least every 5 seconds, from a background thread. If a write or flush fails, the proxy stops serving (every later request gets HTTP 503 with body `proxy ledger unavailable`) and exits with code 70.
 
+Each relayed response owns its upstream connection. Closing the response, or closing its chunk iterator, releases that connection even before iteration begins. The proxy server calls `close()` from a `finally`.
+
 ### 4.2 Proxy control (`records/proxy_control.py`)
 
 The harness reaches the model at `http://<host>:<port>/trial/<trial>/v1/...`. `<trial>` is Harbor's trial name.
