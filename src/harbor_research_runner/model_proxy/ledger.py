@@ -21,6 +21,7 @@ class LedgerWriter:
         sync_interval_s: float = 5.0,
         fsync: Callable[[int], None] = os.fsync,
     ) -> None:
+        self._path = path
         self._now = now
         self._sync_interval_s = sync_interval_s
         self._fsync = fsync
@@ -58,6 +59,22 @@ class LedgerWriter:
     def failed(self) -> bool:
         with self._lock:
             return self._failed
+
+    def ensure_available(self) -> None:
+        """Raise when the ledger can no longer record proxy events."""
+        with self._lock:
+            if self._failed or self._closed:
+                raise LedgerUnavailable("proxy ledger unavailable")
+
+    def history(self) -> jsonl.ReadResult:
+        """Return a fresh snapshot of every row in the ledger."""
+        with self._lock:
+            if not self._path.is_file():
+                raise LedgerUnavailable("proxy ledger unavailable")
+            try:
+                return jsonl.read_rows(self._path)
+            except OSError as exc:
+                raise LedgerUnavailable("proxy ledger unavailable") from exc
 
     def write(self, row) -> int:
         """Append a row, making a Close row durable before this call returns."""
