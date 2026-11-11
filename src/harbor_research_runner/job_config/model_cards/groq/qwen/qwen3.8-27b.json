@@ -1,0 +1,20 @@
+{
+  "id": "groq/qwen/qwen3.8-27b",
+  "upstream_model": "qwen/qwen3.8-27b",
+  "api": "chat",
+  "endpoints": [
+    "https://api.groq.com/openai/v1/chat/completions"
+  ],
+  "key_env": [
+    "GROQ_API_KEY"
+  ],
+  "tokens_per_minute": null,
+  "pricing": {
+    "input": 0,
+    "output": 0,
+    "cached_read": 0
+  },
+  "variants": {},
+  "withdrawn": false,
+  "reason": null
+}

@@ -1,0 +1,34 @@
+{
+  "id": "opencodego/deepseek-v4.1-flash",
+  "upstream_model": "deepseek-v4.1-flash",
+  "api": "chat",
+  "endpoints": [
+    "https://opencode.ai/zen/go/v1/chat/completions"
+  ],
+  "key_env": [
+    "OPENCODE_GO_API_KEY",
+    "OPENCODE_GO_KEY"
+  ],
+  "tokens_per_minute": null,
+  "pricing": {
+    "input": 0.15,
+    "output": 0.6,
+    "cached_read": 0.003
+  },
+  "variants": {
+    "minimal": {
+      "reasoningEffort": "minimal"
+    },
+    "low": {
+      "reasoningEffort": "low"
+    },
+    "high": {
+      "reasoningEffort": "high"
+    },
+    "max": {
+      "reasoningEffort": "max"
+    }
+  },
+  "withdrawn": false,
+  "reason": null
+}

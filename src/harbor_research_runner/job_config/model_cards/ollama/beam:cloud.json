@@ -1,0 +1,36 @@
+{
+  "id": "ollama/beam:cloud",
+  "upstream_model": "beam:cloud",
+  "api": "chat",
+  "endpoints": [
+    "https://ollama.com/v1/chat/completions"
+  ],
+  "key_env": [
+    "OLLAMA_API_KEY"
+  ],
+  "tokens_per_minute": null,
+  "pricing": {
+    "input": 0,
+    "output": 0,
+    "cached_read": 0
+  },
+  "variants": {
+    "low": {
+      "reasoningEffort": "low"
+    },
+    "medium": {
+      "reasoningEffort": "medium"
+    },
+    "high": {
+      "reasoningEffort": "high"
+    },
+    "xhigh": {
+      "reasoningEffort": "xhigh"
+    },
+    "max": {
+      "reasoningEffort": "max"
+    }
+  },
+  "withdrawn": false,
+  "reason": null
+}

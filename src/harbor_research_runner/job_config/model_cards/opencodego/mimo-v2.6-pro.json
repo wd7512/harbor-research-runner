@@ -1,0 +1,37 @@
+{
+  "id": "opencodego/mimo-v2.6-pro",
+  "upstream_model": "mimo-v2.6-pro",
+  "api": "chat",
+  "endpoints": [
+    "https://opencode.ai/zen/go/v1/chat/completions"
+  ],
+  "key_env": [
+    "OPENCODE_GO_API_KEY",
+    "OPENCODE_GO_KEY"
+  ],
+  "tokens_per_minute": null,
+  "pricing": {
+    "input": 0.435,
+    "output": 0.87,
+    "cached_read": 0.003625
+  },
+  "variants": {
+    "none": {
+      "reasoningEffort": "none"
+    },
+    "low": {
+      "reasoningEffort": "low"
+    },
+    "medium": {
+      "reasoningEffort": "medium"
+    },
+    "high": {
+      "reasoningEffort": "high"
+    },
+    "max": {
+      "reasoningEffort": "max"
+    }
+  },
+  "withdrawn": false,
+  "reason": null
+}
