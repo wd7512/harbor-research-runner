@@ -1,0 +1,116 @@
+[project]
+name = "harbor-research-runner"
+version = "0.1.0"
+description = "Run coding-agent harness versions on benchmark tasks under one model and measure every model request"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = "==3.12.*"
+dependencies = [
+    "harbor==0.23.0",
+    "httpx==0.28.1",
+    "pyyaml==6.0.3",
+]
+
+[project.scripts]
+hrr = "harbor_research_runner.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-timeout==2.4.0",
+    "pytest-xdist==3.8.0",
+    "ruff==0.16.5",
+    "towncrier==26.9.0",
+    "ty==0.0.78",
+    "wills-agentic-tools",
+]
+
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+required-version = "==0.12.13"
+
+[tool.uv.sources]
+wills-agentic-tools = { git = "https://github.com/wd7512/wills-agentic-tools", tag = "v0.1.0" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harbor_research_runner"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = ["E501", "SIM117"]
+
+[tool.ty.src]
+include = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --import-mode=importlib -m 'not live'"
+timeout = 600
+markers = [
+    "live: real OpenCode, a real model, one real task; run before a release by the owner",
+    "contract: an end-to-end test that pins one Harbor behaviour we rely on",
+]
+
+[tool.devtools.gate]
+source = "src/"
+tests = ["tests/unit", "tests/integration"]
+e2e = ["tests/e2e"]
+
+[tool.devtools.check]
+source_package = "src/harbor_research_runner"
+unit_tests = "tests/unit"
+tests_dir = "tests"
+mirror_exceptions = ["tests/unit/test_skeleton.py"]
+untracked_paths = ["runs/"]
+changelog_dir = "changes"
+changelog_exempt = ["docs/"]
+base = "origin/dev"
+
+[tool.devtools.delegate]
+gate_command = "uv run gate"
+base = "origin/dev"
+extra_rules = [
+    "Read `AGENTS.md`, `docs/architecture.md` and your brief before anything else. If they disagree, or the brief is wrong about OLD code, stop and report.",
+    "Make no design decisions. A missing detail is a reason to stop and report, not to choose.",
+    "Do not add a dependency, a command-line flag, an environment variable, a file format field or a module that the brief does not name.",
+    "Do not touch a module the brief does not name.",
+    "Add one changelog fragment: `changes/<step number>.<feature|fix|doc|misc>.md`, one or two sentences. Never edit `CHANGELOG.md`.",
+    "Never touch `runs/`.",
+]
+
+[tool.towncrier]
+directory = "changes"
+filename = "CHANGELOG.md"
+package = "harbor_research_runner"
+title_format = "## {version} ({project_date})"
+issue_format = "step {issue}"
+underlines = ["", "", ""]
+
+[[tool.towncrier.type]]
+directory = "feature"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "fix"
+name = "Fixed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "doc"
+name = "Documentation"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "misc"
+name = "Internal"
+showcontent = true
