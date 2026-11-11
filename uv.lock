@@ -474,7 +474,7 @@ dev = [
     { name = "ruff", specifier = "==0.16.5" },
     { name = "towncrier", specifier = "==26.9.0" },
     { name = "ty", specifier = "==0.0.78" },
-    { name = "wills-agentic-tools", git = "https://github.com/wd7512/wills-agentic-tools?tag=v0.2.0" },
+    { name = "wills-agentic-tools", git = "https://github.com/wd7512/wills-agentic-tools?tag=v0.2.1" },
 ]
 
 [[package]]
@@ -1575,8 +1575,8 @@ wheels = [
 
 [[package]]
 name = "wills-agentic-tools"
-version = "0.1.0"
-source = { git = "https://github.com/wd7512/wills-agentic-tools?tag=v0.2.0#73ea9c12af149cc24021806c6be8d4e05454b980" }
+version = "0.2.1"
+source = { git = "https://github.com/wd7512/wills-agentic-tools?tag=v0.2.1#9ef00a8a22624213cc978baa9a78a2fd19fed7c6" }
 
 [[package]]
 name = "yarl"
