@@ -29,3 +29,6 @@ jobs:
         with: { python-version: "3.12" }
       - run: uv sync --all-extras --locked
       - run: uv run gate
+      - run: uv run check --checks test-names,test-layout,filename-portability,secrets,untracked-paths
+      - if: github.base_ref == 'dev'
+        run: uv run check --checks changelog-fragment
