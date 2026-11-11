@@ -38,14 +38,15 @@ _FIELDS = {
 }
 
 
-def _card_path(root: Path, model_id: str) -> Path:
-    return root / f"{model_id}.json"
+def _card_relative_path(model_id: str) -> Path:
+    return Path(f"{model_id.replace(':', '__colon__')}.json")
 
 
 def load_card(model_id: str, extra_dir: Path | None = None) -> ModelCard:
-    path = _card_path(_CARD_ROOT, model_id)
+    relative_path = _card_relative_path(model_id)
+    path = _CARD_ROOT / relative_path
     if not path.is_file() and extra_dir is not None:
-        path = _card_path(extra_dir, model_id)
+        path = extra_dir / relative_path
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
