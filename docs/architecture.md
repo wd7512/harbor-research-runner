@@ -154,7 +154,7 @@ A request for a trial that is not open gets HTTP 410 with body `{"error": {"mess
 
 ### 4.3 `run-metadata.json`
 
-Written once, atomically (write temp file, `fsync`, rename), before anything else starts. Never rewritten.
+Written once, atomically, before anything else starts: write a temporary file in the same folder, `fsync` it, then link it into place without replacing any existing destination. An existing destination, including a dangling symlink, raises `FileExistsError` and is left unchanged. Never rewritten.
 
 Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`.
 
