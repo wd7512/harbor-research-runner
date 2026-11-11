@@ -1,0 +1,66 @@
+ARG NODE_BASE=node:22-bookworm-slim@sha256:ea11b74b986d520137cdef9a5346e447a00f275ecc4abc0055b7151226231e09
+FROM ${NODE_BASE}
+
+ARG OPENCODE_COMMIT
+ARG OPENCODE_REPO=https://github.com/sst/opencode
+
+RUN test -n "$OPENCODE_COMMIT"
+
+LABEL hrr.opencode.commit="${OPENCODE_COMMIT}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential python3 python3-pip git ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /src && \
+      curl -fsSL "${OPENCODE_REPO}/archive/${OPENCODE_COMMIT}.tar.gz" \
+        | tar -xz --strip-components=1 -C /src \
+      || { echo "opencode source fetch failed for commit ${OPENCODE_COMMIT}"; exit 1; }
+
+RUN cd /src && \
+      if [ ! -f packages/opencode/script/build.ts ]; then \
+        echo "unsupported source layout for commit ${OPENCODE_COMMIT}: no packages/opencode/script/build.ts"; \
+        exit 1; \
+      fi && \
+      BUN_VERSION=$(sed -n 's/.*"packageManager"[^"]*"bun@\([0-9][0-9.]*\)".*/\1/p' package.json | head -1) && \
+      if [ -n "$BUN_VERSION" ]; then npm install -g "bun@${BUN_VERSION}"; else npm install -g bun; fi && \
+      bun --version && \
+      if [ -f bun.lock ] || [ -f bun.lockb ]; then bun install --frozen-lockfile || bun install; else bun install; fi \
+      || { echo "opencode install failed for commit ${OPENCODE_COMMIT}"; exit 1; }
+
+RUN cd /src && \
+      FLAGS="--single" && \
+      if grep -q -- "--skip-install" packages/opencode/script/build.ts; then FLAGS="${FLAGS} --skip-install"; fi && \
+      if grep -q -- "--skip-embed-web-ui" packages/opencode/script/build.ts; then FLAGS="${FLAGS} --skip-embed-web-ui"; fi && \
+      export OPENCODE_CHANNEL=latest && \
+      export OPENCODE_VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' packages/opencode/package.json | head -1) && \
+      bun run --cwd packages/opencode build ${FLAGS} \
+      || { echo "opencode build failed for commit ${OPENCODE_COMMIT}"; exit 1; }
+
+ARG TARGETARCH
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) ARCH=x64 ;; \
+      arm64) ARCH=arm64 ;; \
+      *) echo "unsupported TARGETARCH '${TARGETARCH:-}' for opencode install: no bun arch mapping (expected amd64 or arm64)"; exit 1 ;; \
+    esac && \
+      install -m 0755 /src/packages/opencode/dist/opencode-linux-${ARCH}/bin/opencode /usr/local/bin/opencode && \
+      echo "${OPENCODE_COMMIT}" > /opt/opencode-commit.txt && \
+      opencode --version \
+      || { echo "opencode install failed for commit ${OPENCODE_COMMIT}"; exit 1; }
+
+WORKDIR /workspace
+
+RUN export OPENCODE_VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /src/packages/opencode/package.json | head -1) && \
+      case "$OPENCODE_VERSION" in \
+        1.0.*) \
+          SUFFIX=${OPENCODE_VERSION#1.0.} && \
+          if [ "$SUFFIX" -le 108 ] 2>/dev/null; then \
+            mkdir -p /root/.cache/opencode && cd /root/.cache/opencode && \
+            COPI=$(grep -o 'opencode-copilot-auth@[0-9.]*' /src/packages/opencode/src/plugin/index.ts | head -1 | sed 's/opencode-copilot-auth@//') && \
+            ANTH=$(grep -o 'opencode-anthropic-auth@[0-9.]*' /src/packages/opencode/src/plugin/index.ts | head -1 | sed 's/opencode-anthropic-auth@//') && \
+            if [ -n "$COPI" ] && [ -n "$ANTH" ]; then \
+              bun add --force --exact "@ai-sdk/openai-compatible@1.0.1" "opencode-copilot-auth@${COPI}" "opencode-anthropic-auth@${ANTH}" >/dev/null 2>&1 && \
+              printf '%s' "{\"dependencies\":{\"@ai-sdk/openai-compatible\":\"latest\",\"opencode-copilot-auth\":\"${COPI}\",\"opencode-anthropic-auth\":\"${ANTH}\"}}" > package.json; \
+            fi; \
+          fi ;; \
+      esac
