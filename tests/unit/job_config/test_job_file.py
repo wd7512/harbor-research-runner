@@ -116,6 +116,53 @@ def test_resolves_machine_check_relative_to_job_file(tmp_path: Path) -> None:
     assert load_job(job_path).machine_check == (tmp_path / "checks/machine.json").resolve()
 
 
+def test_fake_arm_keeps_the_opaque_fake_mapping(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "  - {label: old, harness: opencode, commit: " + "a" * 40 + "}",
+        "  - {label: fake, harness: fake, commit: "
+        + "a" * 40
+        + ", fake: {requests: 3, solve: false}}",
+    )
+
+    job = load_job(write_job(tmp_path, text))
+
+    assert job.arms[0].harness == "fake"
+    assert job.arms[0].fake == {"requests": 3, "solve": False}
+
+
+def test_fake_block_is_opaque_to_the_job_parser(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "  - {label: old, harness: opencode, commit: " + "a" * 40 + "}",
+        "  - {label: fake, harness: fake, commit: " + "a" * 40 + ", fake: {unknown_behavior: 1}}",
+    )
+
+    assert load_job(write_job(tmp_path, text)).arms[0].fake == {"unknown_behavior": 1}
+
+
+def test_ordinary_arm_has_no_fake_block(tmp_path: Path) -> None:
+    assert load_job(write_job(tmp_path, valid_job())).arms[0].fake is None
+
+
+def test_fake_block_on_a_real_harness_is_rejected(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "  - {label: old, harness: opencode, commit: " + "a" * 40 + "}",
+        "  - {label: old, harness: opencode, commit: " + "a" * 40 + ", fake: {requests: 3}}",
+    )
+
+    with pytest.raises(JobFileError, match="fake"):
+        load_job(write_job(tmp_path, text))
+
+
+def test_fake_block_must_be_a_mapping(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "  - {label: old, harness: opencode, commit: " + "a" * 40 + "}",
+        "  - {label: fake, harness: fake, commit: " + "a" * 40 + ", fake: [1]}",
+    )
+
+    with pytest.raises(JobFileError, match="fake"):
+        load_job(write_job(tmp_path, text))
+
+
 def test_planned_slots_are_task_major(tmp_path: Path) -> None:
     arm = "  - {label: old, harness: opencode, commit: " + "a" * 40 + "}"
     second_arm = "  - {label: new, harness: opencode, commit: " + "b" * 40 + "}"

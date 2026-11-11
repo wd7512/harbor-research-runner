@@ -16,6 +16,7 @@ from harbor_research_runner.harness.agents import (
     ProbeError,
     agent_settings,
 )
+from harbor_research_runner.harness.manifest import ManifestError
 from harbor_research_runner.harness.opencode_eras import HarnessFacts
 
 _COMMIT = "a" * 40
@@ -273,6 +274,72 @@ def test_agent_settings_returns_exactly_the_declared_keys(manifest_path: Path) -
     assert settings["model_card"] == _CARD
 
 
+def test_agent_settings_adds_fake_for_the_fake_harness(manifest_path: Path) -> None:
+    settings = agent_settings(
+        arm_label="fake",
+        harness="fake",
+        commit=_COMMIT,
+        manifest_path=str(manifest_path),
+        container_host="host.docker.internal",
+        proxy_port=8766,
+        variant=None,
+        model_card=dict(_CARD),
+        fake={"requests": 2},
+    )
+
+    assert set(settings) == {
+        "arm_label",
+        "harness",
+        "commit",
+        "manifest_path",
+        "container_host",
+        "proxy_port",
+        "variant",
+        "model_card",
+        "fake",
+    }
+    assert settings["fake"] == {"requests": 2}
+
+
+def test_agent_settings_omits_fake_when_not_supplied(manifest_path: Path) -> None:
+    settings = agent_settings(
+        arm_label="fake",
+        harness="fake",
+        commit=_COMMIT,
+        manifest_path=str(manifest_path),
+        container_host="host.docker.internal",
+        proxy_port=8766,
+        variant=None,
+        model_card=dict(_CARD),
+    )
+
+    assert set(settings) == {
+        "arm_label",
+        "harness",
+        "commit",
+        "manifest_path",
+        "container_host",
+        "proxy_port",
+        "variant",
+        "model_card",
+    }
+
+
+def test_agent_settings_rejects_fake_for_a_real_harness(manifest_path: Path) -> None:
+    with pytest.raises(ValueError, match="fake"):
+        agent_settings(
+            arm_label="oc-1.18",
+            harness="opencode",
+            commit=_COMMIT,
+            manifest_path=str(manifest_path),
+            container_host="host.docker.internal",
+            proxy_port=8766,
+            variant=None,
+            model_card=dict(_CARD),
+            fake={"requests": 2},
+        )
+
+
 def test_agent_settings_requires_a_model_card(manifest_path: Path) -> None:
     with pytest.raises(TypeError):
         agent_settings(
@@ -329,6 +396,25 @@ def test_construction_rejects_a_wrong_setting_type(tmp_path: Path, manifest_path
 
     with pytest.raises(ValueError, match="valid integer"):
         _TestAgent(logs_dir=tmp_path, model_name=_MODEL, **settings)
+
+
+def test_construction_does_not_read_the_manifest(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-manifest.toml"
+
+    agent = OpenCodeAgent(logs_dir=tmp_path, model_name=_MODEL, **_settings(missing))
+
+    assert agent.commit == _COMMIT
+
+
+def test_install_reads_the_manifest_before_uploading(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-manifest.toml"
+    agent = OpenCodeAgent(logs_dir=tmp_path, model_name=_MODEL, **_settings(missing))
+    environment = _FakeEnvironment()
+
+    with pytest.raises(ManifestError, match="could not read harness manifest"):
+        asyncio.run(agent.install(environment))
+
+    assert environment.uploads == []
 
 
 def test_agent_settings_round_trips_through_the_agent(make_agent) -> None:

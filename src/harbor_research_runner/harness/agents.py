@@ -142,9 +142,10 @@ def agent_settings(
     variant: str | None,
     *,
     model_card: dict,
+    fake: dict | None = None,
 ) -> dict:
     """The Harbor agent kwargs for one arm and model."""
-    return AgentSettings(
+    settings = AgentSettings(
         arm_label=arm_label,
         harness=harness,
         commit=commit,
@@ -154,6 +155,11 @@ def agent_settings(
         variant=variant,
         model_card=model_card,
     ).model_dump()
+    if fake is not None:
+        if harness != "fake":
+            raise ValueError("fake settings require the fake harness")
+        settings["fake"] = fake
+    return settings
 
 
 def _parse_agent_settings(values: dict) -> AgentSettings:
@@ -209,7 +215,6 @@ class PinnedHarness(ABC):
         self.proxy_port = settings.proxy_port
         self.variant = settings.variant
         self.model_card = settings.model_card
-        self._manifest = load_manifest(Path(settings.manifest_path))
         self._task_arch: str | None = None
         self._facts: HarnessFacts | None = None
 
@@ -244,7 +249,8 @@ class PinnedHarness(ABC):
     def harness_files(self) -> Path:
         if self._task_arch is None:
             raise ProbeError("task architecture probe missing; install() must run first")
-        entry = verify_arm(self._manifest, self.harness, self.commit, self._task_arch)
+        manifest = load_manifest(Path(self.manifest_path))
+        entry = verify_arm(manifest, self.harness, self.commit, self._task_arch)
         return extract(entry, workdir=_extraction_workdir()).local_root
 
     async def install(self, environment) -> None:
