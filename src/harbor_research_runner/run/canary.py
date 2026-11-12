@@ -6,6 +6,8 @@ from harbor_research_runner.job_config.job_file import Job, TaskSource
 from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.trial_validity.verdict import TrialFacts, Verdict
 
+CANARY_TASK = Path(__file__).parent / "canary_task" / "say-hello"
+
 
 def canary_job_config(
     job: Job,
@@ -18,7 +20,7 @@ def canary_job_config(
         tasks=TaskSource(
             kind="path",
             dataset=None,
-            path=str(Path(__file__).parent / "canary_task"),
+            path=str(CANARY_TASK.parent),
             git_url=None,
             git_commit=None,
             include=(),
@@ -27,7 +29,7 @@ def canary_job_config(
     )
     return job_config(
         canary_job,
-        ["canary/say-hello"],
+        [CANARY_TASK.name],
         agents,
         verifier_timeout_multiplier,
         job_name="canary-job",
