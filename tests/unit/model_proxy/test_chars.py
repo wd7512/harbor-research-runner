@@ -20,6 +20,37 @@ def test_prompt_chars_covers_responses_input_shape() -> None:
     assert chars.prompt_chars_of_payload(payload) == 5
 
 
+def test_prompt_chars_counts_responses_tool_history() -> None:
+    arguments = '{"query":"x"}'
+    payload = {
+        "input": [
+            {"type": "message", "role": "user", "content": "find it"},
+            {"type": "function_call", "name": "search", "arguments": arguments},
+            {"type": "function_call_output", "call_id": "c1", "output": "two files"},
+        ]
+    }
+    assert chars.prompt_chars_of_payload(payload) == (
+        len("find it") + len("search") + len(arguments) + len("two files")
+    )
+
+
+def test_prompt_chars_counts_chat_tool_call_history() -> None:
+    arguments = '{"query":"x"}'
+    payload = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"function": {"name": "search", "arguments": arguments}}],
+            },
+            {"role": "tool", "content": "two files"},
+        ]
+    }
+    assert chars.prompt_chars_of_payload(payload) == (
+        len("search") + len(arguments) + len("two files")
+    )
+
+
 def test_prompt_chars_includes_tool_definitions() -> None:
     tools = [{"type": "function", "name": "f", "parameters": {}}]
     payload = {"messages": [{"role": "user", "content": "hi"}], "tools": tools}

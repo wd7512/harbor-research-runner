@@ -32,12 +32,17 @@ def prompt_chars_of_payload(payload: Any) -> int:
     if isinstance(messages, list):
         for message in messages:
             if isinstance(message, dict):
-                total += _content_chars(message.get("content"))
+                total += _assistant_message_chars(message)
     inputs = payload.get("input")
     if isinstance(inputs, list):
         for item in inputs:
             if isinstance(item, dict):
-                total += _content_chars(item.get("content"))
+                if item.get("type") == "function_call":
+                    total += tool_call_chars(item)
+                elif item.get("type") == "function_call_output":
+                    total += _content_chars(item.get("output"))
+                else:
+                    total += _content_chars(item.get("content"))
     tools = payload.get("tools")
     if tools:
         total += len(json.dumps(tools, default=str))
