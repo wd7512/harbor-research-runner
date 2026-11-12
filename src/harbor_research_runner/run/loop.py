@@ -96,6 +96,7 @@ class RunSession:
         self.manifest_path = manifest_path
         self._sampler: subprocess.Popen | None = None
         self._proxy: subprocess.Popen | None = None
+        self._lifeline_write_fd: int | None = None
 
     @classmethod
     def create(
@@ -189,35 +190,47 @@ class RunSession:
         environment.update(
             {name: value for name, value in self.environment.items() if name in self.card.key_env}
         )
+        read_fd, write_fd = os.pipe()
+        os.set_inheritable(write_fd, False)
+        self._lifeline_write_fd = write_fd
         try:
-            self._sampler = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
-                    "-m",
-                    "harbor_research_runner.docker_host.sampler",
-                    "--out",
-                    str(self.run_dir / "resource-stats.jsonl"),
-                ],
-                env=environment,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-            )
-            self._proxy = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
-                    "-m",
-                    "harbor_research_runner.model_proxy",
-                    "--config",
-                    str(config_path),
-                ],
-                env=environment,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-            )
+            try:
+                self._sampler = process_group.spawn_group(
+                    [
+                        "uv",
+                        "run",
+                        "python",
+                        "-m",
+                        "harbor_research_runner.docker_host.sampler",
+                        "--out",
+                        str(self.run_dir / "resource-stats.jsonl"),
+                        "--lifeline-fd",
+                        str(read_fd),
+                    ],
+                    env=environment,
+                    pass_fds=(read_fd,),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+                self._proxy = process_group.spawn_group(
+                    [
+                        "uv",
+                        "run",
+                        "python",
+                        "-m",
+                        "harbor_research_runner.model_proxy",
+                        "--config",
+                        str(config_path),
+                        "--lifeline-fd",
+                        str(read_fd),
+                    ],
+                    env=environment,
+                    pass_fds=(read_fd,),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                )
+            finally:
+                os.close(read_fd)
         except BaseException:
             self.stop_services()
             raise
@@ -240,11 +253,16 @@ class RunSession:
         raise TimeoutError("proxy did not become healthy within 30 seconds")
 
     def stop_services(self) -> None:
-        for name in ("_proxy", "_sampler"):
-            process = getattr(self, name)
-            if process is not None and process.poll() is None:
-                process_group.stop_group(process, grace_s=15)
-            setattr(self, name, None)
+        try:
+            for name in ("_proxy", "_sampler"):
+                process = getattr(self, name)
+                if process is not None and process.poll() is None:
+                    process_group.stop_group(process, grace_s=15)
+                setattr(self, name, None)
+        finally:
+            if self._lifeline_write_fd is not None:
+                os.close(self._lifeline_write_fd)
+                self._lifeline_write_fd = None
 
     def proxy_alive(self) -> bool:
         return self._proxy is not None and self._proxy.poll() is None

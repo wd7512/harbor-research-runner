@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import time
 import urllib.request
 from pathlib import Path
+
+import pytest
 
 from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
 from harbor_research_runner.job_config.model_cards import ModelCard
@@ -151,6 +154,39 @@ def test_services_start_stop_and_restart_with_proxy_ledger(tmp_path: Path) -> No
         ]
         starts = [row for row in ledger if row["type"] == "proxy_start"]
         assert [row["restart"] for row in starts] == [False, True]
+    finally:
+        session.stop_services()
+        upstream.stop()
+
+
+def test_service_lifeline_writer_is_non_inheritable(tmp_path: Path) -> None:
+    upstream = FakeUpstream(["ok"])
+    upstream_url = upstream.start()
+    session = _session(tmp_path, upstream_url)
+    try:
+        session.start_services(restart=False)
+        writer_fd = session._lifeline_write_fd
+
+        assert writer_fd is not None
+        assert not os.get_inheritable(writer_fd)
+    finally:
+        session.stop_services()
+        upstream.stop()
+
+
+def test_stopping_services_closes_lifeline_writer(tmp_path: Path) -> None:
+    upstream = FakeUpstream(["ok"])
+    upstream_url = upstream.start()
+    session = _session(tmp_path, upstream_url)
+    try:
+        session.start_services(restart=False)
+        writer_fd = session._lifeline_write_fd
+        assert writer_fd is not None
+
+        session.stop_services()
+
+        with pytest.raises(OSError):
+            os.fstat(writer_fd)
     finally:
         session.stop_services()
         upstream.stop()
