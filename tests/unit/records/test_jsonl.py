@@ -1,6 +1,7 @@
 import os
 
 from harbor_research_runner.records.jsonl import (
+    JsonlTail,
     append_newline,
     append_row,
     open_for_append,
@@ -80,3 +81,23 @@ def test_append_newline_separates_damaged_tail(tmp_path):
     os.close(fd)
 
     assert path.read_bytes() == b"not-json\n"
+
+
+def test_jsonl_tail_resets_after_truncation(tmp_path):
+    path = tmp_path / "rows.jsonl"
+    path.write_text('{"type":"old-row"}\n', encoding="utf-8")
+    tail = JsonlTail(path)
+
+    assert tail.read().rows == [{"type": "old-row"}]
+
+    path.write_text('{"type":"new"}\n', encoding="utf-8")
+
+    assert tail.read().rows == [{"type": "new"}]
+
+
+def test_jsonl_tail_classifies_damaged_lines_like_read_rows(tmp_path):
+    path = tmp_path / "rows.jsonl"
+    path.write_text('{"type":"first"}\nnot-json\n{"type":"last"}\n', encoding="utf-8")
+    tail = JsonlTail(path)
+
+    assert tail.read() == read_rows(path)
