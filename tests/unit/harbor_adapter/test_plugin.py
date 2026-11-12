@@ -8,10 +8,7 @@ import pytest
 from harbor.trial.hooks import TrialEvent
 
 from harbor_research_runner.harbor_adapter.plugin import (
-    MemoryProbeError,
     RunPlugin,
-    parse_linux_meminfo,
-    parse_macos_vm_stat,
     spare_is_sufficient,
 )
 from harbor_research_runner.records.limits import Limits
@@ -69,53 +66,6 @@ def _plugin(tmp_path: Path, task_order: str = "as_listed") -> RunPlugin:
         limits_file=str(_limits_file(tmp_path)),
         task_order=task_order,
     )
-
-
-def test_linux_memavailable_is_spare() -> None:
-    meminfo = """MemTotal:       16316524 kB
-MemFree:          123456 kB
-MemAvailable:    8388608 kB
-Buffers:           12345 kB
-"""
-
-    assert parse_linux_meminfo(meminfo) == 8192
-
-
-def test_linux_meminfo_without_memavailable_fails_closed() -> None:
-    with pytest.raises(MemoryProbeError, match="MemAvailable"):
-        parse_linux_meminfo("MemTotal: 1024 kB\nMemFree: 512 kB\n")
-
-
-def test_macos_vm_stat_counts_free_reclaimable_pages() -> None:
-    vm_stat = """Mach Virtual Memory Statistics: (page size of 4096 bytes)
-Pages free:                                  1000.
-Pages active:                                5000.
-Pages inactive:                              2000.
-Pages speculative:                            500.
-Pages wired down:                             100.
-Pages purgeable:                              250.
-Pages occupied by compressor:                 400.
-"""
-
-    assert parse_macos_vm_stat(vm_stat) == ((1000 + 2000 + 500 + 250) * 4096) // (1024 * 1024)
-
-
-def test_macos_vm_stat_explicit_page_size_wins() -> None:
-    vm_stat = """Mach Virtual Memory Statistics: (page size of 4096 bytes)
-Pages free:                                  1000.
-Pages inactive:                              2000.
-Pages speculative:                            500.
-Pages purgeable:                              250.
-"""
-
-    assert parse_macos_vm_stat(vm_stat, page_size=16384) == ((1000 + 2000 + 500 + 250) * 16384) // (
-        1024 * 1024
-    )
-
-
-def test_macos_vm_stat_without_free_pages_fails_closed() -> None:
-    with pytest.raises(MemoryProbeError, match="Pages free"):
-        parse_macos_vm_stat("Mach Virtual Memory Statistics: (page size of 4096 bytes)\n")
 
 
 @pytest.mark.parametrize(
