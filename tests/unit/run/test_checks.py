@@ -1,0 +1,454 @@
+from __future__ import annotations
+
+import errno
+from pathlib import Path
+
+import pytest
+
+from harbor_research_runner.docker_host.cleanup import Inventory
+from harbor_research_runner.docker_host.host_lock import HostLock
+from harbor_research_runner.harness.manifest import ImageEntry
+from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
+from harbor_research_runner.job_config.model_cards import ModelCard
+from harbor_research_runner.model_proxy.adapters import select_adapter
+from harbor_research_runner.records.machine_check import MachineCheck
+from harbor_research_runner.records.resource_stats import Sample
+from harbor_research_runner.run.checks import CheckDeps, CheckResult, resolve_tasks, run_checks
+
+_COMMIT = "a" * 40
+_DIGEST = "sha256:" + "b" * 64
+_TASK_SOURCE = {"dataset": "bench/tasks"}
+
+
+def _job(
+    *,
+    include: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
+    concurrency: int = 2,
+    harness: str = "fake",
+    commit: str = _COMMIT,
+) -> Job:
+    return Job(
+        path=Path("job.yaml"),
+        name="study",
+        model="provider/model",
+        repetitions=1,
+        concurrency=concurrency,
+        task_order="as_listed",
+        tasks=TaskSource("dataset", "bench/tasks", None, None, None, include, exclude),
+        machine_check=Path("machine-check.json"),
+        arms=(Arm("arm-a", harness, commit),),
+        proxy_host="127.0.0.1",
+        proxy_port=8766,
+        container_host="host.docker.internal",
+        limit_overrides={},
+    )
+
+
+def _card(*, api: str = "chat", withdrawn: bool = False) -> ModelCard:
+    return ModelCard(
+        id="provider/model",
+        upstream_model="upstream-model",
+        api=api,
+        endpoints=["https://model.invalid/v1"],
+        key_env=["MODEL_KEY"],
+        tokens_per_minute=None,
+        pricing={"input": 0, "output": 0, "cached_read": 0},
+        variants={},
+        withdrawn=withdrawn,
+        reason="withdrawn for testing" if withdrawn else None,
+    )
+
+
+def _machine_check(
+    *,
+    task_source: dict | None = None,
+    harbor_version: str = "0.23.0",
+    fingerprint: str = "fingerprint",
+    concurrency: int = 4,
+    included: list[str] | None = None,
+) -> MachineCheck:
+    return MachineCheck(
+        created_t=1.0,
+        tool_version="1.0.0",
+        harbor_version=harbor_version,
+        host_fingerprint=fingerprint,
+        task_source=_TASK_SOURCE if task_source is None else task_source,
+        concurrency=concurrency,
+        tasks=[],
+        included=["task-a", "task-b"] if included is None else included,
+        verifier_timeout_multiplier=1.0,
+    )
+
+
+def _sample(
+    *,
+    mem_available_mb: int = 4096,
+    swap_used_mb: int = 0,
+    disk_free_gb: float = 100,
+    docker_ok: bool = True,
+) -> Sample:
+    return Sample(
+        t=1.0,
+        mem_available_mb=mem_available_mb,
+        swap_used_mb=swap_used_mb,
+        disk_free_gb=disk_free_gb,
+        load1=0.0,
+        trial_containers=0,
+        docker_ok=docker_ok,
+    )
+
+
+def _deps(
+    tmp_path: Path,
+    *,
+    measure=lambda: _sample(),
+    inventory=lambda: Inventory(True, "ok", (), (), (), ()),
+    live_run=lambda _runs_dir: None,
+    host_lock: HostLock | None = None,
+    read_machine_check=lambda _path: _machine_check(),
+    fingerprint: str = "fingerprint",
+    harbor_version: str = "0.23.0",
+) -> CheckDeps:
+    return CheckDeps(
+        select_adapter=select_adapter,
+        measure=measure,
+        inventory=inventory,
+        live_run=live_run,
+        host_lock=host_lock or HostLock(tmp_path / "host.lock"),
+        read_machine_check=read_machine_check,
+        host_fingerprint=lambda: fingerprint,
+        harbor_version=lambda: harbor_version,
+    )
+
+
+def _run(
+    tmp_path: Path,
+    *,
+    job: Job | None = None,
+    card: ModelCard | None = None,
+    manifest: dict[tuple[str, str, str], ImageEntry] | None = None,
+    deps: CheckDeps | None = None,
+    environment: dict[str, str] | None = None,
+    keep_lock: bool = False,
+) -> list[CheckResult]:
+    selected_deps = deps or _deps(tmp_path)
+    results = run_checks(
+        job or _job(),
+        card or _card(),
+        {} if manifest is None else manifest,
+        "amd64",
+        tmp_path / "runs",
+        {"MODEL_KEY": "configured"} if environment is None else environment,
+        selected_deps,
+    )
+    if selected_deps.host_lock.held and not keep_lock:
+        selected_deps.host_lock.release()
+    return results
+
+
+def _by_name(results: list[CheckResult], name: str) -> CheckResult:
+    return next(result for result in results if result.name == name)
+
+
+def test_model_card_check_fails_when_withdrawn(tmp_path: Path) -> None:
+    result = _by_name(_run(tmp_path, card=_card(withdrawn=True)), "model_card")
+
+    assert not result.ok
+    assert "withdrawn" in result.detail
+
+
+def test_model_card_check_passes_for_available_card(tmp_path: Path) -> None:
+    result = _by_name(_run(tmp_path), "model_card")
+
+    assert result.ok
+
+
+def test_keys_present_check_names_missing_variable(tmp_path: Path) -> None:
+    results = _run(
+        tmp_path,
+        environment={"MODEL_KEY": ""},
+    )
+    result = _by_name(results, "keys_present")
+
+    assert not result.ok
+    assert "MODEL_KEY" in result.detail
+    assert "configured" not in result.detail
+
+
+def test_keys_present_check_passes_when_all_variables_are_set(tmp_path: Path) -> None:
+    result = _by_name(_run(tmp_path), "keys_present")
+
+    assert result.ok
+
+
+@pytest.mark.parametrize("failure", ["unlisted", "wrong-architecture"])
+def test_unlisted_or_mismatched_image_refuses_launch(tmp_path: Path, failure: str) -> None:
+    arm = _job(harness="opencode")
+    wrong_arch_entry = ImageEntry(
+        harness="opencode",
+        commit=_COMMIT,
+        version="1.19.3",
+        arch="arm64",
+        ref="hrr/opencode:test-arm64",
+        digest=_DIGEST,
+        build_method="source",
+        built_at="2026-11-11",
+        withdrawn=False,
+        withdrawn_reason="",
+    )
+    manifest = {} if failure == "unlisted" else {("opencode", _COMMIT, "arm64"): wrong_arch_entry}
+    results = _run(tmp_path, job=arm, manifest=manifest)
+    result = _by_name(results, "arms_pinned")
+
+    assert not result.ok
+    if failure == "unlisted":
+        assert "not listed" in result.detail
+    else:
+        assert "architecture" in result.detail
+
+
+def test_arms_pinned_check_passes_for_manifest_free_fake_harness(tmp_path: Path) -> None:
+    result = _by_name(_run(tmp_path), "arms_pinned")
+
+    assert result.ok
+
+
+def test_arms_pinned_check_accepts_responses_model_card_with_chat_harness(
+    tmp_path: Path,
+) -> None:
+    result = _by_name(_run(tmp_path, card=_card(api="responses")), "arms_pinned")
+
+    assert result.ok
+
+
+def test_arms_pinned_check_refuses_unsupported_adapter_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harbor_research_runner.run import checks
+
+    monkeypatch.setattr(checks, "request_path", lambda _harness: "/v1/responses")
+    result = _by_name(_run(tmp_path, card=_card(api="chat")), "arms_pinned")
+
+    assert not result.ok
+    assert "unsupported adapter pair" in result.detail
+
+
+def test_docker_clean_check_fails_when_inventory_has_residue(tmp_path: Path) -> None:
+    deps = _deps(
+        tmp_path,
+        inventory=lambda: Inventory(True, "ok", ("trial__env-main-1",), (), (), ()),
+    )
+    result = _by_name(_run(tmp_path, deps=deps), "docker_clean")
+
+    assert not result.ok
+    assert "trial__env-main-1" in result.detail
+
+
+def test_docker_clean_check_fails_when_inventory_has_a_leaked_network(
+    tmp_path: Path,
+) -> None:
+    deps = _deps(
+        tmp_path,
+        inventory=lambda: Inventory(True, "ok", (), ("trial__env_default",), (), ()),
+    )
+    result = _by_name(_run(tmp_path, deps=deps), "docker_clean")
+
+    assert not result.ok
+    assert "trial__env_default" in result.detail
+
+
+def test_docker_clean_check_fails_when_daemon_is_unavailable(tmp_path: Path) -> None:
+    deps = _deps(
+        tmp_path,
+        inventory=lambda: Inventory(False, "docker daemon unreachable", (), ()),
+    )
+    result = _by_name(_run(tmp_path, deps=deps), "docker_clean")
+
+    assert not result.ok
+    assert "docker daemon unreachable" in result.detail
+
+
+def test_docker_clean_check_passes_for_clean_inventory(tmp_path: Path) -> None:
+    result = _by_name(_run(tmp_path), "docker_clean")
+
+    assert result.ok
+
+
+def test_single_run_check_fails_when_another_session_holds_the_host_lock(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "host.lock"
+    holder = HostLock(lock_path)
+    runner = HostLock(lock_path)
+    holder.acquire()
+    try:
+        deps = _deps(
+            tmp_path,
+            host_lock=runner,
+            live_run=lambda _runs_dir: "run-holder",
+        )
+        result = _by_name(_run(tmp_path, deps=deps), "single_run")
+    finally:
+        holder.release()
+
+    assert not result.ok
+    assert "run-holder" in result.detail
+
+
+def test_single_run_check_reports_unsupported_lock_distinctly(tmp_path: Path) -> None:
+    def unsupported_flock(_fd: int, _operation: int) -> None:
+        raise OSError(errno.ENOLCK, "locking unsupported")
+
+    lock = HostLock(tmp_path / "unsupported.lock", flock=unsupported_flock)
+    result = _by_name(_run(tmp_path, deps=_deps(tmp_path, host_lock=lock)), "single_run")
+
+    assert not result.ok
+    assert "unsupported" in result.detail
+
+
+def test_single_run_check_passes_and_keeps_lock_held(tmp_path: Path) -> None:
+    deps = _deps(tmp_path)
+    result = _by_name(_run(tmp_path, deps=deps, keep_lock=True), "single_run")
+
+    assert result.ok
+    assert deps.host_lock.held
+    deps.host_lock.release()
+
+
+def test_host_resources_check_fails_when_host_breaches_limits(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, measure=lambda: _sample(mem_available_mb=1024))
+    result = _by_name(_run(tmp_path, deps=deps), "host_resources")
+
+    assert not result.ok
+    assert "breach" in result.detail
+
+
+def test_host_resources_check_passes_when_host_is_within_limits(tmp_path: Path) -> None:
+    result = _by_name(_run(tmp_path), "host_resources")
+
+    assert result.ok
+
+
+def test_machine_check_present_fails_when_file_is_missing(tmp_path: Path) -> None:
+    def missing(_path: Path) -> MachineCheck:
+        raise FileNotFoundError("missing machine check")
+
+    result = _by_name(
+        _run(tmp_path, deps=_deps(tmp_path, read_machine_check=missing)),
+        "machine_check_present",
+    )
+
+    assert not result.ok
+    assert "machine check" in result.detail
+
+
+def test_machine_check_present_fails_when_file_is_unparseable(tmp_path: Path) -> None:
+    def invalid(_path: Path) -> MachineCheck:
+        raise ValueError("invalid machine check JSON")
+
+    result = _by_name(
+        _run(tmp_path, deps=_deps(tmp_path, read_machine_check=invalid)),
+        "machine_check_present",
+    )
+
+    assert not result.ok
+    assert "invalid machine check" in result.detail
+
+
+def test_machine_check_present_passes_when_file_parses(tmp_path: Path) -> None:
+    result = _by_name(_run(tmp_path), "machine_check_present")
+
+    assert result.ok
+
+
+@pytest.mark.parametrize(
+    "machine_check",
+    [
+        _machine_check(task_source={"dataset": "other/tasks"}),
+        _machine_check(harbor_version="0.22.0"),
+        _machine_check(fingerprint="other-fingerprint"),
+        _machine_check(concurrency=1),
+    ],
+    ids=["task-source", "harbor-version", "fingerprint", "concurrency"],
+)
+def test_machine_check_matches_fails_when_check_differs(
+    tmp_path: Path, machine_check: MachineCheck
+) -> None:
+    deps = _deps(tmp_path, read_machine_check=lambda _path: machine_check)
+    result = _by_name(_run(tmp_path, deps=deps), "machine_check_matches")
+
+    assert not result.ok
+
+
+def test_machine_check_matches_passes_for_matching_check(tmp_path: Path) -> None:
+    result = _by_name(_run(tmp_path), "machine_check_matches")
+
+    assert result.ok
+
+
+def test_job_naming_task_outside_machine_check_is_refused(tmp_path: Path) -> None:
+    check = _machine_check(included=["task-a"])
+    deps = _deps(tmp_path, read_machine_check=lambda _path: check)
+    result = _by_name(_run(tmp_path, job=_job(include=("task-b",)), deps=deps), "tasks_included")
+
+    assert not result.ok
+    assert "task-b" in result.detail
+
+
+def test_tasks_included_check_passes_when_requested_tasks_are_included(
+    tmp_path: Path,
+) -> None:
+    result = _by_name(_run(tmp_path, job=_job(include=("task-a",))), "tasks_included")
+
+    assert result.ok
+
+
+def test_empty_task_include_means_all_included_tasks_pass(tmp_path: Path) -> None:
+    result = _by_name(_run(tmp_path, job=_job(include=())), "tasks_included")
+
+    assert result.ok
+
+
+def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path) -> None:
+    deps = _deps(
+        tmp_path,
+        inventory=lambda: Inventory(True, "ok", ("trial__env-main-1",), (), (), ()),
+        measure=lambda: _sample(mem_available_mb=1024),
+    )
+    results = _run(tmp_path, card=_card(withdrawn=True), deps=deps)
+
+    assert [result.name for result in results] == [
+        "model_card",
+        "keys_present",
+        "arms_pinned",
+        "docker_clean",
+        "single_run",
+        "host_resources",
+        "machine_check_present",
+        "machine_check_matches",
+        "tasks_included",
+    ]
+    assert not _by_name(results, "model_card").ok
+    assert not _by_name(results, "docker_clean").ok
+    assert not _by_name(results, "host_resources").ok
+
+
+def test_all_launch_checks_pass_for_a_ready_fake_harness(tmp_path: Path) -> None:
+    results = _run(tmp_path)
+
+    assert all(result.ok for result in results)
+
+
+def test_resolve_tasks_preserves_machine_check_order_and_filters_include_exclude() -> None:
+    job = _job(include=("task-c", "task-a"), exclude=("task-a",))
+    check = _machine_check(included=["task-a", "task-b", "task-c"])
+
+    assert resolve_tasks(job, check) == ["task-c"]
+
+
+def test_resolve_tasks_empty_include_selects_all_machine_tasks_except_excluded() -> None:
+    job = _job(include=(), exclude=("task-b",))
+    check = _machine_check(included=["task-b", "task-a", "task-c"])
+
+    assert resolve_tasks(job, check) == ["task-a", "task-c"]
