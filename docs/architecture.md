@@ -336,9 +336,10 @@ Harbor commands (`harbor_adapter.commands`):
 ```
 uv run harbor run --config <run>/harbor-job-config.yaml --jobs-dir <run> --job-name harbor-job \
    --plugin harbor_research_runner.harbor_adapter.plugin:RunPlugin --pk proxy_url=http://<host>:<port> \
-   --pk limits_file=<run>/proxy-config.json
+   --pk limits_file=<run>/proxy-config.json --pk task_order=<as_listed|slowest_first>
 uv run harbor jobs resume -p <run>/harbor-job -f hrr-erases-nothing \
-   --plugin harbor_research_runner.harbor_adapter.plugin:RunPlugin --pk proxy_url=... --pk limits_file=...
+   --plugin harbor_research_runner.harbor_adapter.plugin:RunPlugin --pk proxy_url=... --pk limits_file=... \
+   --pk task_order=<as_listed|slowest_first>
 ```
 
 `-f hrr-erases-nothing` matches no real exception type; it disables Harbor's default of deleting `CancelledError` trials on resume. The generated job config and the proxy address never change between passes or across resumes.
@@ -348,6 +349,7 @@ The Harbor plugin (`harbor_adapter/plugin.py`), on Harbor's trial events:
 - `START`: wait until spare memory is above the limit and `launch_min_interval_s` has passed since the last launch (ported from OLD's launch gate).
 - `AGENT_START`: `POST /control/open` with the trial name, task name and the arm label from the agent's settings.
 - `AGENT_END`: `POST /control/close`. This fires when the agent phase ends for any reason, including Harbor's timeout, and before the verifier starts.
+- `on_job_start`: when `task_order` is `slowest_first`, stably sort Harbor's remaining trial configs by descending agent budget from each task's `task.toml`; ties keep Harbor's order.
 
 ## 8. Harness
 
