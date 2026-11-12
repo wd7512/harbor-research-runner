@@ -13,6 +13,10 @@ from threading import Event, Lock, Thread
 from typing import Any
 
 
+class _FakeUpstreamServer(ThreadingHTTPServer):
+    request_queue_size = 128
+
+
 @dataclass
 class RawResponse:
     chunks: list[bytes]
@@ -69,7 +73,7 @@ class FakeUpstream:
             def log_message(self, format: str, *args: object) -> None:
                 return
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server = _FakeUpstreamServer(("127.0.0.1", 0), Handler)
         self._server.daemon_threads = True
         self._thread = Thread(
             target=partial(self._server.serve_forever, poll_interval=0.01), daemon=True

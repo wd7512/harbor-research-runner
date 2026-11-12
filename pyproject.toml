@@ -73,6 +73,7 @@ tests_dir = "tests"
 mirror_exceptions = [
     "tests/unit/test_skeleton.py",
     "tests/unit/test_import_rule.py",
+    "tests/integration/test_import_rule.py",
     "src/harbor_research_runner/cli.py",
     "src/harbor_research_runner/docker_host/sampler.py",
     "src/harbor_research_runner/model_proxy/__main__.py",

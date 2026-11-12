@@ -13,6 +13,8 @@ from harbor_research_runner.results_explorer.loader import EvidenceStore
 
 
 class _Server(ThreadingHTTPServer):
+    request_queue_size = 128
+
     def __init__(self, address, store: EvidenceStore):
         self.store = store
         super().__init__(address, _Handler)
