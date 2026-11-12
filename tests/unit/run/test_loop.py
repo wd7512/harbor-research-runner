@@ -24,6 +24,7 @@ from harbor_research_runner.records.run_events import (
 from harbor_research_runner.run.checks import CheckDeps
 from harbor_research_runner.run.loop import (
     RunDeps,
+    RunOutcome,
     RunSession,
     _pass_loop,
     make_read_only,
@@ -420,9 +421,10 @@ def test_resume_of_finished_run_returns_one_without_appending(tmp_path: Path) ->
 
     result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
 
-    assert result == 1
+    assert result == RunOutcome(1, run_dir)
     assert (run_dir / "run-events.jsonl").read_bytes() == before
     assert commands == []
+    assert "already finished" in (run_dir / "runner.log").read_text(encoding="utf-8")
 
 
 def test_resume_restarts_harbor_when_a_slot_has_unplanned_trials(
@@ -467,6 +469,6 @@ def test_resume_restarts_harbor_when_a_slot_has_unplanned_trials(
         if row.get("type") == "harbor_start" and row.get("pass") == 1
     )
     finish_index = next(index for index, row in enumerate(events) if row.get("type") == "finish")
-    assert result == 0
+    assert result == RunOutcome(0, run_dir)
     assert commands[0][3:5] == ["jobs", "resume"]
     assert start_index < finish_index
