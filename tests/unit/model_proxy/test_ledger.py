@@ -223,3 +223,48 @@ def test_close_is_idempotent_and_write_after_close_fails(tmp_path):
 def test_missing_parent_directory_makes_construction_unavailable(tmp_path):
     with pytest.raises(LedgerUnavailable):
         LedgerWriter(tmp_path / "missing" / "ledger.jsonl")
+
+
+def test_history_reads_rows_written_after_construction(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    writer = LedgerWriter(path, now=lambda: 1.0)
+    writer.write(ProxyStart(0, 0.0, "v", "a" * 64, False))
+
+    assert writer.history().rows == [ProxyStart(1, 1.0, "v", "a" * 64, False).to_row()]
+    writer.close()
+
+
+def test_history_returns_a_fresh_snapshot(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    writer = LedgerWriter(path, now=lambda: 1.0)
+    writer.write(ProxyStart(0, 0.0, "v", "a" * 64, False))
+
+    first = writer.history()
+    first.rows.clear()
+
+    assert writer.history().rows == [ProxyStart(1, 1.0, "v", "a" * 64, False).to_row()]
+    writer.close()
+
+
+def test_history_after_restart_returns_every_row(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    writer = LedgerWriter(path, now=lambda: 1.0)
+    writer.write(ProxyStart(0, 0.0, "v", "a" * 64, False))
+    writer.write(Close(0, 0.0, "trial"))
+    writer.close()
+
+    reopened = LedgerWriter(path, now=lambda: 2.0)
+
+    assert [row["seq"] for row in reopened.history().rows] == [1, 2]
+    reopened.close()
+
+
+def test_history_raises_when_ledger_file_is_missing(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    writer = LedgerWriter(path, now=lambda: 1.0)
+    path.unlink()
+
+    with pytest.raises(LedgerUnavailable):
+        writer.history()
+
+    writer.close()
