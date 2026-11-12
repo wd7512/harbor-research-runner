@@ -130,6 +130,7 @@ class RunSession:
             _append_event(run_dir, LaunchCheck(now(), result.name, result.ok, result.detail))
         if any(not result.ok for result in check_results):
             raise RefusedToStart("one or more launch checks failed", run_dir)
+        machine_check_bytes = job.machine_check.read_bytes()
         metadata = run_metadata.RunMetadata(
             run_id=run_id,
             created_t=created_t,
@@ -141,11 +142,12 @@ class RunSession:
             model_card=_card_to_row(card),
             arms=arms,
             task_set=tasks,
-            machine_check_sha256=hashlib.sha256(job.machine_check.read_bytes()).hexdigest(),
+            machine_check_sha256=hashlib.sha256(machine_check_bytes).hexdigest(),
             host=dict(host),
             proxy={"host": job.proxy_host, "port": job.proxy_port},
             limits=limits.to_row(),
         )
+        run_metadata.write_new_file(run_dir / "machine-check.json", machine_check_bytes)
         run_metadata.write_once(run_dir / "run-metadata.json", metadata)
         return cls(run_dir, job, card, limits, metadata, environment, tool, manifest_path)
 

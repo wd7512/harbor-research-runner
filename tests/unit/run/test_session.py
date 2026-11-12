@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -117,6 +118,18 @@ def test_create_writes_launch_checks_and_metadata(tmp_path: Path) -> None:
     assert events[1]["name"] == "ready"
     assert metadata["host"] == _HOST
     assert metadata["tool_version"] == "0.1.0"
+
+
+def test_create_keeps_the_checked_machine_check_in_the_run_folder(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+    source = session.job.machine_check
+    copy = session.run_dir / "machine-check.json"
+
+    source.write_text('{"changed": true}', encoding="utf-8")
+
+    metadata = json.loads((session.run_dir / "run-metadata.json").read_text())
+    assert copy.read_bytes() == b"{}"
+    assert hashlib.sha256(copy.read_bytes()).hexdigest() == metadata["machine_check_sha256"]
 
 
 def test_create_refuses_failed_checks_without_metadata(tmp_path: Path) -> None:
