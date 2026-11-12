@@ -36,11 +36,15 @@ class RunMetadata:
 
 
 def write_once(path: Path, metadata: RunMetadata) -> None:
+    write_new_file(path, metadata.to_json().encode("utf-8"))
+
+
+def write_new_file(path: Path, data: bytes) -> None:
     descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(metadata.to_json())
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
         os.link(temporary, path)
