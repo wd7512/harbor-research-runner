@@ -149,7 +149,7 @@ def test_every_ledger_trial_is_accounted_for_after_reruns(e2e_run) -> None:
     [{"repetitions": 2, "upstream_script": ["ok", "ok", "quota"]}],
     indirect=True,
 )
-def test_set_aside_interrupted_between_move_and_event_is_repaired(e2e_run) -> None:
+def test_lifecycle_repairs_interrupted_set_aside(e2e_run) -> None:
     halted = e2e_run.run()
     assert halted.returncode == 2, halted.stdout
     verdict = next(

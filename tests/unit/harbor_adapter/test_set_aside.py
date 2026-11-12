@@ -104,7 +104,7 @@ def _verdict_row(trial: str, reason: str) -> dict:
     }
 
 
-def test_set_aside_interrupted_between_move_and_event_is_repaired(tmp_path: Path) -> None:
+def test_set_aside_repairs_move_completed_without_event(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     destination = run_dir / "set-aside-trials" / "trial-a"
     _write_trial(destination)

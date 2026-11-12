@@ -5,6 +5,11 @@ from pathlib import Path
 import pytest
 
 from harbor_research_runner.harness.fake_script import main, parse_args
+from tests.support.processes import ps_command
+
+
+def test_ps_command_requests_unlimited_width() -> None:
+    assert ps_command() == ["ps", "-ww", "-axo", "pid=,pgid=,command="]
 
 
 def test_parse_args_uses_the_pinned_defaults() -> None:

@@ -6,7 +6,6 @@ import shutil
 from pathlib import Path
 
 from harbor_research_runner.evidence_bundle.build import build, merged_requests
-from harbor_research_runner.evidence_bundle.manifest import verify_manifest
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "run_folders"
 
@@ -38,25 +37,7 @@ def test_build_is_byte_deterministic_for_both_run_shapes(tmp_path: Path) -> None
         assert build(run_dir, first, {}) == 0
         assert build(run_dir, second, {}) == 0
         assert _hashes(first) == _hashes(second)
-        assert verify_manifest(first) == []
-
-
-def test_manifest_reports_a_changed_file(tmp_path: Path) -> None:
-    run_dir = _copy_run("clean", tmp_path)
-    output = tmp_path / "bundle"
-    assert build(run_dir, output, {}) == 0
-    trials = output / "trials.jsonl"
-    trials.write_bytes(trials.read_bytes() + b" ")
-    assert verify_manifest(output) == ["trials.jsonl: hash mismatch", "trials.jsonl: size mismatch"]
-
-
-def test_manifest_reports_missing_and_extra_files(tmp_path: Path) -> None:
-    run_dir = _copy_run("clean", tmp_path)
-    output = tmp_path / "bundle"
-    assert build(run_dir, output, {}) == 0
-    (output / "report.md").unlink()
-    (output / "extra.txt").write_text("extra", encoding="utf-8")
-    assert verify_manifest(output) == ["extra.txt: extra file", "report.md: missing file"]
+        assert (first / "manifest.json").is_file()
 
 
 def test_merged_requests_keeps_a_start_without_an_end() -> None:

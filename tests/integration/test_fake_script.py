@@ -10,6 +10,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from tests.support.fake_upstream import FakeUpstream
+from tests.support.processes import ps_command
 
 _SCRIPT = (
     Path(__file__).resolve().parents[2]
@@ -209,7 +210,7 @@ def test_detached_requester_survives_harness_group_stop() -> None:
 
 def _heartbeat_process_id(heartbeat: Path) -> int:
     result = subprocess.run(
-        ["ps", "-axo", "pid=,pgid=,command="],
+        ps_command(),
         capture_output=True,
         text=True,
         check=True,

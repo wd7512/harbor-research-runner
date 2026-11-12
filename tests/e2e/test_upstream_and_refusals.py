@@ -132,7 +132,7 @@ def test_upstream_terminal_error_sets_trial_aside_and_reruns(e2e_run) -> None:
     [{"upstream_script": ["ok", "quota"]}],
     indirect=True,
 )
-def test_quota_error_halts_run(e2e_run) -> None:
+def test_quota_error_halts_e2e_run(e2e_run) -> None:
     result = e2e_run.run()
 
     assert result.returncode == 2, result.stdout
@@ -208,7 +208,7 @@ def test_unlisted_image_refuses_launch(e2e_run) -> None:
     )
 
 
-def test_job_naming_task_outside_machine_check_is_refused(e2e_run) -> None:
+def test_e2e_job_naming_task_outside_machine_check_is_refused(e2e_run) -> None:
     e2e_run.job_data["tasks"]["include"] = ["not-in-machine-check"]
     _write_job(e2e_run)
 

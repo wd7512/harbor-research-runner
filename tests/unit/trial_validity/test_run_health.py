@@ -147,7 +147,7 @@ def test_upstream_invalid_streak_halts_while_billing_is_fresh():
     assert result[0] == "upstream_invalid_streak"
 
 
-def test_quota_error_halts_run():
+def test_quota_error_halts_run_health():
     rows = [_open(1, NOW - 120), _request_end(2, NOW - 10, status="quota_exhausted")]
 
     result = should_halt(_snapshot(ledger_rows_since_pass_start=rows), DEFAULT_LIMITS)

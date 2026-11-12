@@ -147,7 +147,7 @@ def test_restart_continues_sequence_and_refuses_closed_trial(proxy):
 
 
 @pytest.mark.parametrize("proxy", [{"file_size_limit": 256}], indirect=True)
-def test_ledger_write_failure_stops_serving(proxy):
+def test_proxy_process_stops_serving_after_ledger_write_failure(proxy):
     _post(f"{proxy.url}/control/open", {"trial": "trial-1", "task": "task-1", "arm": "arm-1"})
 
     status, body = _post(_trial_url(proxy, "trial-1"), _request("m" * 1000))

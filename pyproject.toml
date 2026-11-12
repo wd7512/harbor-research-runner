@@ -70,14 +70,22 @@ e2e = ["tests/e2e"]
 source_package = "src/harbor_research_runner"
 unit_tests = "tests/unit"
 tests_dir = "tests"
-mirror_exceptions = ["tests/unit/test_skeleton.py", "tests/unit/test_import_rule.py", "src/harbor_research_runner/cli.py"]
+mirror_exceptions = [
+    "tests/unit/test_skeleton.py",
+    "tests/unit/test_import_rule.py",
+    "src/harbor_research_runner/cli.py",
+    "src/harbor_research_runner/docker_host/sampler.py",
+    "src/harbor_research_runner/model_proxy/__main__.py",
+    "src/harbor_research_runner/model_proxy/server.py",
+    "src/harbor_research_runner/results_explorer/server.py",
+]
 untracked_paths = ["runs/"]
 changelog_dir = "changes"
 changelog_exempt = ["docs/"]
 base = "origin/dev"
 
 [tool.devtools.delegate]
-gate_command = "uv run gate"
+gate_command = "uv run gate && uv run check --checks test-names,test-layout,filename-portability,secrets,untracked-paths"
 base = "origin/dev"
 extra_rules = [
     "Read `AGENTS.md`, `docs/architecture.md` and your brief before anything else. If they disagree, or the brief is wrong about OLD code, stop and report.",
