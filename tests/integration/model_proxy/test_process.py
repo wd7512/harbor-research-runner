@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import signal
+import subprocess
+import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -190,3 +194,83 @@ def test_sigterm_waits_for_stream_to_finish(proxy):
     assert code == 0
     assert result["status"] == 200
     assert b"data: [DONE]" in result["body"]
+
+
+@pytest.mark.parametrize("proxy", [{"script": ["slow:20"]}], indirect=True)
+def test_proxy_lifeline_waits_for_stream_to_finish(proxy):
+    assert proxy.stop() == 0
+    read_fd, write_fd = os.pipe()
+    help_result = subprocess.run(
+        [sys.executable, "-m", "harbor_research_runner.model_proxy", "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "harbor_research_runner.model_proxy",
+        "--config",
+        str(proxy.config_path),
+    ]
+    if "--lifeline-fd" in help_result.stdout:
+        command.extend(["--lifeline-fd", str(read_fd)])
+    process = subprocess.Popen(
+        command,
+        pass_fds=(read_fd,),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    proxy.process = process
+    os.close(read_fd)
+    headers_received = threading.Event()
+    result: dict[str, object] = {}
+
+    def request() -> None:
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", int(proxy.url.rsplit(":", 1)[1]), timeout=4
+        )
+        connection.request(
+            "POST",
+            "/control/open",
+            body=json.dumps({"trial": "trial-1", "task": "task-1", "arm": "arm-1"}),
+            headers={"Content-Type": "application/json"},
+        )
+        connection.getresponse().read()
+        connection.request(
+            "POST",
+            "/trial/trial-1/v1/chat/completions",
+            body=json.dumps(_request()).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        headers_received.set()
+        result["status"] = response.status
+        result["body"] = response.read()
+        connection.close()
+
+    thread = threading.Thread(target=request, daemon=True)
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f"{proxy.url}/control/health", timeout=0.1):
+                    break
+            except (OSError, urllib.error.URLError):
+                time.sleep(0.01)
+        thread.start()
+        assert headers_received.wait(timeout=1.5)
+        os.close(write_fd)
+        write_fd = -1
+        thread.join(timeout=4)
+
+        assert not thread.is_alive()
+        assert process.wait(timeout=1) == 0
+        assert result["status"] == 200
+        assert b"data: [DONE]" in result["body"]
+    finally:
+        if write_fd >= 0:
+            os.close(write_fd)
+        if process.poll() is None:
+            process.send_signal(signal.SIGTERM)
+            process.wait(timeout=2)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,12 @@ from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
 
 
+def _bind_port(host: str, port: int) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((host, port))
+
+
 @dataclass(frozen=True)
 class CheckResult:
     name: str
@@ -38,6 +45,7 @@ class CheckDeps:
     read_machine_check: Callable[[Path], MachineCheck]
     host_fingerprint: Callable[[], str]
     harbor_version: Callable[[], str]
+    bind_port: Callable[[str, int], None] = _bind_port
 
 
 def _evaluate(name: str, check: Callable[[], tuple[bool, str]]) -> CheckResult:
@@ -83,6 +91,14 @@ def host_resources_check(job: Job, deps: CheckDeps, multiplier: float) -> tuple[
     if host_breach(sample.to_row(), limits):
         return False, "host resource limits are breached"
     return True, "host resources meet the job limits"
+
+
+def proxy_port_free_check(job: Job, deps: CheckDeps) -> tuple[bool, str]:
+    try:
+        deps.bind_port(job.proxy_host, job.proxy_port)
+    except OSError:
+        return False, f"port {job.proxy_port} in use; a previous run's proxy may still be draining"
+    return True, f"proxy port {job.proxy_port} is free"
 
 
 def machine_check_launch_checks(job: Job, runs_dir: Path, deps: CheckDeps) -> list[CheckResult]:
@@ -174,6 +190,7 @@ def run_checks(
         _evaluate("keys_present", keys_present_check),
         _evaluate("arms_pinned", arms_pinned_check),
         _evaluate("docker_clean", lambda: docker_clean_check(deps)),
+        _evaluate("proxy_port_free", lambda: proxy_port_free_check(job, deps)),
         _evaluate("single_run", lambda: single_run_check(runs_dir, deps)),
         _evaluate(
             "host_resources",

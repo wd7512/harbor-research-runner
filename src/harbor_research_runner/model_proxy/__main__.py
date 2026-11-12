@@ -12,6 +12,7 @@ from harbor_research_runner.records.proxy_control import read
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--lifeline-fd", type=int)
     args = parser.parse_args()
     config = read(args.config)
     log_path = Path(config.ledger_path).parent / "proxy.log"
@@ -21,7 +22,7 @@ def main() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    return serve(config, args.config, os.environ)
+    return serve(config, args.config, os.environ, args.lifeline_fd)
 
 
 if __name__ == "__main__":

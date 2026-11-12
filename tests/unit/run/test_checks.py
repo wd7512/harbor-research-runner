@@ -115,6 +115,7 @@ def _deps(
     read_machine_check=lambda _path: _machine_check(),
     fingerprint: str = "fingerprint",
     harbor_version: str = "0.23.0",
+    bind_port=lambda _host, _port: None,
 ) -> CheckDeps:
     return CheckDeps(
         select_adapter=select_adapter,
@@ -125,6 +126,7 @@ def _deps(
         read_machine_check=read_machine_check,
         host_fingerprint=lambda: fingerprint,
         harbor_version=lambda: harbor_version,
+        bind_port=bind_port,
     )
 
 
@@ -186,6 +188,35 @@ def test_keys_present_check_passes_when_all_variables_are_set(tmp_path: Path) ->
     result = _by_name(_run(tmp_path), "keys_present")
 
     assert result.ok
+
+
+def test_proxy_port_free_check_fails_when_bind_fails(tmp_path: Path) -> None:
+    def fail_to_bind(_host: str, _port: int) -> None:
+        raise OSError("Address already in use")
+
+    results = _run(tmp_path, deps=_deps(tmp_path, bind_port=fail_to_bind))
+    result = _by_name(results, "proxy_port_free")
+
+    assert not result.ok
+    assert "8766" in result.detail
+
+
+def test_proxy_port_free_check_passes_when_bind_succeeds(tmp_path: Path) -> None:
+    results = _run(tmp_path, deps=_deps(tmp_path, bind_port=lambda _host, _port: None))
+    result = _by_name(results, "proxy_port_free")
+
+    assert result.ok
+
+
+def test_proxy_port_free_is_a_run_check_and_not_a_machine_check(tmp_path: Path) -> None:
+    deps = _deps(tmp_path)
+    job = _job()
+    run_results = _run(tmp_path, deps=deps)
+    machine_results = machine_check_launch_checks(job, tmp_path / "runs", deps)
+    deps.host_lock.release()
+
+    assert "proxy_port_free" in {result.name for result in run_results}
+    assert "proxy_port_free" not in {result.name for result in machine_results}
 
 
 @pytest.mark.parametrize("failure", ["unlisted", "wrong-architecture"])
@@ -429,6 +460,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
         "keys_present",
         "arms_pinned",
         "docker_clean",
+        "proxy_port_free",
         "single_run",
         "host_resources",
         "machine_check_present",

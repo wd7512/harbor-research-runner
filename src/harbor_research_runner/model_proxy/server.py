@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import signal
 import socket
 import threading
@@ -123,6 +124,17 @@ class ProxyHTTPServer(ThreadingHTTPServer):
         self.socket.bind(self.server_address)
         self.server_address = self.socket.getsockname()
         self.server_name, self.server_port = self.server_address[0], self.server_address[1]
+
+
+def _watch_lifeline(fd: int, server: ProxyHTTPServer) -> None:
+    try:
+        while os.read(fd, 1):
+            pass
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+        server.stop_accepting()
 
 
 class _ProxyHandler(BaseHTTPRequestHandler):
@@ -296,6 +308,7 @@ def serve(
     config: ProxyConfig,
     config_path: Path,
     environment: Mapping[str, str],
+    lifeline_fd: int | None = None,
 ) -> int:
     ledger_path = Path(config.ledger_path)
     ledger = None
@@ -348,6 +361,8 @@ def serve(
     server = ProxyHTTPServer((config.host, config.port), state)
     old_term = signal.signal(signal.SIGTERM, lambda signum, frame: server.stop_accepting())
     old_int = signal.signal(signal.SIGINT, lambda signum, frame: server.stop_accepting())
+    if lifeline_fd is not None:
+        threading.Thread(target=_watch_lifeline, args=(lifeline_fd, server), daemon=True).start()
     exit_code = 0
     try:
         server.serve_forever(poll_interval=0.05)

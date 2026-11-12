@@ -43,3 +43,47 @@ def test_sampler_writes_complete_rows_until_sigterm(tmp_path: Path) -> None:
     content = output.read_bytes()
     assert content.endswith(b"\n")
     assert all(json.loads(line)["type"] == "sample" for line in content.splitlines())
+
+
+def test_sampler_exits_when_lifeline_closes(tmp_path: Path) -> None:
+    output = tmp_path / "resource-stats.jsonl"
+    read_fd, write_fd = os.pipe()
+    help_result = subprocess.run(
+        [sys.executable, "-m", "harbor_research_runner.docker_host.sampler", "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "harbor_research_runner.docker_host.sampler",
+        "--out",
+        str(output),
+        "--interval",
+        "0.05",
+    ]
+    if "--lifeline-fd" in help_result.stdout:
+        command.extend(["--lifeline-fd", str(read_fd)])
+    process = subprocess.Popen(
+        command,
+        pass_fds=(read_fd,),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    os.close(read_fd)
+    try:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not output.exists():
+            time.sleep(0.01)
+        assert output.exists()
+        os.close(write_fd)
+        write_fd = -1
+
+        assert process.wait(timeout=3) == 0
+    finally:
+        if write_fd >= 0:
+            os.close(write_fd)
+        if process.poll() is None:
+            process.send_signal(signal.SIGTERM)
+            process.wait(timeout=2)
