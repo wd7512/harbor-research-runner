@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import stat
 from collections.abc import Callable
 from pathlib import Path
@@ -29,6 +30,7 @@ from harbor_research_runner.run.loop import (
     _pass_loop,
     make_read_only,
     resume_run,
+    run_job,
     slots_status,
 )
 from harbor_research_runner.run.tool_identity import ToolIdentity
@@ -329,6 +331,106 @@ def test_finish_returns_three_when_slot_stays_incomplete(tmp_path: Path) -> None
     finish = next(row for row in events if row["type"] == "finish")
     assert result == 3
     assert finish["exit_code"] == 3
+
+
+def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Path) -> None:
+    job_path = tmp_path / "job.yaml"
+    machine_check_path = tmp_path / "machine-check.json"
+    machine_check_path.write_text("{}", encoding="utf-8")
+    job_path.write_text(
+        "name: study\n"
+        "model: provider/model\n"
+        "repetitions: 1\n"
+        "concurrency: 1\n"
+        "task_order: as_listed\n"
+        "tasks: {dataset: bench/tasks}\n"
+        "machine_check: machine-check.json\n"
+        "arms: [{label: arm, harness: fake, commit: " + "a" * 40 + ", fake: {}}]\n"
+        "proxy: {host: 127.0.0.1, port: 8766, container_host: host.docker.internal}\n"
+        "limits: {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "provider").mkdir()
+    (tmp_path / "provider" / "model.json").write_text(
+        json.dumps(
+            {
+                "id": "provider/model",
+                "upstream_model": "upstream-model",
+                "api": "chat",
+                "endpoints": [],
+                "key_env": [],
+                "tokens_per_minute": None,
+                "pricing": {"input": 0, "output": 0, "cached_read": 0},
+                "variants": {},
+                "withdrawn": False,
+                "reason": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "manifest.toml"
+    manifest_path.write_text("", encoding="utf-8")
+    lock_path = tmp_path / "host.lock"
+    holder = HostLock(lock_path)
+    holder.acquire()
+    machine_check = MachineCheck(
+        created_t=1.0,
+        tool_version="0.1.0",
+        harbor_version="0.23.0",
+        host_fingerprint="fingerprint",
+        task_source={"dataset": "bench/tasks"},
+        concurrency=1,
+        tasks=[{"name": "task-a", "digest": "sha256:task"}],
+        included=["task-a"],
+        verifier_timeout_multiplier=1.0,
+    )
+    started: list[bool] = []
+    checks = CheckDeps(
+        select_adapter=lambda *_args: object(),
+        measure=lambda: Sample(1.0, 4096, 0, 100.0, 0.0, 0, True),
+        inventory=lambda: Inventory(True, "ok", (), ()),
+        live_run=lambda _path: None,
+        host_lock=HostLock(lock_path),
+        read_machine_check=lambda _path: machine_check,
+        host_fingerprint=lambda: "fingerprint",
+        harbor_version=lambda: "0.23.0",
+    )
+    deps = RunDeps(
+        checks=checks,
+        tool=ToolIdentity("0.1.0", "a" * 40),
+        host=lambda: {
+            "fingerprint": "fingerprint",
+            "arch": "arm64",
+            "cpus": 8,
+            "memory_mb": 32768,
+            "docker_version": "27.0.0",
+        },
+        start_harbor=lambda *_args: started.append(True),
+        watch=lambda *_args: None,
+        start_services=lambda *_args: started.append(True),
+        stop_services=lambda *_args: None,
+        now=lambda: 1.0,
+    )
+
+    try:
+        result = run_job(
+            job_path,
+            tmp_path / "runs",
+            manifest_path,
+            {},
+            deps,
+        )
+    finally:
+        holder.release()
+
+    assert result.exit_code == 1
+    assert result.run_dir is not None
+    events = jsonl.read_rows(result.run_dir / "run-events.jsonl").rows
+    assert any(
+        event["type"] == "launch_check" and event["name"] == "single_run" and event["ok"] is False
+        for event in events
+    )
+    assert started == []
 
 
 def _finished_session(

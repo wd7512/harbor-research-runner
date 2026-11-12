@@ -12,6 +12,7 @@ from harbor_research_runner.docker_host import cleanup, resources
 from harbor_research_runner.docker_host.host_lock import HostLock
 from harbor_research_runner.evidence_bundle import build as evidence_build
 from harbor_research_runner.harness import build as harness_build
+from harbor_research_runner.job_config.job_file import load_job
 from harbor_research_runner.model_proxy.adapters import select_adapter
 from harbor_research_runner.records.machine_check import read
 from harbor_research_runner.results_explorer.loader import EvidenceStore
@@ -112,7 +113,7 @@ def _check_machine(args: argparse.Namespace, steps: Steps | None) -> int:
     deps = MachineCheckDeps(checks=checks, run_harbor=_run_harbor, now=time.time)
     checker = _step(steps, "check_machine", machine_check.run_machine_check)
     try:
-        result = checker(args.job, args.out, args.with_do_nothing, args.runs_dir, deps)
+        result = checker(load_job(args.job), args.out, args.with_do_nothing, args.runs_dir, deps)
     except Exception as exc:
         logger.error("machine check failed: %s", exc)
         return 1
@@ -183,6 +184,17 @@ def _clean_docker(args: argparse.Namespace, steps: Steps | None) -> int:
     except Exception as exc:
         logger.error("Docker cleanup failed: %s", exc)
         return 1
+    for name in report.planned_containers:
+        logger.info("planned container: %s", name)
+    for name in report.planned_networks:
+        logger.info("planned network: %s", name)
+    for name in report.skipped_attached:
+        logger.info("skipped attached network: %s", name)
+    if args.apply:
+        for name in report.removed_containers:
+            logger.info("removed container: %s", name)
+        for name in report.removed_networks:
+            logger.info("removed network: %s", name)
     if report.planned_containers or report.planned_networks or report.skipped_attached:
         return 1 if not args.apply else 0
     return 0

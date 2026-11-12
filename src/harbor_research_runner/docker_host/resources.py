@@ -187,17 +187,22 @@ def _fingerprint_parts(run: Callable) -> tuple[str, str, str, str]:
 
 
 def host_fingerprint(run: Callable = subprocess.run) -> str:
-    material = "|".join(_fingerprint_parts(run))
-    return hashlib.sha256(material.encode()).hexdigest()[:12]
+    return _fingerprint(_fingerprint_parts(run))
 
 
-def host_description() -> dict:
+def _fingerprint(parts: tuple[str, str, str, str]) -> str:
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:12]
+
+
+def host_description(run: Callable = subprocess.run) -> dict:
     try:
         memory_mb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // (1024**2)
     except (AttributeError, OSError, ValueError):
         memory_mb = 0
-    _, arch, cpus, docker_version = _fingerprint_parts(subprocess.run)
+    parts = _fingerprint_parts(run)
+    _, arch, cpus, docker_version = parts
     return {
+        "fingerprint": _fingerprint(parts),
         "arch": arch,
         "cpus": int(cpus) if cpus else 0,
         "memory_mb": memory_mb,
