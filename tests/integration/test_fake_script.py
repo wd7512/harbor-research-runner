@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -214,7 +215,9 @@ def _heartbeat_process_id(heartbeat: Path) -> int:
         check=True,
     )
     matching = [
-        line for line in result.stdout.splitlines() if str(heartbeat) in line and "-c" in line
+        line
+        for line in result.stdout.splitlines()
+        if str(heartbeat) in line and re.search(r"(^|\s)-c(\s|$)", line)
     ]
     assert len(matching) == 1, result.stdout
     return int(matching[0].split(None, 1)[0])

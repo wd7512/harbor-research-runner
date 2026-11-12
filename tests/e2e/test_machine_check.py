@@ -44,7 +44,7 @@ def test_check_machine_includes_the_bundled_say_hello_task(tmp_path: Path) -> No
                 "task_order: as_listed",
                 "tasks:",
                 f"  path: {task_root}",
-                "  include: [canary/say-hello]",
+                "  include: [say-hello]",
                 "  exclude: []",
                 "machine_check: machine-check.json",
                 "arms:",
@@ -76,4 +76,4 @@ def test_check_machine_includes_the_bundled_say_hello_task(tmp_path: Path) -> No
 
     assert result.returncode == 0, result.stdout + result.stderr
     check = json.loads(output.read_text(encoding="utf-8"))
-    assert check["included"] == ["canary/say-hello"]
+    assert check["included"] == ["say-hello"]
