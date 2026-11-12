@@ -15,6 +15,7 @@ def test_parse_args_uses_the_pinned_defaults() -> None:
     assert arguments.sleep_s == 0
     assert arguments.ignore_stop is False
     assert arguments.keep_requesting_s == 0
+    assert arguments.detached_heartbeat is None
     assert arguments.solve is False
     assert arguments.out == Path("/app/hello.txt")
 
@@ -36,6 +37,8 @@ def test_parse_args_accepts_every_flag() -> None:
             "--solve",
             "--out",
             "/tmp/hello.txt",
+            "--detached-heartbeat",
+            "/app/heartbeat.txt",
         ]
     )
 
@@ -46,6 +49,7 @@ def test_parse_args_accepts_every_flag() -> None:
     assert arguments.keep_requesting_s == 1.5
     assert arguments.solve is True
     assert arguments.out == Path("/tmp/hello.txt")
+    assert arguments.detached_heartbeat == Path("/app/heartbeat.txt")
 
 
 def test_parse_args_requires_the_base_url() -> None:

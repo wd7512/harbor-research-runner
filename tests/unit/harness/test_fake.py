@@ -96,6 +96,7 @@ def test_default_behavior_is_pinned() -> None:
     assert behavior.sleep_s == 0
     assert behavior.ignore_stop is False
     assert behavior.keep_requesting_s == 0
+    assert behavior.detached_heartbeat is None
     assert behavior.solve is True
 
 
@@ -160,6 +161,7 @@ def test_run_command_uses_the_default_behavior(make_agent) -> None:
     assert _value(arguments, "--exit-code") == "0"
     assert _value(arguments, "--sleep-s") == "0"
     assert _value(arguments, "--keep-requesting-s") == "0"
+    assert "--detached-heartbeat" not in arguments
     assert "--solve" in arguments
     assert "--ignore-stop" not in arguments
 
@@ -171,8 +173,13 @@ def test_run_command_uses_the_default_behavior(make_agent) -> None:
         ({"exit_code": 3}, "--exit-code", "3"),
         ({"sleep_s": 2.5}, "--sleep-s", "2.5"),
         ({"keep_requesting_s": 1.5}, "--keep-requesting-s", "1.5"),
+        (
+            {"detached_heartbeat": "/app/heartbeat.txt"},
+            "--detached-heartbeat",
+            "/app/heartbeat.txt",
+        ),
     ],
-    ids=["requests", "exit_code", "sleep_s", "keep_requesting_s"],
+    ids=["requests", "exit_code", "sleep_s", "keep_requesting_s", "detached_heartbeat"],
 )
 def test_run_command_uses_each_behavior_setting(
     make_agent, behavior: dict, flag: str, expected: str
@@ -207,6 +214,13 @@ def test_preflight_rejects_an_unknown_fake_behavior_field() -> None:
 def test_preflight_rejects_negative_counts_and_times(behavior: dict) -> None:
     with pytest.raises(ValueError):
         AgentFactory.run_preflight(_agent_config(_settings(fake=behavior)))
+
+
+def test_preflight_rejects_relative_detached_heartbeat_path() -> None:
+    with pytest.raises(ValueError):
+        AgentFactory.run_preflight(
+            _agent_config(_settings(fake={"detached_heartbeat": "heartbeat.txt"}))
+        )
 
 
 def test_construction_rejects_an_unknown_fake_behavior_field(tmp_path: Path) -> None:

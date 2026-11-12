@@ -7,6 +7,8 @@ import http.client
 import json
 import logging
 import signal
+import subprocess
+import sys
 import time
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -20,6 +22,18 @@ _BODY = {
     "messages": [{"role": "user", "content": "hello"}],
     "stream": True,
 }
+_HEARTBEAT_WORKER = """\
+import sys
+import time
+from pathlib import Path
+
+path = Path(sys.argv[1])
+while True:
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(f"{time.time()}\\n")
+        stream.flush()
+    time.sleep(0.5)
+"""
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -31,6 +45,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sleep-s", type=float, default=0)
     parser.add_argument("--ignore-stop", action="store_true")
     parser.add_argument("--keep-requesting-s", type=float, default=0)
+    parser.add_argument("--detached-heartbeat", type=Path)
     parser.add_argument("--solve", action="store_true")
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT)
     return parser.parse_args(argv)
@@ -52,6 +67,15 @@ def main(argv: list[str] | None = None) -> int:
     """Send the scripted requests and return the requested exit code."""
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if args.detached_heartbeat is not None:
+        subprocess.Popen(
+            [sys.executable, "-c", _HEARTBEAT_WORKER, str(args.detached_heartbeat)],
+            close_fds=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
     if args.ignore_stop:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     try:

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from harbor.agents.installed.base import BaseInstalledAgent
 from harbor.agents.options import InstalledAgentOptions
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from harbor_research_runner.harness.agents import (
     AgentSettings,
@@ -32,7 +32,15 @@ class FakeBehavior(BaseModel):
     sleep_s: float = Field(default=0, ge=0)
     ignore_stop: bool = False
     keep_requesting_s: float = Field(default=0, ge=0)
+    detached_heartbeat: str | None = None
     solve: bool = True
+
+    @field_validator("detached_heartbeat")
+    @classmethod
+    def _absolute_heartbeat_path(cls, value: str | None) -> str | None:
+        if value is not None and not Path(value).is_absolute():
+            raise ValueError("detached_heartbeat must be an absolute container path")
+        return value
 
 
 class FakeHarnessOptions(InstalledAgentOptions, AgentSettings):
@@ -84,6 +92,8 @@ class FakeHarnessAgent(PinnedHarness, BaseInstalledAgent):
             "--keep-requesting-s",
             str(self.fake.keep_requesting_s),
         ]
+        if self.fake.detached_heartbeat is not None:
+            arguments.extend(["--detached-heartbeat", self.fake.detached_heartbeat])
         if self.fake.ignore_stop:
             arguments.append("--ignore-stop")
         if self.fake.solve:
