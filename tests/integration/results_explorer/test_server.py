@@ -59,6 +59,12 @@ def test_api_routes_are_read_only_and_return_evidence(tmp_path: Path) -> None:
                     else:
                         responses[route] = json.loads(body)
         assert responses["/api/evidence"]
+        over_time = responses["/api/evidence/clean/over-time"]
+        assert set(over_time) == {"all", "by_arm"}
+        assert set(over_time["by_arm"]) == {
+            "alpha",
+            "beta",
+        }
         assert len(responses["/api/evidence/clean/trials"]) > 0
         assert (
             len(responses["/api/evidence/clean/trials.csv"].splitlines())

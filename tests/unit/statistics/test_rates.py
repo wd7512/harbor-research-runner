@@ -4,6 +4,7 @@ from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.statistics.rates import (
     arm_rates,
     pass_rate_over_time,
+    pass_rate_over_time_by_arm,
     task_arm_table,
     trials_in_view,
     wilson_interval,
@@ -146,3 +147,31 @@ def test_pass_rate_over_time_emits_empty_buckets_and_omits_missing_times():
         (bucket.start_t, bucket.passes, bucket.trials)
         for bucket in pass_rate_over_time(rows, bucket_s=100)
     ] == [(100.0, 1, 1), (200.0, 0, 0), (300.0, 0, 1)]
+
+
+def test_pass_rate_over_time_rate_is_passes_over_trials_and_none_for_an_empty_bucket():
+    rows = [
+        _row("pass", started=100.0, reward=1.0),
+        _row("fail", started=120.0, reward=0.0),
+        _row("late", started=310.0, reward=1.0),
+    ]
+
+    assert [bucket.rate for bucket in pass_rate_over_time(rows, bucket_s=100)] == [0.5, None, 1.0]
+
+
+def test_pass_rate_over_time_by_arm_aligns_buckets_to_a_shared_origin():
+    rows = [
+        _row("a-first", arm="arm-a", started=100.0, reward=1.0),
+        _row("b-first", arm="arm-b", started=250.0, reward=0.0),
+        _row("a-last", arm="arm-a", started=310.0, reward=0.0),
+    ]
+
+    result = pass_rate_over_time_by_arm(rows, bucket_s=100)
+
+    assert {
+        arm: [(bucket.start_t, bucket.passes, bucket.trials) for bucket in buckets]
+        for arm, buckets in result.items()
+    } == {
+        "arm-a": [(100.0, 1, 1), (200.0, 0, 0), (300.0, 0, 1)],
+        "arm-b": [(100.0, 0, 0), (200.0, 0, 1), (300.0, 0, 0)],
+    }

@@ -5,6 +5,7 @@ import io
 import json
 from dataclasses import fields
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from harbor_research_runner.records.trials import TrialRow
@@ -38,7 +39,9 @@ class _Handler(BaseHTTPRequestHandler):
             if not segments:
                 self._send(
                     200,
-                    b"<!doctype html><html><body><h1>Results explorer</h1></body></html>",
+                    files("harbor_research_runner.results_explorer")
+                    .joinpath("page.html")
+                    .read_bytes(),
                     "text/html; charset=utf-8",
                 )
                 return

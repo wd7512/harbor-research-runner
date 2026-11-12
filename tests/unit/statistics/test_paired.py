@@ -1,5 +1,5 @@
 from harbor_research_runner.records.trials import TrialRow
-from harbor_research_runner.statistics.paired import paired_difference
+from harbor_research_runner.statistics.paired import TaskDifference, paired_difference
 from tests.unit.statistics.test_rates import _row
 
 
@@ -36,6 +36,22 @@ def test_bootstrap_interval_collapses_when_task_differences_are_equal():
     assert result.low == result.high == result.mean_difference == 1.0
 
 
+def test_paired_result_includes_task_differences_sorted_by_task():
+    rows = [
+        _row("b-a", "task-b", "arm-a", reward=1.0),
+        _row("b-b", "task-b", "arm-b", reward=0.0),
+        _row("a-a", "task-a", "arm-a", reward=0.0),
+        _row("a-b", "task-a", "arm-b", reward=1.0),
+    ]
+
+    result = paired_difference(rows, "final", "arm-a", "arm-b", resamples=10)
+
+    assert result.per_task == (
+        TaskDifference("task-a", 0.0, 1.0, -1.0),
+        TaskDifference("task-b", 1.0, 0.0, 1.0),
+    )
+
+
 def test_tasks_missing_an_arm_are_counted_as_unpaired():
     rows = [
         _row("a1", "task-a", "arm-a"),
@@ -56,3 +72,4 @@ def test_no_paired_tasks_has_no_estimate_or_interval():
     result = paired_difference(rows, "final", "arm-a", "arm-b", resamples=5)
 
     assert (result.tasks, result.mean_difference, result.low, result.high) == (0, None, None, None)
+    assert result.per_task == ()
