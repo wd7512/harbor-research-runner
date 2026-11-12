@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from harbor_research_runner.harbor_adapter.folders import HarborFolderError, trial_folders
+from harbor_research_runner.harbor_adapter.task_files import task_id
 from harbor_research_runner.trial_validity.phase_table import failed_phase
 from harbor_research_runner.trial_validity.verdict import TrialFacts
 
@@ -20,10 +22,6 @@ _FACT_PHASES = {
 _PHASE_ORDER = ("environment_setup", "agent_setup", "agent", "verifier")
 
 
-class HarborFolderError(ValueError):
-    """A Harbor job folder cannot be read consistently."""
-
-
 @dataclass(frozen=True)
 class TrialDetails:
     turns: int | None
@@ -34,31 +32,14 @@ class TrialDetails:
     harness_commit: str | None
 
 
-def trial_folders(job_dir: Path) -> list[Path]:
-    """Return trial directories with a config file, ordered by folder name."""
-    try:
-        folders = [
-            child
-            for child in job_dir.iterdir()
-            if child.is_dir() and (child / "config.json").is_file()
-        ]
-    except OSError:
-        return []
-    return sorted(folders, key=lambda path: path.name)
-
-
 def read_trial(trial_dir: Path, *, arm: str | None = None) -> TrialFacts:
     """Read Harbor-owned trial output into the facts used by trial validity."""
     config = _read_config(trial_dir)
     task, trial_arm = _task_and_arm(config, trial_dir, arm)
     result = _read_result(trial_dir)
     trial = _trial_name(config, result, trial_dir)
-    if result is not None:
-        result_task = result.get("task_name")
-        if not isinstance(result_task, str) or result_task != task:
-            raise HarborFolderError(f"{trial_dir.name}: task mismatch in result.json")
-        if result.get("step_results"):
-            raise HarborFolderError(f"{trial_dir.name}: unsupported step_results in result.json")
+    if result is not None and result.get("step_results"):
+        raise HarborFolderError(f"{trial_dir.name}: unsupported step_results in result.json")
     if result is None or "agent_execution" not in result or "exception_info" not in result:
         return _empty_facts(trial, task, trial_arm)
     phase_started, phase_finished = _phase_times(result)
@@ -139,13 +120,14 @@ def task_digests(job_dir: Path) -> dict[str, str]:
     """Read task digests from trial lock files, refusing inconsistent pins."""
     digests: dict[str, str] = {}
     for trial_dir in trial_folders(job_dir):
+        config = _read_config(trial_dir)
+        name = _task_name(config, trial_dir)
         lock = _read_lock(trial_dir)
         task = lock.get("task")
         task = task if isinstance(task, dict) else {}
-        name = task.get("name")
         digest = task.get("digest")
-        if not isinstance(name, str) or not isinstance(digest, str):
-            raise HarborFolderError(f"{trial_dir.name}: missing task name or digest in lock.json")
+        if not isinstance(digest, str):
+            raise HarborFolderError(f"{trial_dir.name}: missing task digest in lock.json")
         previous = digests.get(name)
         if previous is not None and previous != digest:
             raise HarborFolderError(f"{trial_dir.name}: conflicting task digest for {name!r}")
@@ -186,27 +168,12 @@ def _read_lock(trial_dir: Path) -> dict[str, Any]:
 
 def _task_name(config: Mapping[str, Any], trial_dir: Path) -> str:
     task = config.get("task")
-    task = task if isinstance(task, dict) else {}
-    name = task.get("name")
-    if isinstance(name, str):
-        return name
-    path = task.get("path")
-    if isinstance(path, str) and path:
-        task_path = Path(path) / "task.toml"
-        try:
-            task_toml = tomllib.loads(task_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
-            raise HarborFolderError(
-                f"{trial_dir.name}: cannot read task name from {task_path}"
-            ) from exc
-        task_metadata = task_toml.get("task")
-        if not isinstance(task_metadata, dict):
-            return Path(path).name
-        task_name = task_metadata.get("name")
-        if isinstance(task_name, str):
-            return task_name
-        raise HarborFolderError(f"{trial_dir.name}: [task] in {task_path} has no string name")
-    raise HarborFolderError(f"{trial_dir.name}: missing task name in config.json")
+    if not isinstance(task, dict):
+        raise HarborFolderError(f"{trial_dir.name}: missing task config in config.json")
+    try:
+        return task_id(task).get_name()
+    except Exception as exc:
+        raise HarborFolderError(f"{trial_dir.name}: invalid task config in config.json") from exc
 
 
 def _agent_kwargs(config: Mapping[str, Any], trial_dir: Path) -> dict[str, Any]:

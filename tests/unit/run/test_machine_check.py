@@ -1,5 +1,6 @@
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -133,4 +134,58 @@ def test_run_machine_check_writes_results_and_keeps_the_host_lock(
     assert result.tasks[0]["nothing_reward"] == 0.0
     assert result.host_fingerprint == "fingerprint"
     assert checks.host_lock.held
+    checks.host_lock.release()
+
+
+def test_run_machine_check_uses_local_task_id_for_all_task_rows(
+    tmp_path: Path,
+) -> None:
+    task_dir = tmp_path / "say-hello"
+    task_dir.mkdir()
+    (task_dir / "task.toml").write_text(
+        '[task]\nname = "org/say-hello"\n[agent]\ntimeout_sec = 12\n[verifier]\ntimeout_sec = 3\n',
+        encoding="utf-8",
+    )
+    digest = "sha256:" + "a" * 64
+
+    def local_harbor(argv: list[str], cwd: Path) -> int:
+        job_name = argv[argv.index("--job-name") + 1]
+        trial_dir = cwd / job_name / "say-hello__trial"
+        shutil.copytree(FIXTURE_ROOT / "pass-bn-fit", trial_dir)
+        config = json.loads((trial_dir / "config.json").read_text(encoding="utf-8"))
+        config["task"] = {"path": str(task_dir)}
+        config["agent"] = {"name": "oracle" if job_name == "harbor-job" else "nop"}
+        (trial_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        lock = json.loads((trial_dir / "lock.json").read_text(encoding="utf-8"))
+        lock["task"] = {"name": "say-hello", "digest": digest}
+        (trial_dir / "lock.json").write_text(json.dumps(lock), encoding="utf-8")
+        result_path = trial_dir / "result.json"
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        result["task_name"] = "org/say-hello"
+        if job_name == "nop-job":
+            result["verifier_result"]["rewards"]["reward"] = 0.0
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        return 0
+
+    checks = _checks(tmp_path)
+    deps = MachineCheckDeps(checks, local_harbor, lambda: 1_800_000_000.0)
+    job = replace(
+        _job(),
+        tasks=TaskSource("path", None, str(task_dir), None, None, ("say-hello",), ()),
+    )
+
+    result = run_machine_check(
+        job, tmp_path / "checks" / "local.json", True, tmp_path / "runs", deps
+    )
+
+    assert result.included == ["say-hello"]
+    task = result.tasks[0]
+    assert task["name"] == "say-hello"
+    assert task["digest"] == digest
+    assert task["oracle_reward"] == 1.0
+    assert task["agent_budget_s"] == 12.0
+    assert task["verifier_budget_s"] == 3.0
+    assert task["nothing_reward"] == 0.0
+    assert task["agent_s"] > 0
+    assert task["verifier_s"] > 0
     checks.host_lock.release()
