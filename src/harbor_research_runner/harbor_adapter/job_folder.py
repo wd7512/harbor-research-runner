@@ -69,6 +69,7 @@ def read_trial(trial_dir: Path) -> TrialFacts:
         has_result=True,
         reward=_reward(result),
         exception_type=_exception_type(result),
+        exception_at=_exception_at(result),
         phase_started=phase_started,
         phase_finished=phase_finished,
         harbor_reported_tokens=_reported_tokens(result),
@@ -237,6 +238,7 @@ def _empty_facts(trial: str, task: str, arm: str) -> TrialFacts:
         has_result=False,
         reward=None,
         exception_type=None,
+        exception_at=None,
         phase_started=empty_phases.copy(),
         phase_finished=empty_phases.copy(),
         harbor_reported_tokens=0,
@@ -290,6 +292,12 @@ def _exception_type(result: Mapping[str, Any]) -> str | None:
     info = info if isinstance(info, dict) else {}
     exception = info.get("exception_type")
     return exception if isinstance(exception, str) and exception else None
+
+
+def _exception_at(result: Mapping[str, Any]) -> float | None:
+    info = result.get("exception_info")
+    info = info if isinstance(info, dict) else {}
+    return _timestamp(info.get("occurred_at"))
 
 
 def _reported_tokens(result: Mapping[str, Any]) -> int:

@@ -42,6 +42,7 @@ def _facts(**overrides):
         "has_result": True,
         "reward": 1.0,
         "exception_type": None,
+        "exception_at": None,
         "phase_started": phase_started,
         "phase_finished": phase_finished,
         "harbor_reported_tokens": 100,
@@ -291,6 +292,23 @@ def test_agent_phase_failure_without_requests_is_valid_failure():
     assert verdict.valid
     assert set(verdict.labels) == {"timed_out", "no_requests"}
     assert verdict.measured
+
+
+def test_exception_before_verifier_is_labelled_as_agent_exit():
+    started, finished = _phases(verifier=(6.0, 7.0))
+    verdict = _judge(
+        _facts(
+            reward=0.0,
+            exception_type="NonZeroAgentExitCodeError",
+            exception_at=5.0,
+            phase_started=started,
+            phase_finished=finished,
+        )
+    )
+
+    assert verdict.valid
+    assert "exit_nonzero" in verdict.labels
+    assert "verifier_failed" not in verdict.labels
 
 
 def test_repeated_setup_failure_counts_as_failure():
