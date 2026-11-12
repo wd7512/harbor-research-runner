@@ -1,0 +1,8 @@
+[task]
+name = "terminal-bench/pytorch-model-cli"
+
+[agent]
+timeout_sec = 900.0
+
+[verifier]
+timeout_sec = 900.0

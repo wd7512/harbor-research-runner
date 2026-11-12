@@ -13,3 +13,24 @@ Every file in this folder has one line here saying where it came from. No file o
 | `opencode_eras/2x.json` | Ported from OLD `tests/fixtures/opencode_eras/2x.json`; the proxy URL is trial-scoped and the `x-trial-id` header is removed. |
 | `opencode_eras/2x.cmd` | Ported from OLD `tests/fixtures/opencode_eras/2x.cmd`. |
 | `opencode_build/opencode-1.19.5-listing.txt` | `tar -tzf` archive entries for the public upstream commit `810c0eba1a7348036f8bdf61e6632d0c36c6876c` (v1.19.5) of `https://github.com/anomalyco/opencode`. |
+| `harbor_job/README.md` | Provenance and redaction notes for approved Harbor 0.23.0 samples from the two source runs listed in the file. |
+| `harbor_job/config.json` | Trimmed Harbor job config from the approved 12 Nov 2026 sample; product agent settings substituted as documented in `harbor_job/README.md`. |
+| `harbor_job/result.json` | Trimmed Harbor job result from the approved 12 Nov 2026 sample. |
+| `harbor_job/lock.json` | Trimmed Harbor job lock with the four selected task locks from the approved 12 Nov 2026 sample. |
+| `harbor_job/pass-bn-fit/config.json` | Trimmed Harbor trial config from the pass sample; agent settings use the product shape documented in `harbor_job/README.md`. |
+| `harbor_job/pass-bn-fit/result.json` | Trimmed Harbor trial result from the pass sample. |
+| `harbor_job/pass-bn-fit/lock.json` | Trimmed Harbor trial lock from the pass sample. |
+| `harbor_job/pass-bn-fit/agent/trajectory.json` | Structure-trimmed trajectory from the redacted pass sample; free text is replaced and counted entries are retained. |
+| `harbor_job/fail-break-filter/config.json` | Trimmed Harbor trial config from the failed-trial sample; agent settings use the product shape documented in `harbor_job/README.md`. |
+| `harbor_job/fail-break-filter/result.json` | Trimmed Harbor trial result from the failed-trial sample. |
+| `harbor_job/fail-break-filter/lock.json` | Trimmed Harbor trial lock from the failed-trial sample. |
+| `harbor_job/timeout-git-multibranch-2027run/config.json` | Trimmed Harbor trial config from the timeout sample; agent settings use the product shape documented in `harbor_job/README.md`. |
+| `harbor_job/timeout-git-multibranch-2027run/result.json` | Trimmed Harbor trial result from the timeout sample. |
+| `harbor_job/timeout-git-multibranch-2027run/lock.json` | Trimmed Harbor trial lock from the timeout sample. |
+| `harbor_job/nonzeroexit-pytorch-2027run/config.json` | Trimmed Harbor trial config from the nonzero-exit sample; agent settings use the product shape documented in `harbor_job/README.md`. |
+| `harbor_job/nonzeroexit-pytorch-2027run/result.json` | Trimmed Harbor trial result from the nonzero-exit sample. |
+| `harbor_job/nonzeroexit-pytorch-2027run/lock.json` | Trimmed Harbor trial lock from the nonzero-exit sample. |
+| `harbor_job/task-tomls/bn-fit-modify.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/bn-fit-modify`. |
+| `harbor_job/task-tomls/break-filter-js-from-html.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/break-filter-js-from-html`. |
+| `harbor_job/task-tomls/git-multibranch.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/git-multibranch`. |
+| `harbor_job/task-tomls/pytorch-model-cli.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/pytorch-model-cli`. |

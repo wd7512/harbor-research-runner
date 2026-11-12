@@ -1,0 +1,8 @@
+[task]
+name = "terminal-bench/bn-fit-modify"
+
+[agent]
+timeout_sec = 3600.0
+
+[verifier]
+timeout_sec = 3600.0
