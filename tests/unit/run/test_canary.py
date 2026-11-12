@@ -1,5 +1,8 @@
 from pathlib import Path
 
+from harbor.models.job.config import DatasetConfig
+from harbor.models.task.id import LocalTaskId
+
 from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
 from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.run.canary import canary_job_config, canary_passed
@@ -75,12 +78,24 @@ def test_canary_job_config_uses_the_bundled_task_once() -> None:
     assert config["datasets"] == [
         {
             "path": str(Path(__file__).parents[3] / "src/harbor_research_runner/run/canary_task"),
-            "task_names": ["canary/say-hello"],
+            "task_names": ["say-hello"],
         }
     ]
     assert config["agents"] == [
         {"import_path": "agent.path:Agent", "kwargs": {"arm_label": "arm-a"}}
     ]
+
+
+def test_harbor_selects_the_canary_task_from_its_dataset() -> None:
+    dataset = canary_job_config(_job(), [("agent.path:Agent", {"arm_label": "arm-a"})], 1.5)[
+        "datasets"
+    ][0]
+    source = Path(dataset["path"])
+    task_ids = [LocalTaskId(path=path) for path in source.iterdir() if path.is_dir()]
+
+    selected = DatasetConfig.model_validate(dataset)._filter_task_ids(task_ids)
+
+    assert [task_id.get_name() for task_id in selected] == ["say-hello"]
 
 
 def test_canary_passes_for_every_arm() -> None:
