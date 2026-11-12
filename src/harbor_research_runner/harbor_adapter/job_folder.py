@@ -47,10 +47,10 @@ def trial_folders(job_dir: Path) -> list[Path]:
     return sorted(folders, key=lambda path: path.name)
 
 
-def read_trial(trial_dir: Path) -> TrialFacts:
+def read_trial(trial_dir: Path, *, arm: str | None = None) -> TrialFacts:
     """Read Harbor-owned trial output into the facts used by trial validity."""
     config = _read_config(trial_dir)
-    task, arm = _task_and_arm(config, trial_dir)
+    task, trial_arm = _task_and_arm(config, trial_dir, arm)
     result = _read_result(trial_dir)
     trial = _trial_name(config, result, trial_dir)
     if result is not None:
@@ -60,12 +60,12 @@ def read_trial(trial_dir: Path) -> TrialFacts:
         if result.get("step_results"):
             raise HarborFolderError(f"{trial_dir.name}: unsupported step_results in result.json")
     if result is None or "agent_execution" not in result or "exception_info" not in result:
-        return _empty_facts(trial, task, arm)
+        return _empty_facts(trial, task, trial_arm)
     phase_started, phase_finished = _phase_times(result)
     return TrialFacts(
         trial=trial,
         task=task,
-        arm=arm,
+        arm=trial_arm,
         has_result=True,
         reward=_reward(result),
         exception_type=_exception_type(result),
@@ -188,9 +188,25 @@ def _task_name(config: Mapping[str, Any], trial_dir: Path) -> str:
     task = config.get("task")
     task = task if isinstance(task, dict) else {}
     name = task.get("name")
-    if not isinstance(name, str):
-        raise HarborFolderError(f"{trial_dir.name}: missing task name in config.json")
-    return name
+    if isinstance(name, str):
+        return name
+    path = task.get("path")
+    if isinstance(path, str) and path:
+        task_path = Path(path) / "task.toml"
+        try:
+            task_toml = tomllib.loads(task_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+            raise HarborFolderError(
+                f"{trial_dir.name}: cannot read task name from {task_path}"
+            ) from exc
+        task_metadata = task_toml.get("task")
+        if not isinstance(task_metadata, dict):
+            return Path(path).name
+        task_name = task_metadata.get("name")
+        if isinstance(task_name, str):
+            return task_name
+        raise HarborFolderError(f"{trial_dir.name}: [task] in {task_path} has no string name")
+    raise HarborFolderError(f"{trial_dir.name}: missing task name in config.json")
 
 
 def _agent_kwargs(config: Mapping[str, Any], trial_dir: Path) -> dict[str, Any]:
@@ -202,8 +218,12 @@ def _agent_kwargs(config: Mapping[str, Any], trial_dir: Path) -> dict[str, Any]:
     return kwargs
 
 
-def _task_and_arm(config: Mapping[str, Any], trial_dir: Path) -> tuple[str, str]:
+def _task_and_arm(
+    config: Mapping[str, Any], trial_dir: Path, arm: str | None = None
+) -> tuple[str, str]:
     task = _task_name(config, trial_dir)
+    if arm is not None:
+        return task, arm
     kwargs = _agent_kwargs(config, trial_dir)
     arm = kwargs.get("arm_label")
     if not isinstance(arm, str):

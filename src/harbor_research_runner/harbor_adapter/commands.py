@@ -25,12 +25,17 @@ def job_config(
             {"import_path": import_path, "kwargs": settings} for import_path, settings in agents
         ],
     }
+    config.update(_task_entries(job, task_names))
+    return config
+
+
+def _task_entries(job: Job, task_names: list[str]) -> dict:
     if job.tasks.kind == "dataset":
-        config["datasets"] = [{"name": job.tasks.dataset, "task_names": task_names}]
-    elif job.tasks.kind == "path":
-        config["datasets"] = [{"path": job.tasks.path, "task_names": task_names}]
-    else:
-        config["tasks"] = [
+        return {"datasets": [{"name": job.tasks.dataset, "task_names": task_names}]}
+    if job.tasks.kind == "path":
+        return {"datasets": [{"path": job.tasks.path, "task_names": task_names}]}
+    return {
+        "tasks": [
             {
                 "path": task_name,
                 "git_url": job.tasks.git_url,
@@ -38,7 +43,36 @@ def job_config(
             }
             for task_name in task_names
         ]
-    return config
+    }
+
+
+def oracle_job_config(job: Job, task_names: list[str], agent_name: str, job_name: str) -> dict:
+    if agent_name not in {"oracle", "nop"}:
+        raise ValueError(f"unsupported machine-check agent {agent_name!r}")
+    return {
+        "job_name": job_name,
+        "n_attempts": 1,
+        "n_concurrent_trials": job.concurrency,
+        "retry": {"max_retries": 0},
+        "verifier_timeout_multiplier": 1.0,
+        "agents": [{"name": agent_name}],
+        **_task_entries(job, task_names),
+    }
+
+
+def machine_check_command(check_dir: Path, job_name: str, config_name: str) -> list[str]:
+    return [
+        "uv",
+        "run",
+        "harbor",
+        "run",
+        "--config",
+        str(check_dir / config_name),
+        "--jobs-dir",
+        str(check_dir),
+        "--job-name",
+        job_name,
+    ]
 
 
 def write_job_config(path: Path, config: dict) -> None:

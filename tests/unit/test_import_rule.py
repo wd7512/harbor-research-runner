@@ -43,6 +43,7 @@ HARBOR_IMPORTERS = {
     "harness/agents.py",
     "harness/fake.py",
     "harbor_adapter/plugin.py",
+    "harbor_adapter/task_files.py",
 }
 
 

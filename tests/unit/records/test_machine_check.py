@@ -13,7 +13,13 @@ def _machine_check():
         host_fingerprint="fingerprint",
         task_source={},
         concurrency=1,
-        tasks=[],
+        tasks=[
+            {
+                "name": "bn-fit-modify",
+                "agent_budget_s": 3600.0,
+                "verifier_budget_s": 60.0,
+            }
+        ],
         included=[],
         verifier_timeout_multiplier=2.0,
     )

@@ -204,6 +204,81 @@ def test_real_fixture_produces_expected_trial_facts(
         assert failed_phase(facts) == "agent"
 
 
+def test_trial_without_agent_settings_is_refused_unless_the_caller_names_the_arm(
+    tmp_path: Path,
+) -> None:
+    trial_dir = tmp_path / "oracle-trial"
+    shutil.copytree(FIXTURE_ROOT / "pass-bn-fit", trial_dir)
+    config = json.loads((trial_dir / "config.json").read_text(encoding="utf-8"))
+    config["agent"] = {"name": "oracle"}
+    (trial_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(HarborFolderError, match="missing agent settings"):
+        read_trial(trial_dir)
+    facts = read_trial(trial_dir, arm="oracle")
+
+    assert facts.task == "terminal-bench/bn-fit-modify"
+    assert facts.arm == "oracle"
+
+
+def test_local_task_config_uses_path_name_when_task_name_is_absent(tmp_path: Path) -> None:
+    trial_dir = tmp_path / "local-trial"
+    shutil.copytree(FIXTURE_ROOT / "pass-bn-fit", trial_dir)
+    task_dir = tmp_path / "say-hello"
+    task_dir.mkdir()
+    (task_dir / "task.toml").write_text('[task]\nname = "canary/say-hello"\n', encoding="utf-8")
+    config = json.loads((trial_dir / "config.json").read_text(encoding="utf-8"))
+    config["task"] = {"path": str(task_dir)}
+    config["agent"] = {"name": "oracle"}
+    (trial_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    result = json.loads((trial_dir / "result.json").read_text(encoding="utf-8"))
+    result["task_name"] = "canary/say-hello"
+    (trial_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+
+    facts = read_trial(trial_dir, arm="oracle")
+
+    assert facts.task == "canary/say-hello"
+    assert facts.arm == "oracle"
+
+
+def test_local_task_without_a_task_table_is_named_by_its_folder_as_harbor_does(
+    tmp_path: Path,
+) -> None:
+    trial_dir = tmp_path / "local-trial"
+    shutil.copytree(FIXTURE_ROOT / "pass-bn-fit", trial_dir)
+    task_dir = tmp_path / "say-hello"
+    task_dir.mkdir()
+    (task_dir / "task.toml").write_text("[agent]\ntimeout_sec = 60\n", encoding="utf-8")
+    config = json.loads((trial_dir / "config.json").read_text(encoding="utf-8"))
+    config["task"] = {"path": str(task_dir)}
+    (trial_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    result = json.loads((trial_dir / "result.json").read_text(encoding="utf-8"))
+    result["task_name"] = "say-hello"
+    (trial_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+
+    assert read_trial(trial_dir, arm="oracle").task == "say-hello"
+
+
+def test_trial_reader_accepts_the_machine_check_agent_label(tmp_path: Path) -> None:
+    trial_dir = tmp_path / "local-trial"
+    shutil.copytree(FIXTURE_ROOT / "pass-bn-fit", trial_dir)
+    task_dir = tmp_path / "say-hello"
+    task_dir.mkdir()
+    (task_dir / "task.toml").write_text('[task]\nname = "say-hello"\n', encoding="utf-8")
+    config = json.loads((trial_dir / "config.json").read_text(encoding="utf-8"))
+    config["task"] = {"path": str(task_dir)}
+    config.pop("agent")
+    (trial_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    result = json.loads((trial_dir / "result.json").read_text(encoding="utf-8"))
+    result["task_name"] = "say-hello"
+    (trial_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+
+    facts = read_trial(trial_dir, arm="oracle")
+
+    assert facts.task == "say-hello"
+    assert facts.arm == "oracle"
+
+
 @pytest.mark.parametrize("result_text", [None, "", "not-json", "[]"])
 def test_missing_empty_unparseable_or_non_object_result_has_no_result(
     tmp_path: Path, result_text: str | None
