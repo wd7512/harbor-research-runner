@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import queue
 import re
+import socket
+import threading
 import time
 import uuid
 from collections.abc import Callable, Generator, Iterator, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -16,10 +20,20 @@ from harbor_research_runner.model_proxy.chars import (
     prompt_chars_of_payload,
 )
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
+from harbor_research_runner.model_proxy.status import (
+    UpstreamOutcome,
+    classify,
+    retry_after_seconds,
+    status_for_harness,
+)
 from harbor_research_runner.model_proxy.timing import StreamClock
 from harbor_research_runner.model_proxy.usage import normalize_usage
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.proxy_ledger import RequestEnd, RequestStart
+
+_UNAVAILABLE_BODY = (
+    b'{"error": {"message": "upstream unavailable", "type": "upstream_unavailable"}}'
+)
 
 
 @dataclass(frozen=True)
@@ -50,10 +64,233 @@ class RelayResponse:
             closer()
 
 
-class _OwnedChunks:
-    def __init__(self, source: Generator[bytes, None, None], response: httpx.Response) -> None:
-        self._source = source
+@dataclass
+class _Observation:
+    http_status: int | None = None
+    retry_after_s: float | None = None
+    error_body: str = ""
+    got_terminator: bool = False
+    cut_by_proxy: str | None = None
+    transport_failed: bool = False
+    client_disconnected: bool = False
+    served_model: str | None = None
+    usage: dict[str, int] | None = None
+    completion_chars: int = 0
+
+    def outcome(self) -> UpstreamOutcome:
+        return UpstreamOutcome(
+            http_status=self.http_status,
+            retry_after_s=self.retry_after_s,
+            error_body=self.error_body,
+            got_terminator=self.got_terminator,
+            cut_by_proxy=self.cut_by_proxy,
+            transport_failed=self.transport_failed,
+            client_disconnected=self.client_disconnected,
+        )
+
+
+class _Cut(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class _Transport(Exception):
+    pass
+
+
+class _UpstreamBody:
+    def __init__(self, response: httpx.Response, limits: Limits, started: float) -> None:
         self._response = response
+        self._limits = limits
+        self._started = started
+        self._timing_lock = threading.Lock()
+        self._waiting_since: float | None = None
+        self._last_chunk_at: float | None = None
+        self._queue: queue.Queue[tuple[str, object]] = queue.Queue(maxsize=16)
+        self._ended = False
+        self._closed = False
+        self._finished = threading.Event()
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    def _put(self, item: tuple[str, object]) -> bool:
+        while not self._closed:
+            try:
+                self._queue.put(item, timeout=0.05)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def _pump(self) -> None:
+        try:
+            chunks = iter(self._response.iter_bytes())
+            while not self._closed:
+                with self._timing_lock:
+                    self._waiting_since = time.monotonic()
+                try:
+                    chunk = next(chunks)
+                except StopIteration:
+                    break
+                arrived = time.monotonic()
+                with self._timing_lock:
+                    self._waiting_since = None
+                    if chunk:
+                        self._last_chunk_at = arrived
+                if self._closed:
+                    return
+                if chunk and not self._put(("chunk", (chunk, arrived))):
+                    return
+        except BaseException as exc:
+            with self._timing_lock:
+                self._waiting_since = None
+            self._put(("error", exc))
+        else:
+            with self._timing_lock:
+                self._waiting_since = None
+            self._put(("end", None))
+        finally:
+            with self._timing_lock:
+                self._waiting_since = None
+            with suppress(Exception):
+                self._response.close()
+            self._finished.set()
+
+    def _cut_reason(self, first_chunk: bool, now: float) -> str | None:
+        if now - self._started >= self._limits.request_latency_max_s:
+            return "latency"
+        with self._timing_lock:
+            waiting_since = self._waiting_since
+            last_chunk_at = self._last_chunk_at
+        if (
+            last_chunk_at is None
+            and first_chunk
+            and now - self._started >= self._limits.first_chunk_max_s
+        ):
+            return "first_chunk"
+        if (
+            last_chunk_at is not None
+            and waiting_since is not None
+            and now - waiting_since >= self._limits.inter_chunk_gap_max_s
+        ):
+            return "gap"
+        return None
+
+    def next(self, *, first_chunk: bool) -> bytes | None:
+        if self._ended:
+            return None
+        while True:
+            now = time.monotonic()
+            if now - self._started >= self._limits.request_latency_max_s:
+                raise _Cut("latency")
+            try:
+                kind, value = self._queue.get_nowait()
+            except queue.Empty:
+                reason = self._cut_reason(first_chunk, now)
+                if reason is not None:
+                    raise _Cut(reason) from None
+                try:
+                    kind, value = self._queue.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+            if time.monotonic() - self._started >= self._limits.request_latency_max_s:
+                raise _Cut("latency")
+            if kind == "error":
+                self._ended = True
+                raise _Transport from None
+            if kind == "end":
+                self._ended = True
+                return None
+            chunk, _arrived = cast(tuple[bytes, float], value)
+            return chunk
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if not self._finished.is_set():
+            network_stream = self._response.extensions.get("network_stream")
+            raw_socket = (
+                network_stream.get_extra_info("socket") if network_stream is not None else None
+            )
+            if raw_socket is not None:
+                with suppress(OSError, ValueError):
+                    raw_socket.shutdown(socket.SHUT_RDWR)
+                self._thread.join(timeout=0.2)
+            else:
+                with suppress(Exception):
+                    self._response.close()
+
+
+class _RelayState:
+    def __init__(
+        self,
+        deps: RelayDeps,
+        trial: str,
+        request_id: str,
+        clock: StreamClock,
+        observation: _Observation,
+        body: _UpstreamBody | None,
+    ) -> None:
+        self.deps = deps
+        self.trial = trial
+        self.request_id = request_id
+        self.clock = clock
+        self.observation = observation
+        self.body = body
+        self.header_status: int | None = None
+        self._written = False
+        self._http_status: int | None = None
+
+    def finish(self, http_status: int | None = None) -> int:
+        if self._written:
+            assert self._http_status is not None
+            return self._http_status
+        upstream_status = classify(self.observation.outcome())
+        if http_status is None:
+            http_status = status_for_harness(upstream_status, self.observation.http_status)
+        self._http_status = http_status
+        self._written = True
+        tokens = self.observation.usage or {}
+        self.deps.ledger.write(
+            RequestEnd(
+                0,
+                0.0,
+                self.trial,
+                self.request_id,
+                http_status,
+                upstream_status,
+                self.observation.http_status,
+                self.observation.served_model,
+                tokens.get("prompt_tokens"),
+                tokens.get("completion_tokens"),
+                tokens.get("cached_read_tokens"),
+                self.observation.completion_chars,
+                self.clock.first_chunk_s,
+                self.clock.first_content_s,
+                self.clock.finish(),
+                0,
+                self.observation.error_body[:500] or None,
+            )
+        )
+        return http_status
+
+    def client_disconnect(self) -> None:
+        if self._written:
+            return
+        self.observation.client_disconnected = True
+        self.finish(self.header_status)
+
+    def close_body(self) -> None:
+        if self.body is not None:
+            self.body.close()
+
+
+class _OwnedChunks:
+    def __init__(self, source: Generator[bytes, None, None], state: _RelayState) -> None:
+        self._source = source
+        self._state = state
         self._closed = False
 
     def __iter__(self) -> _OwnedChunks:
@@ -75,10 +312,11 @@ class _OwnedChunks:
         if self._closed:
             return
         self._closed = True
+        self._state.client_disconnect()
         try:
             self._source.close()
         finally:
-            self._response.close()
+            self._state.close_body()
 
 
 def relay_chat(
@@ -116,148 +354,231 @@ def relay_chat(
     if route.key is not None:
         upstream_headers["authorization"] = f"Bearer {route.key}"
     request = deps.client.build_request(
-        "POST", route.endpoint, headers=upstream_headers, json=outbound
+        "POST",
+        route.endpoint,
+        headers=upstream_headers,
+        json=outbound,
+        timeout=_header_timeout(
+            deps.client,
+            deps.limits.first_chunk_max_s,
+            deps.limits.request_latency_max_s,
+        ),
     )
-    response = deps.client.send(request, stream=True)
-    content_type = response.headers.get("content-type", "application/json")
-    chunks = _OwnedChunks(_chunks(response, deps, trial, request_id, clock, is_stream), response)
-    return RelayResponse(
-        http_status=response.status_code,
-        headers={"Content-Type": content_type},
-        chunks=chunks,
-    )
-
-
-def _read_body(response: httpx.Response, clock: StreamClock) -> bytes:
-    body = bytearray()
-    for chunk in response.iter_bytes():
-        if not chunk:
-            continue
-        clock.mark_chunk()
-        body.extend(chunk)
-    return bytes(body)
-
-
-def _chunks(
-    response: httpx.Response,
-    deps: RelayDeps,
-    trial: str,
-    request_id: str,
-    clock: StreamClock,
-    is_stream: bool,
-) -> Generator[bytes, None, None]:
+    observation = _Observation()
+    started = time.monotonic()
     try:
-        if response.status_code != 200:
-            body = _read_body(response, clock)
-            _write_end(
-                deps,
-                trial,
-                request_id,
-                response.status_code,
-                "server_error",
-                None,
-                None,
-                0,
-                clock,
+        response = deps.client.send(request, stream=True)
+    except httpx.TimeoutException as exc:
+        if isinstance(exc, httpx.ReadTimeout):
+            observation.cut_by_proxy = (
+                "latency"
+                if deps.limits.request_latency_max_s <= deps.limits.first_chunk_max_s
+                else "first_chunk"
             )
-            if body:
-                yield body
+        else:
+            observation.transport_failed = True
+        state = _RelayState(deps, trial, request_id, clock, observation, None)
+        status = state.finish()
+        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+    except httpx.TransportError:
+        observation.transport_failed = True
+        state = _RelayState(deps, trial, request_id, clock, observation, None)
+        status = state.finish()
+        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+
+    request.extensions.setdefault("timeout", {})["read"] = None
+    observation.http_status = response.status_code
+    observation.retry_after_s = retry_after_seconds(response.headers.get("Retry-After"))
+    response_headers = _response_headers(response)
+    body = _UpstreamBody(response, deps.limits, started)
+    state = _RelayState(deps, trial, request_id, clock, observation, body)
+
+    if response.status_code != 200:
+        return _error_response(state, response.charset_encoding or "utf-8", response_headers)
+
+    try:
+        first = body.next(first_chunk=True)
+    except _Cut as cut:
+        observation.cut_by_proxy = cut.reason
+        state.close_body()
+        status = state.finish()
+        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+    except _Transport:
+        observation.transport_failed = True
+        state.close_body()
+        status = state.finish()
+        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+
+    if first is not None:
+        clock.mark_chunk()
+
+    if not is_stream:
+        state.header_status = 200
+        return RelayResponse(
+            200, response_headers, _OwnedChunks(_nonstream_chunks(state, first), state)
+        )
+
+    if first is None:
+        state.header_status = 200
+        state.close_body()
+        status = state.finish(200)
+        return RelayResponse(status, response_headers, iter([]))
+
+    state.header_status = 200
+    return RelayResponse(200, response_headers, _OwnedChunks(_stream_chunks(state, first), state))
+
+
+def _error_response(state: _RelayState, charset: str, headers: dict[str, str]) -> RelayResponse:
+    observation = state.observation
+    assert state.body is not None
+    try:
+        body = _collect(state.body, state.clock, first_chunk=True)
+    except _Cut as cut:
+        observation.cut_by_proxy = cut.reason
+        state.close_body()
+        status = state.finish()
+        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+    except _Transport:
+        observation.transport_failed = True
+        state.close_body()
+        status = state.finish()
+        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+    observation.error_body = body.decode(charset, errors="replace")[:500]
+    state.close_body()
+    status = state.finish()
+    return RelayResponse(status, headers, iter([body] if body else []))
+
+
+def _nonstream_chunks(state: _RelayState, first: bytes | None) -> Generator[bytes, None, None]:
+    observation = state.observation
+    assert state.body is not None
+    try:
+        try:
+            body = _collect_with_first(state.body, state.clock, first)
+        except _Cut as cut:
+            observation.cut_by_proxy = cut.reason
             return
-        if not is_stream:
-            body = _read_body(response, clock)
-            obj = _json_object(body)
-            usage = normalize_usage(obj)
-            completion_chars = chat_completion_chars(obj)
-            if completion_chars:
-                clock.mark_content()
-            _write_end(
-                deps,
-                trial,
-                request_id,
-                response.status_code,
-                "ok" if obj is not None else "server_error",
-                _served_model_of(obj),
-                usage,
-                completion_chars,
-                clock,
-            )
-            if body:
-                yield body
+        except _Transport:
+            observation.transport_failed = True
             return
-        yield from _stream_chunks(response, deps, trial, request_id, clock)
+        obj = _json_object(body)
+        observation.usage = normalize_usage(obj)
+        observation.completion_chars = chat_completion_chars(obj)
+        if observation.completion_chars:
+            state.clock.mark_content()
+        observation.served_model = _served_model_of(obj)
+        observation.got_terminator = obj is not None
+        state.finish(state.header_status)
+        state.close_body()
+        if body:
+            yield body
     finally:
-        response.close()
+        state.finish(state.header_status)
+        state.close_body()
+
+
+def _collect(body: _UpstreamBody, clock: StreamClock, *, first_chunk: bool) -> bytes:
+    chunks: list[bytes] = []
+    chunk = body.next(first_chunk=first_chunk)
+    while chunk is not None:
+        clock.mark_chunk()
+        chunks.append(chunk)
+        chunk = body.next(first_chunk=False)
+    return b"".join(chunks)
+
+
+def _collect_with_first(body: _UpstreamBody, clock: StreamClock, first: bytes | None) -> bytes:
+    chunks: list[bytes] = []
+    if first is None:
+        return b""
+    chunks.append(first)
+    while True:
+        chunk = body.next(first_chunk=False)
+        if chunk is None:
+            return b"".join(chunks)
+        clock.mark_chunk()
+        chunks.append(chunk)
+
+
+def _stream_chunks(state: _RelayState, first: bytes) -> Generator[bytes, None, None]:
+    observation = state.observation
+    assert state.body is not None
+    tail: list[bytes] = []
+    aborted = False
+    try:
+        try:
+            for raw, obj, done in _iter_events(_chunk_stream(state.body, first), state.clock):
+                found_usage, found_chars, found_model = _observe(obj, state.clock)
+                if found_usage is not None:
+                    observation.usage = found_usage
+                if found_model is not None:
+                    observation.served_model = found_model
+                observation.completion_chars += found_chars
+                if tail or done or _is_terminal(obj):
+                    tail.append(raw)
+                    if done:
+                        observation.got_terminator = True
+                        break
+                    continue
+                yield raw
+        except _Cut as cut:
+            observation.cut_by_proxy = cut.reason
+            aborted = True
+        except _Transport:
+            observation.transport_failed = True
+            aborted = True
+        finally:
+            state.finish(state.header_status)
+            state.close_body()
+        if tail and not aborted:
+            for raw in tail:
+                yield raw
+    finally:
+        state.finish(state.header_status)
+        state.close_body()
+
+
+def _chunk_stream(body: _UpstreamBody, first: bytes) -> Iterator[bytes]:
+    yield first
+    while True:
+        chunk = body.next(first_chunk=False)
+        if chunk is None:
+            return
+        yield chunk
+
+
+def _response_headers(response: httpx.Response) -> dict[str, str]:
+    headers = {"Content-Type": response.headers.get("content-type", "application/json")}
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is not None:
+        headers["Retry-After"] = retry_after
+    return headers
+
+
+def _json_headers() -> dict[str, str]:
+    return {"Content-Type": "application/json"}
+
+
+def _header_timeout(
+    client: httpx.Client, first_chunk_max_s: float, request_latency_max_s: float
+) -> httpx.Timeout:
+    base = client.timeout
+    if isinstance(base, httpx.Timeout):
+        values = base.as_dict()
+    else:
+        values = {"connect": None, "read": None, "write": None, "pool": None}
+    values["read"] = min(first_chunk_max_s, request_latency_max_s)
+    return httpx.Timeout(**values)
 
 
 _EVENT_SEPARATOR = re.compile(rb"\r\n\r\n|\n\n|\r\r")
 
 
-def _stream_chunks(
-    response: httpx.Response,
-    deps: RelayDeps,
-    trial: str,
-    request_id: str,
-    clock: StreamClock,
-) -> Iterator[bytes]:
-    tail: list[bytes] = []
-    usage: dict[str, int] | None = None
-    served_model: str | None = None
-    completion_chars = 0
-    terminal = False
-    terminated = False
-
-    for raw, obj, done in _iter_events(response, clock):
-        found_usage, found_chars, found_model = _observe(obj, clock)
-        if found_usage is not None:
-            usage = found_usage
-        if found_model is not None:
-            served_model = found_model
-        completion_chars += found_chars
-        if terminal or done or _is_terminal(obj):
-            terminal = True
-            tail.append(raw)
-            if done:
-                terminated = True
-                break
-            continue
-        yield raw
-
-    if tail:
-        _write_end(
-            deps,
-            trial,
-            request_id,
-            response.status_code,
-            "ok" if terminated else "server_error",
-            served_model,
-            usage,
-            completion_chars,
-            clock,
-        )
-        response.close()
-        for raw in tail:
-            yield raw
-        return
-
-    _write_end(
-        deps,
-        trial,
-        request_id,
-        response.status_code,
-        "server_error",
-        served_model,
-        usage,
-        completion_chars,
-        clock,
-    )
-    response.close()
-
-
 def _iter_events(
-    response: httpx.Response, clock: StreamClock
+    chunks: Iterator[bytes], clock: StreamClock
 ) -> Iterator[tuple[bytes, dict | None, bool]]:
     buffer = b""
-    for chunk in response.iter_bytes():
+    for chunk in chunks:
         if not chunk:
             continue
         clock.mark_chunk()
@@ -336,38 +657,3 @@ def _json_object(body: bytes) -> dict | None:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
     return value if isinstance(value, dict) else None
-
-
-def _write_end(
-    deps: RelayDeps,
-    trial: str,
-    request_id: str,
-    http_status: int,
-    upstream_status: str,
-    served_model: str | None,
-    usage: dict[str, int] | None,
-    completion_chars: int,
-    clock: StreamClock,
-) -> None:
-    tokens = usage or {}
-    deps.ledger.write(
-        RequestEnd(
-            0,
-            0.0,
-            trial,
-            request_id,
-            http_status,
-            upstream_status,
-            http_status,
-            served_model,
-            tokens.get("prompt_tokens"),
-            tokens.get("completion_tokens"),
-            tokens.get("cached_read_tokens"),
-            completion_chars,
-            clock.first_chunk_s,
-            clock.first_content_s,
-            clock.finish(),
-            0,
-            None,
-        )
-    )
