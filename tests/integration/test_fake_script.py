@@ -71,6 +71,24 @@ def test_a_request_failure_exits_nonzero() -> None:
     assert result.returncode != 0
 
 
+def test_continue_on_error_attempts_remaining_requests() -> None:
+    upstream = FakeUpstream(["http_500", "ok", "ok"])
+    base_url = upstream.start()
+    try:
+        result = _run(
+            "--base-url",
+            f"{base_url}/v1",
+            "--requests",
+            "3",
+            "--continue-on-error",
+        )
+    finally:
+        upstream.stop()
+
+    assert result.returncode == 0
+    assert len(upstream.requests) == 3
+
+
 def test_keep_requesting_continues_through_refusals() -> None:
     upstream = FakeUpstream(["http_500"])
     base_url = upstream.start()
@@ -141,6 +159,51 @@ def test_detached_heartbeat_survives_harness_group_stop(tmp_path: Path) -> None:
         if heartbeat_pid is not None:
             with suppress(ProcessLookupError):
                 os.kill(heartbeat_pid, signal.SIGTERM)
+
+
+def test_detached_requester_survives_harness_group_stop() -> None:
+    upstream = FakeUpstream(["ok"])
+    base_url = upstream.start()
+    process: subprocess.Popen[str] | None = None
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(_SCRIPT),
+                "--base-url",
+                f"{base_url}/v1",
+                "--requests",
+                "0",
+                "--sleep-s",
+                "30",
+                "--detached-requesting-s",
+                "1.5",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and not upstream.requests:
+            time.sleep(0.05)
+        assert upstream.requests
+        requests_before_stop = len(upstream.requests)
+
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=2)
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and len(upstream.requests) <= requests_before_stop:
+            time.sleep(0.05)
+        assert len(upstream.requests) > requests_before_stop
+        while time.monotonic() < started + 2:
+            time.sleep(0.05)
+    finally:
+        if process is not None and process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=2)
+        upstream.stop()
 
 
 def _heartbeat_process_id(heartbeat: Path) -> int:

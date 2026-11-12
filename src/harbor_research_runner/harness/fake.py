@@ -33,6 +33,8 @@ class FakeBehavior(BaseModel):
     ignore_stop: bool = False
     keep_requesting_s: float = Field(default=0, ge=0)
     detached_heartbeat: str | None = None
+    detached_requesting_s: float = Field(default=0, ge=0)
+    continue_on_error: bool = False
     solve: bool = True
 
     @field_validator("detached_heartbeat")
@@ -91,9 +93,13 @@ class FakeHarnessAgent(PinnedHarness, BaseInstalledAgent):
             str(self.fake.sleep_s),
             "--keep-requesting-s",
             str(self.fake.keep_requesting_s),
+            "--detached-requesting-s",
+            str(self.fake.detached_requesting_s),
         ]
         if self.fake.detached_heartbeat is not None:
             arguments.extend(["--detached-heartbeat", self.fake.detached_heartbeat])
+        if self.fake.continue_on_error:
+            arguments.append("--continue-on-error")
         if self.fake.ignore_stop:
             arguments.append("--ignore-stop")
         if self.fake.solve:
