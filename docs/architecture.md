@@ -15,7 +15,7 @@ A study flows top to bottom through six steps. Five helper modules are shared.
 | helper | `trial_validity` | The verdict for one trial; the halt rules for a run | `records` |
 | helper | `statistics` | Pass rates, intervals, paired comparison, completeness table | `records` |
 | helper | `harbor_adapter` | Harbor command lines, reading Harbor's job folder, the set-aside move, the Harbor plugin | `records`, `job_config`, `trial_validity` |
-| helper | `docker_host` | Docker cleanup, resource check, resource sampler | `records` |
+| helper | `docker_host` | Host lock, Docker cleanup, resource check, resource sampler | `records` |
 | step | `harness` | Commit manifest, image build, extraction, `PinnedHarness`, `OpenCodeAgent`, the fake harness | `records` |
 | step | `run` | Launch checks, canary, machine check, the run loop | `job_config`, `records`, `trial_validity`, `harbor_adapter`, `docker_host`, `harness` |
 | step | `model_proxy` | The relay between harness and model; writes the proxy ledger | `records` |
@@ -42,7 +42,7 @@ src/harbor_research_runner/
   trial_validity/   verdict.py  upstream.py  phase_table.py  run_health.py
   statistics/       rates.py  paired.py  completeness.py  cost.py
   harbor_adapter/   job_folder.py  commands.py  set_aside.py  plugin.py
-  docker_host/      cleanup.py  resources.py  sampler.py
+  docker_host/      host_lock.py  cleanup.py  resources.py  sampler.py
   harness/          manifest.py  extract.py  agents.py  opencode_eras.py  fake.py  fake_script.py
                     build.py  build/
   model_proxy/      __main__.py  server.py  ledger.py  relay.py  status.py  usage.py
@@ -65,7 +65,7 @@ Unit tests mirror the source path: `src/harbor_research_runner/records/jsonl.py`
 | `hrr run JOB.yaml` / `hrr run --resume RUN_ID` | Launches or resumes a run | 0 complete, 1 refused to start or internal error, 2 halted and resumable, 3 finished incomplete |
 | `hrr build-evidence RUN_ID` | Builds the evidence bundle from a run folder | 0 ok, 1 failed, 4 secret found (nothing written) |
 | `hrr explore [PATH ...]` | Starts the results explorer over evidence bundles | 0 |
-| `hrr clean-docker [--apply]` | Lists or removes leftover trial containers and networks | 0 clean, 1 residue found (without `--apply`) |
+| `hrr clean-docker [--apply]` | Lists or removes leftover trial containers and networks | 0 clean, 1 residue found (without `--apply`) or refused because another process holds the host lock (`--apply`) |
 
 Exit code 0 from `hrr run` means: every planned slot has its full number of valid, measured trials.
 
@@ -315,7 +315,7 @@ Harbor's exception labels are never an input to a halt rule.
 
 ## 7. The run loop
 
-1. Launch checks (`run/checks.py`): each writes a `launch_check` event; any failure exits 1 before anything is spent. Checks: the job file parses; every arm's commit is in the manifest, is not withdrawn, and its image digest matches the local image; the model card exists and is not withdrawn; every key variable is set; Docker has no residue; host resources are above the limits; the machine check file exists and matches (task set, Harbor version, machine fingerprint, concurrency not above the checked value); every requested task is in the machine check's included list; no other run is live on this machine.
+1. Launch checks (`run/checks.py`): each writes a `launch_check` event; any failure exits 1 before anything is spent. Checks: the job file parses; every arm's commit is in the manifest, is not withdrawn, and its image digest matches the local image; the model card exists and is not withdrawn; every key variable is set; Docker has no residue; host resources are above the limits; the machine check file exists and matches (task set, Harbor version, machine fingerprint, concurrency not above the checked value); every requested task is in the machine check's included list; this process holds the host lock (D22).
 2. Write `run-metadata.json`. Start the resource sampler. Write `proxy-config.json`, start the proxy, wait for `/control/health`.
 3. Canary: one Harbor job in `canary-job/` running the bundled task `canary/say-hello` once per arm against the real model. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
 4. Pass 0: `harbor run` with the generated `harbor-job-config.yaml`.
@@ -324,7 +324,7 @@ Harbor's exception labels are never an input to a halt rule.
 7. When Harbor exits on its own: judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
 8. Finish: stop the proxy and sampler, write `finish`, make the run folder read-only, exit 0 or 3.
 
-Resume (`hrr run --resume RUN_ID`): repeat the launch checks, start the sampler and the proxy (same host and port, `restart: true`, then wait `restart_cooldown_s`), write `resume`, judge and set aside, then continue from step 7. The canary is not repeated.
+Resume (`hrr run --resume RUN_ID`): acquire the host lock, read the run metadata, repeat the launch checks, start the sampler and the proxy (same host and port, `restart: true`, then wait `restart_cooldown_s`), write `resume`, judge and set aside, then continue from step 7. A refused resume appends nothing. The canary is not repeated.
 
 Set-aside (`harbor_adapter.set_aside`): move `harbor-job/<trial>/` to `set-aside-trials/<trial>/` with one `os.rename`, then write the `set_aside` event. Before any move, an existing `set-aside-trials/<trial>/` with no matching event gets its event written (the earlier run crashed between the two). The step can be repeated safely.
 
