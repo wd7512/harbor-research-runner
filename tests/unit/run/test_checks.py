@@ -13,7 +13,13 @@ from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.model_proxy.adapters import select_adapter
 from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
-from harbor_research_runner.run.checks import CheckDeps, CheckResult, resolve_tasks, run_checks
+from harbor_research_runner.run.checks import (
+    CheckDeps,
+    CheckResult,
+    machine_check_launch_checks,
+    resolve_tasks,
+    run_checks,
+)
 
 _COMMIT = "a" * 40
 _DIGEST = "sha256:" + "b" * 64
@@ -452,3 +458,37 @@ def test_resolve_tasks_empty_include_selects_all_machine_tasks_except_excluded()
     check = _machine_check(included=["task-b", "task-a", "task-c"])
 
     assert resolve_tasks(job, check) == ["task-a", "task-c"]
+
+
+def test_machine_check_launch_checks_pass_and_leave_host_lock_held(tmp_path: Path) -> None:
+    deps = _deps(tmp_path)
+
+    results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
+
+    assert results == [
+        CheckResult("docker_clean", True, "Docker inventory is clean"),
+        CheckResult("single_run", True, "this process holds the host lock"),
+        CheckResult("host_resources", True, "host resources meet the job limits"),
+    ]
+    assert deps.host_lock.held
+    deps.host_lock.release()
+
+
+def test_machine_check_launch_checks_reports_each_failure(tmp_path: Path) -> None:
+    deps = _deps(
+        tmp_path,
+        inventory=lambda: Inventory(True, "ok", ("residue",), (), (), ()),
+        measure=lambda: _sample(mem_available_mb=1024),
+    )
+
+    results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
+
+    assert [result.name for result in results] == [
+        "docker_clean",
+        "single_run",
+        "host_resources",
+    ]
+    assert not results[0].ok
+    assert results[1].ok
+    assert not results[2].ok
+    deps.host_lock.release()

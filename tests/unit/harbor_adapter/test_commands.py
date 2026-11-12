@@ -6,6 +6,8 @@ from harbor.models.job.config import JobConfig
 
 from harbor_research_runner.harbor_adapter.commands import (
     job_config,
+    machine_check_command,
+    oracle_job_config,
     resume_command,
     run_command,
     write_job_config,
@@ -220,6 +222,49 @@ def test_run_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Path)
         f"limits_file={run_dir / 'proxy-config.json'}",
         "--pk",
         "task_order=as_listed",
+    ]
+
+
+def test_oracle_job_config_uses_harbor_builtin_agent_name():
+    job = make_job(TaskSource("dataset", "org/dataset", None, None, None, (), ()))
+
+    config = oracle_job_config(job, ["task-a"], "oracle", "harbor-job")
+
+    assert config == {
+        "job_name": "harbor-job",
+        "n_attempts": 1,
+        "n_concurrent_trials": 4,
+        "retry": {"max_retries": 0},
+        "verifier_timeout_multiplier": 1.0,
+        "agents": [{"name": "oracle"}],
+        "datasets": [{"name": "org/dataset", "task_names": ["task-a"]}],
+    }
+    assert JobConfig.model_validate(config).agents[0].name == "oracle"
+
+
+def test_oracle_job_config_rejects_unknown_agent_name():
+    job = make_job(TaskSource("dataset", "org/dataset", None, None, None, (), ()))
+
+    with pytest.raises(ValueError):
+        oracle_job_config(job, ["task-a"], "other", "harbor-job")
+
+
+def test_machine_check_command_has_no_plugin_or_proxy_settings(tmp_path: Path):
+    check_dir = tmp_path / "check with spaces"
+
+    command = machine_check_command(check_dir, "oracle", "oracle.yaml")
+
+    assert command == [
+        "uv",
+        "run",
+        "harbor",
+        "run",
+        "--config",
+        str(check_dir / "oracle.yaml"),
+        "--jobs-dir",
+        str(check_dir),
+        "--job-name",
+        "oracle",
     ]
 
 

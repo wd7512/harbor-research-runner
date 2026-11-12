@@ -40,6 +40,59 @@ class CheckDeps:
     harbor_version: Callable[[], str]
 
 
+def _evaluate(name: str, check: Callable[[], tuple[bool, str]]) -> CheckResult:
+    try:
+        ok, detail = check()
+    except Exception as exc:
+        detail = str(exc) or exc.__class__.__name__
+        return CheckResult(name, False, detail)
+    return CheckResult(name, ok, detail)
+
+
+def docker_clean_check(deps: CheckDeps) -> tuple[bool, str]:
+    inventory = deps.inventory()
+    if not inventory.daemon_ok:
+        return False, inventory.daemon_detail
+    residue = (*inventory.residue_containers, *inventory.leaked_networks)
+    if residue:
+        return False, f"Docker residue found: {', '.join(residue)}"
+    return True, "Docker inventory is clean"
+
+
+def single_run_check(runs_dir: Path, deps: CheckDeps) -> tuple[bool, str]:
+    try:
+        deps.host_lock.acquire()
+    except HostLockUnsupported as exc:
+        return False, f"host lock unsupported: {exc}"
+    except HostLockUnavailable as exc:
+        try:
+            holder = deps.live_run(runs_dir)
+        except Exception as lookup_exc:
+            return False, f"host lock is held; holder is unknown: {lookup_exc}"
+        if holder is not None and holder != "unknown":
+            return False, f"host lock is held by run {holder}"
+        if holder == "unknown":
+            return False, f"host lock is held; holder is unknown: {exc}"
+        return False, f"host lock is held by another process: {exc}"
+    return True, "this process holds the host lock"
+
+
+def host_resources_check(job: Job, deps: CheckDeps, multiplier: float) -> tuple[bool, str]:
+    limits = Limits.from_dict(job.limit_overrides, job.repetitions, multiplier)
+    sample = deps.measure()
+    if host_breach(sample.to_row(), limits):
+        return False, "host resource limits are breached"
+    return True, "host resources meet the job limits"
+
+
+def machine_check_launch_checks(job: Job, runs_dir: Path, deps: CheckDeps) -> list[CheckResult]:
+    return [
+        _evaluate("docker_clean", lambda: docker_clean_check(deps)),
+        _evaluate("single_run", lambda: single_run_check(runs_dir, deps)),
+        _evaluate("host_resources", lambda: host_resources_check(job, deps, 1.0)),
+    ]
+
+
 def run_checks(
     job: Job,
     card: ModelCard,
@@ -55,14 +108,6 @@ def run_checks(
     except Exception as exc:
         machine_check = None
         machine_check_error = str(exc) or exc.__class__.__name__
-
-    def evaluate(name: str, check: Callable[[], tuple[bool, str]]) -> CheckResult:
-        try:
-            ok, detail = check()
-        except Exception as exc:
-            detail = str(exc) or exc.__class__.__name__
-            return CheckResult(name, False, detail)
-        return CheckResult(name, ok, detail)
 
     def model_card_check() -> tuple[bool, str]:
         if card.withdrawn:
@@ -90,40 +135,6 @@ def run_checks(
         if problems:
             return False, "; ".join(problems)
         return True, "all arm images and harness adapter pairs are valid"
-
-    def docker_clean_check() -> tuple[bool, str]:
-        inventory = deps.inventory()
-        if not inventory.daemon_ok:
-            return False, inventory.daemon_detail
-        residue = (*inventory.residue_containers, *inventory.leaked_networks)
-        if residue:
-            return False, f"Docker residue found: {', '.join(residue)}"
-        return True, "Docker inventory is clean"
-
-    def single_run_check() -> tuple[bool, str]:
-        try:
-            deps.host_lock.acquire()
-        except HostLockUnsupported as exc:
-            return False, f"host lock unsupported: {exc}"
-        except HostLockUnavailable as exc:
-            try:
-                holder = deps.live_run(runs_dir)
-            except Exception as lookup_exc:
-                return False, f"host lock is held; holder is unknown: {lookup_exc}"
-            if holder is not None and holder != "unknown":
-                return False, f"host lock is held by run {holder}"
-            if holder == "unknown":
-                return False, f"host lock is held; holder is unknown: {exc}"
-            return False, f"host lock is held by another process: {exc}"
-        return True, "this process holds the host lock"
-
-    def host_resources_check() -> tuple[bool, str]:
-        multiplier = machine_check.verifier_timeout_multiplier if machine_check else 1.0
-        limits = Limits.from_dict(job.limit_overrides, job.repetitions, multiplier)
-        sample = deps.measure()
-        if host_breach(sample.to_row(), limits):
-            return False, "host resource limits are breached"
-        return True, "host resources meet the job limits"
 
     def machine_check_present_check() -> tuple[bool, str]:
         if machine_check is None:
@@ -159,15 +170,22 @@ def run_checks(
         return True, "all requested tasks are included in the machine check"
 
     return [
-        evaluate("model_card", model_card_check),
-        evaluate("keys_present", keys_present_check),
-        evaluate("arms_pinned", arms_pinned_check),
-        evaluate("docker_clean", docker_clean_check),
-        evaluate("single_run", single_run_check),
-        evaluate("host_resources", host_resources_check),
-        evaluate("machine_check_present", machine_check_present_check),
-        evaluate("machine_check_matches", machine_check_matches_check),
-        evaluate("tasks_included", tasks_included_check),
+        _evaluate("model_card", model_card_check),
+        _evaluate("keys_present", keys_present_check),
+        _evaluate("arms_pinned", arms_pinned_check),
+        _evaluate("docker_clean", lambda: docker_clean_check(deps)),
+        _evaluate("single_run", lambda: single_run_check(runs_dir, deps)),
+        _evaluate(
+            "host_resources",
+            lambda: host_resources_check(
+                job,
+                deps,
+                machine_check.verifier_timeout_multiplier if machine_check else 1.0,
+            ),
+        ),
+        _evaluate("machine_check_present", machine_check_present_check),
+        _evaluate("machine_check_matches", machine_check_matches_check),
+        _evaluate("tasks_included", tasks_included_check),
     ]
 
 

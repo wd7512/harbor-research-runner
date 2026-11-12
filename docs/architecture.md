@@ -28,7 +28,7 @@ Rules, enforced by `tests/unit/test_import_rule.py`:
 1. A step never imports another step. The one exception is `run` importing `harness`.
 2. A helper never imports a step.
 3. `records` and `job_config` import nothing of ours.
-4. Harbor's Python package is imported in exactly three files: `harness/agents.py`, `harness/fake.py` and `harbor_adapter/plugin.py`.
+4. Harbor's Python package is imported in exactly four files: `harness/agents.py`, `harness/fake.py`, `harbor_adapter/plugin.py` and `harbor_adapter/task_files.py`.
 5. `run` starts `model_proxy` as a child process (`python -m harbor_research_runner.model_proxy --config FILE`). It never imports it.
 
 Source layout:
@@ -345,6 +345,8 @@ uv run harbor jobs resume -p <run>/harbor-job -f hrr-erases-nothing \
 ```
 
 `-f hrr-erases-nothing` matches no real exception type; it disables Harbor's default of deleting `CancelledError` trials on resume. The generated job config and the proxy address never change between passes or across resumes.
+
+Machine checks run `uv run harbor run --config <check-dir>/<config-name> --jobs-dir <check-dir> --job-name <job-name>` without a plugin or proxy settings. Their job config uses one attempt, the job concurrency, zero retries, verifier multiplier 1.0, and `agents: [{name: oracle}]` or `agents: [{name: nop}]` with the task-source block. Machine-check verifier budgets are read with `job_folder.task_budgets` using task TOML text from `harbor_adapter.task_files.task_tomls`.
 
 The Harbor plugin (`harbor_adapter/plugin.py`), on Harbor's trial events:
 
