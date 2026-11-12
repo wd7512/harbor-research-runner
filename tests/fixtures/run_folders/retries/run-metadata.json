@@ -1,0 +1,39 @@
+{
+  "arms": [
+    {
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "harness": "opencode",
+      "label": "alpha"
+    },
+    {
+      "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "harness": "opencode",
+      "label": "beta"
+    }
+  ],
+  "created_t": 1.0,
+  "harbor_version": "0.23.0",
+  "host": {},
+  "job": {
+    "repetitions": 1
+  },
+  "job_file_sha256": "0",
+  "limits": {},
+  "machine_check_sha256": "0",
+  "model_card": {
+    "id": "fixture/model",
+    "pricing": {
+      "cached_read": 1.0,
+      "input": 2.0,
+      "output": 4.0
+    }
+  },
+  "proxy": {},
+  "run_id": "retries",
+  "task_set": {
+    "ref": "fixture",
+    "tasks": []
+  },
+  "tool_commit": "0",
+  "tool_version": "0"
+}

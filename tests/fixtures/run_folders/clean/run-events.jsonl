@@ -1,0 +1,5 @@
+{"arm":"alpha","instrument":null,"labels":[],"measured":true,"reason":null,"t":10,"task":"task/a","trial":"a-alpha-trial","type":"trial_verdict","unmeasured_reason":null,"valid":true}
+{"arm":"beta","instrument":null,"labels":[],"measured":true,"reason":null,"t":11,"task":"task/a","trial":"a-beta-trial","type":"trial_verdict","unmeasured_reason":null,"valid":true}
+{"arm":"alpha","instrument":null,"labels":[],"measured":true,"reason":null,"t":12,"task":"task/b","trial":"b-alpha-trial","type":"trial_verdict","unmeasured_reason":null,"valid":true}
+{"arm":"beta","instrument":null,"labels":[],"measured":true,"reason":null,"t":13,"task":"task/b","trial":"b-beta-trial","type":"trial_verdict","unmeasured_reason":null,"valid":true}
+{"arm":"alpha","instrument":null,"labels":[],"measured":true,"reason":null,"t":30,"task":"canary/say-hello","trial":"canary-alpha","type":"trial_verdict","unmeasured_reason":null,"valid":true}

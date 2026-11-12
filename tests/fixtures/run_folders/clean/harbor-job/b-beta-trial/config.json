@@ -1,0 +1,12 @@
+{
+  "agent": {
+    "kwargs": {
+      "arm_label": "beta",
+      "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "task": {
+    "name": "task/b"
+  },
+  "trial_name": "b-beta-trial"
+}
