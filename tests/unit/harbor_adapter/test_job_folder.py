@@ -237,7 +237,7 @@ def test_local_task_config_uses_path_name_when_task_name_is_absent(tmp_path: Pat
 
     facts = read_trial(trial_dir, arm="oracle")
 
-    assert facts.task == "canary/say-hello"
+    assert facts.task == "say-hello"
     assert facts.arm == "oracle"
 
 
@@ -339,7 +339,7 @@ def test_old_agent_kwargs_without_arm_label_are_rejected(tmp_path: Path) -> None
         read_trial(trial)
 
 
-def test_trial_task_name_mismatch_is_rejected(tmp_path: Path) -> None:
+def test_trial_identity_comes_from_config_not_result(tmp_path: Path) -> None:
     trial = _write_trial(
         tmp_path,
         "trial__mismatch",
@@ -347,8 +347,7 @@ def test_trial_task_name_mismatch_is_rejected(tmp_path: Path) -> None:
         result=_result("terminal-bench/result-task", "trial__mismatch"),
     )
 
-    with pytest.raises(HarborFolderError, match=r"task.*result\.json"):
-        read_trial(trial)
+    assert read_trial(trial).task == "terminal-bench/config-task"
 
 
 def test_nonempty_step_results_are_rejected(tmp_path: Path) -> None:

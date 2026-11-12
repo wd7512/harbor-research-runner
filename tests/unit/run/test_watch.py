@@ -32,7 +32,11 @@ def _trial(job_dir: Path, name: str, *, result: bool = True, exception: str | No
     (trial_dir / "config.json").write_text(
         json.dumps(
             {
-                "task": {"name": "task-a"},
+                "task": {
+                    "name": "terminal-bench/task-a",
+                    "ref": "sha256:" + "a" * 64,
+                    "source": "terminal-bench/terminal-bench-2-1",
+                },
                 "trial_name": name,
                 "agent": {"kwargs": {"arm_label": "arm-a"}},
             }
@@ -43,7 +47,7 @@ def _trial(job_dir: Path, name: str, *, result: bool = True, exception: str | No
         (trial_dir / "result.json").write_text(
             json.dumps(
                 {
-                    "task_name": "task-a",
+                    "task_name": "terminal-bench/task-a",
                     "trial_name": name,
                     "verifier_result": {"rewards": {"reward": 1.0}},
                     "exception_info": (
@@ -151,7 +155,7 @@ def test_repeated_agent_setup_failure_is_valid_after_set_aside(tmp_path: Path) -
             to_row=lambda: {
                 "type": "set_aside",
                 "trial": "trial-old",
-                "task": "task-a",
+                "task": "terminal-bench/task-a",
                 "arm": "arm-a",
                 "reason": "harness_setup_failed",
                 "t": 1.0,
