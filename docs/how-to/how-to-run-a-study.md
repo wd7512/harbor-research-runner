@@ -39,7 +39,7 @@ These steps assume you have a pinned task repository, Docker, and a host suitabl
    limits: {}
    ```
 
-   The task source must be exactly one of `dataset`, `path`, or `git`. A git source pins both `url` and a 40-character lowercase commit. `include` selects task names; an empty list means all tasks that pass the machine check. `exclude` removes named tasks from that set. The arms share one model and need unique labels.
+   The task source must be exactly one of `dataset`, `path`, or `git`. A git source pins both `url` and a 40-character lowercase commit. `include` selects task names; an empty list means all tasks that pass the machine check. `exclude` removes named tasks from that set. Task names are Harbor task IDs: folder names for `path` and `git` sources, and `org/name` for `dataset` tasks, never `[task].name`. The arms share one model and need unique labels.
 
 3. **Check the machine and task set.** The check runs the oracle for the tasks selected by the job and writes the machine-check record used by `hrr run`.
 
