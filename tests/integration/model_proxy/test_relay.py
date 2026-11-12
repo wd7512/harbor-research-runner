@@ -7,8 +7,11 @@ from threading import Event, Thread
 import httpx
 import pytest
 
+from harbor_research_runner.model_proxy.adapters.chat import ChatAdapter
+from harbor_research_runner.model_proxy.bodies import BodyStore
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
-from harbor_research_runner.model_proxy.relay import RelayDeps, Route, relay_chat
+from harbor_research_runner.model_proxy.pacing import Pacer
+from harbor_research_runner.model_proxy.relay import RelayDeps, Route, relay
 from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.limits import Limits
 from tests.support.fake_upstream import FakeUpstream, RawResponse
@@ -16,7 +19,7 @@ from tests.support.fake_upstream import FakeUpstream, RawResponse
 _CARD = {"id": "card/model", "upstream_model": "served-model"}
 
 
-def _deps(tmp_path, base_url, now=time.monotonic):
+def _deps(tmp_path, base_url, now=time.monotonic, *, pacer=None, bodies=None, routes=None):
     ledger = LedgerWriter(tmp_path / "proxy-ledger.jsonl")
     client = httpx.Client(trust_env=False)
     deps = RelayDeps(
@@ -24,8 +27,10 @@ def _deps(tmp_path, base_url, now=time.monotonic):
         model=_CARD,
         limits=Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.0),
         client=client,
-        routes=lambda: iter([Route(f"{base_url}/v1/chat/completions", "test-key")]),
+        routes=routes or (lambda: iter([Route(f"{base_url}/v1/chat/completions", "test-key")])),
         now=now,
+        pacer=pacer,
+        bodies=bodies,
     )
     return deps, ledger, client
 
@@ -62,12 +67,87 @@ def _rows(tmp_path):
     return read_rows(tmp_path / "proxy-ledger.jsonl").rows
 
 
+def test_pacing_wait_is_recorded_before_each_request_start(tmp_path):
+    class Clock:
+        value = 0.0
+
+        def now(self):
+            return self.value
+
+        def sleep(self, duration):
+            self.value += duration
+
+    clock = Clock()
+    pacer = Pacer(120, clock.now, clock.sleep, cooldown_until=2.5)
+    upstream = FakeUpstream(["ok", "ok"], model="served-model")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(tmp_path, base_url, now=clock.now, pacer=pacer)
+    try:
+        first = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
+        list(first.chunks)
+        second = relay(_request_body(True), {}, "trial-2", deps, ChatAdapter())
+        list(second.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    starts = [row for row in _rows(tmp_path) if row["type"] == "request_start"]
+    assert [row["paced_wait_s"] for row in starts] == [2.5, 60.0]
+
+
+def test_body_store_records_the_response_bytes_sent_to_the_harness(tmp_path):
+    upstream = FakeUpstream(["ok"], model="served-model")
+    base_url = upstream.start()
+    bodies = BodyStore(tmp_path / "bodies")
+    (tmp_path / "bodies").mkdir()
+    deps, ledger, client = _deps(tmp_path, base_url, bodies=bodies)
+    request_body = _request_body(True)
+    try:
+        response = relay(request_body, {}, "trial-1", deps, ChatAdapter())
+        response_bytes = b"".join(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    body_rows = read_rows(tmp_path / "bodies" / "trial-1.jsonl").rows
+    assert len(body_rows) == 1
+    assert body_rows[0]["request"] == request_body.decode()
+    assert body_rows[0]["response"].encode() == response_bytes
+    assert _rows(tmp_path)[-1]["type"] == "request_end"
+
+
+def test_request_without_an_upstream_route_is_recorded_as_transport_error(tmp_path):
+    ledger = LedgerWriter(tmp_path / "proxy-ledger.jsonl")
+    client = httpx.Client(trust_env=False)
+    deps = RelayDeps(
+        ledger,
+        _CARD,
+        Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.0),
+        client,
+        lambda: iter(()),
+    )
+    try:
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
+        body = b"".join(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+
+    rows = _rows(tmp_path)
+    assert [row["type"] for row in rows] == ["request_start", "request_end"]
+    assert rows[-1]["upstream_status"] == "transport_error"
+    assert rows[-1]["http_status"] == 502
+    assert b"upstream unavailable" in body
+
+
 def test_ok_stream_returns_upstream_status_and_content_type(tmp_path):
     upstream = FakeUpstream(["ok"], model="served-model")
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         chunks = list(response.chunks)
     finally:
         ledger.close()
@@ -84,7 +164,7 @@ def test_ok_stream_writes_one_start_and_one_end_row_with_usage(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         list(response.chunks)
     finally:
         ledger.close()
@@ -120,7 +200,7 @@ def test_ok_stream_substitutes_the_card_upstream_model(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         list(response.chunks)
     finally:
         ledger.close()
@@ -136,7 +216,7 @@ def test_end_row_is_written_before_the_final_chunk_is_yielded(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         chunks = []
         ends_after_chunk = []
         for chunk in response.chunks:
@@ -159,7 +239,7 @@ def test_non_streaming_request_records_start_and_end_rows(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(False), {}, "trial-1", deps)
+        response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
         assert not [row for row in _rows(tmp_path) if row["type"] == "request_end"]
 
         chunks = list(response.chunks)
@@ -193,7 +273,7 @@ def test_truncated_stream_is_recorded_as_truncated(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         chunks = list(response.chunks)
     finally:
         ledger.close()
@@ -215,7 +295,7 @@ def test_upstream_error_is_recorded_as_server_error(tmp_path, script):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         chunks = list(response.chunks)
     finally:
         ledger.close()
@@ -274,7 +354,7 @@ def test_stream_observes_usage_on_early_content_through_the_terminator(tmp_path)
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         iterator = response.chunks
         first = next(iterator)
         rows_after_first = _rows(tmp_path)
@@ -308,7 +388,7 @@ def test_nonterminal_event_is_forwarded_before_the_next_event_arrives(tmp_path):
     upstream = FakeUpstream([raw], model="served-model")
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
-    response = relay_chat(_request_body(True), {}, "trial-1", deps)
+    response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
     first = []
     received = Event()
 
@@ -355,7 +435,7 @@ def test_nonstream_first_chunk_is_stamped_before_the_body_completes(tmp_path):
     base_url = upstream.start()
     clock = _Clock([0.0, 5.0, 9.0, 12.0])
     deps, ledger, client = _deps(tmp_path, base_url, now=clock)
-    response = relay_chat(_request_body(False), {}, "trial-1", deps)
+    response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
     chunks = []
     received = Event()
 
@@ -405,7 +485,7 @@ def test_stream_starting_with_empty_usage_keeps_streaming(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         iterator = response.chunks
         first = next(iterator)
         rows_after_first = _rows(tmp_path)
@@ -433,7 +513,7 @@ def test_stream_forwards_raw_upstream_bytes(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         chunks = list(response.chunks)
     finally:
         ledger.close()
@@ -456,7 +536,7 @@ def test_stream_parses_multi_data_line_events(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         chunks = list(response.chunks)
     finally:
         ledger.close()
@@ -492,7 +572,7 @@ def test_first_chunk_is_stamped_before_a_partial_event_completes(tmp_path):
     response = None
     thread = None
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         chunks = []
 
         def consume():
@@ -533,7 +613,7 @@ def test_done_ends_the_stream_without_waiting_for_connection_close(tmp_path):
     upstream = FakeUpstream([raw], model="served-model")
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
-    response = relay_chat(_request_body(True), {}, "trial-1", deps)
+    response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
     chunks = []
     finished = Event()
 
@@ -568,7 +648,7 @@ def test_response_close_before_iteration_closes_upstream(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         assert raw.ready.wait(timeout=1.0)
         response.close()
         assert raw.disconnected.wait(timeout=1.0)
@@ -585,7 +665,7 @@ def test_chunks_close_before_iteration_closes_upstream(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(True), {}, "trial-1", deps)
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
         assert raw.ready.wait(timeout=1.0)
         response.chunks.close()
         assert raw.disconnected.wait(timeout=1.0)
@@ -603,7 +683,7 @@ def test_empty_non_stream_body_is_not_ok(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(False), {}, "trial-1", deps)
+        response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
         chunks = list(response.chunks)
     finally:
         ledger.close()
@@ -627,7 +707,7 @@ def test_unparseable_non_stream_body_is_not_ok(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(False), {}, "trial-1", deps)
+        response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
         chunks = list(response.chunks)
     finally:
         ledger.close()

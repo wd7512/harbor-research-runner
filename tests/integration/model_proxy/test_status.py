@@ -6,8 +6,9 @@ import time
 import httpx
 import pytest
 
+from harbor_research_runner.model_proxy.adapters.chat import ChatAdapter
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
-from harbor_research_runner.model_proxy.relay import RelayDeps, Route, relay_chat
+from harbor_research_runner.model_proxy.relay import RelayDeps, Route, relay
 from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.proxy_ledger import COUNTS_AGAINST_TRIAL
@@ -63,7 +64,7 @@ def test_client_disconnect_is_not_an_upstream_error(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         response.close()
         assert raw.disconnected.wait(timeout=1.0)
     finally:
@@ -84,7 +85,7 @@ def test_close_after_completion_does_not_add_another_row(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         list(response.chunks)
         response.close()
     finally:
@@ -111,7 +112,7 @@ def test_upstream_errors_and_failovers_are_recorded(
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         body = b"".join(response.chunks)
     finally:
         ledger.close()
@@ -134,7 +135,7 @@ def test_first_chunk_stall_is_stalled_with_http_504(tmp_path):
     deps, ledger, client = _deps(tmp_path, base_url, first_chunk_max_s=1.0)
     try:
         started = time.monotonic()
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         elapsed = time.monotonic() - started
         body = b"".join(response.chunks)
     finally:
@@ -158,7 +159,7 @@ def test_header_read_uses_the_smaller_total_deadline(tmp_path):
         tmp_path, base_url, first_chunk_max_s=2.0, request_latency_max_s=0.1
     )
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         body = b"".join(response.chunks)
     finally:
         ledger.close()
@@ -177,7 +178,7 @@ def test_gap_stall_is_stalled_after_headers(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url, inter_chunk_gap_max_s=1.0)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         started = time.monotonic()
         chunks = list(response.chunks)
         elapsed = time.monotonic() - started
@@ -203,7 +204,7 @@ def test_gap_below_the_gap_limit_is_not_a_transport_error(tmp_path):
         tmp_path, base_url, first_chunk_max_s=1.0, inter_chunk_gap_max_s=5.0
     )
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         chunks = list(response.chunks)
     finally:
         ledger.close()
@@ -228,7 +229,7 @@ def test_slow_consumer_receives_queued_chunks_without_a_gap_stall(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url, inter_chunk_gap_max_s=0.2)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         received = []
         iterator = iter(response.chunks)
         while True:
@@ -253,7 +254,7 @@ def test_request_latency_stall_is_stalled(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url, request_latency_max_s=1.0)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         started = time.monotonic()
         chunks = list(response.chunks)
         elapsed = time.monotonic() - started
@@ -276,7 +277,7 @@ def test_truncated_stream_is_truncated(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         list(response.chunks)
     finally:
         ledger.close()
@@ -294,7 +295,7 @@ def test_drop_is_transport_error(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         body = b"".join(response.chunks)
     finally:
         ledger.close()
@@ -314,7 +315,7 @@ def test_quota_is_quota_exhausted_and_keeps_retry_after(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         list(response.chunks)
     finally:
         ledger.close()
@@ -345,7 +346,7 @@ def test_huge_retry_after_records_end_and_closes_upstream_response(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         response_body = b"".join(response.chunks)
         assert raw.client_closed.wait(timeout=1.0)
     finally:
@@ -365,7 +366,7 @@ def test_rate_limit_is_rate_limited_and_keeps_retry_after(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         list(response.chunks)
     finally:
         ledger.close()
@@ -385,7 +386,7 @@ def test_other_served_model_is_ok(tmp_path):
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         list(response.chunks)
     finally:
         ledger.close()

@@ -35,6 +35,8 @@ class DecodeResult:
     upstream_body: bytes | None
     content_type: str
     usage: dict[str, int] | None
+    served_model: str | None = None
+    completion_chars: int = 0
 
 
 class UpstreamDecodeError(Exception):
@@ -74,6 +76,16 @@ class StreamTranslator:
         return 0
 
     @property
+    def served_model(self) -> str | None:
+        """Upstream model identifier observed in the stream, if present."""
+        return None
+
+    @property
+    def terminal(self) -> bool:
+        """True after a terminal event has arrived, before any final marker."""
+        return self.finished
+
+    @property
     def usage(self) -> dict[str, Any] | None:
         """Usage as reported by the stream, or None when the upstream reported none."""
         return None
@@ -81,6 +93,11 @@ class StreamTranslator:
 
 class UpstreamAdapter:
     """One upstream's request/reply dialect; all three methods are mandatory."""
+
+    @property
+    def passthrough(self) -> bool:
+        """Whether translated streaming events are byte-identical to upstream events."""
+        return False
 
     def build_request(
         self, payload: dict[str, Any], model: str

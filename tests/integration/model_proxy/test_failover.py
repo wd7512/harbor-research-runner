@@ -4,9 +4,10 @@ import json
 
 import httpx
 
+from harbor_research_runner.model_proxy.adapters.chat import ChatAdapter
 from harbor_research_runner.model_proxy.keys import KeyProvider
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
-from harbor_research_runner.model_proxy.relay import RelayDeps, relay_chat
+from harbor_research_runner.model_proxy.relay import RelayDeps, relay
 from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.limits import Limits
 from tests.support.fake_upstream import FakeUpstream
@@ -47,7 +48,7 @@ def _run(tmp_path, first_script, second_script, caplog):
         routes=KeyProvider(card, {"TEST_KEY": _KEY}).routes,
     )
     try:
-        response = relay_chat(_request_body(), {}, "trial-1", deps)
+        response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         body = b"".join(response.chunks)
         rows = read_rows(tmp_path / "proxy-ledger.jsonl").rows
         ledger_text = (tmp_path / "proxy-ledger.jsonl").read_text(encoding="utf-8")
