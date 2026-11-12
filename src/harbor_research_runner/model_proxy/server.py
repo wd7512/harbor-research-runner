@@ -74,6 +74,7 @@ class _ProxyState:
 class ProxyHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     block_on_close = False
+    request_queue_size = 128
 
     def __init__(self, address: tuple[str, int], state: _ProxyState) -> None:
         self.state = state
