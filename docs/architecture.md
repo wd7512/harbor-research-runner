@@ -74,6 +74,7 @@ Exit code 0 from `hrr run` means: every planned slot has its full number of vali
 ```
 runs/<run-id>/                         evidence/<run-id>/
   run-metadata.json   written once       manifest.json
+  machine-check.json  written once
   run-events.jsonl                       run-metadata.json
   runner.log                             run-events.jsonl
   harbor-job-config.yaml                 trials.jsonl
@@ -186,7 +187,7 @@ One row every 10 seconds, `type` = `sample`: `t`, `mem_available_mb`, `swap_used
 
 ### 4.5a Machine check file (`records/machine_check.py`)
 
-Written by `hrr check-machine`, read by the launch checks. Fields: `created_t`, `tool_version`, `harbor_version`, `host_fingerprint`, `task_source` (the job file's `tasks` block without `include`/`exclude`), `concurrency`, `tasks` (list of `name`, `digest`, `oracle_reward`, `agent_s`, `agent_budget_s`, `verifier_s`, `verifier_budget_s`, `nothing_reward` or null), `included` (task names with `oracle_reward == 1.0`, and `nothing_reward == 0.0` where measured), `verifier_timeout_multiplier`.
+Written by `hrr check-machine`, read by the launch checks. A task's `name` everywhere in the runner is Harbor's task id (`TaskConfig.get_task_id().get_name()`, read once in `harbor_adapter/task_files.py`): the folder for local and git tasks, `org/name` for package tasks. It is the name Harbor's `task_names` filter matches; `[task].name` and `result.json` `task_name` are never used for identity. Fields: `created_t`, `tool_version`, `harbor_version`, `host_fingerprint`, `task_source` (the job file's `tasks` block without `include`/`exclude`), `concurrency`, `tasks` (list of `name`, `digest`, `oracle_reward`, `agent_s`, `agent_budget_s`, `verifier_s`, `verifier_budget_s`, `nothing_reward` or null), `included` (task names with `oracle_reward == 1.0`, and `nothing_reward == 0.0` where measured), `verifier_timeout_multiplier`.
 
 ### 4.6 Limits (`records/limits.py`)
 
@@ -320,9 +321,9 @@ Harbor's exception labels are never an input to a halt rule.
 
 ## 7. The run loop
 
-1. Launch checks (`run/checks.py`): each writes a `launch_check` event; any failure exits 1 before anything is spent. Checks: the job file parses; every arm's commit is in the manifest, is not withdrawn, and its image digest matches the local image; the model card exists and is not withdrawn; every key variable is set; Docker has no residue; host resources are above the limits; the machine check file exists and matches (task set, Harbor version, machine fingerprint, concurrency not above the checked value); every requested task is in the machine check's included list; this process holds the host lock (D22).
-2. Write `run-metadata.json`. Start the resource sampler. Write `proxy-config.json`, start the proxy, wait for `/control/health`.
-3. Canary: one Harbor job in `canary-job/` running the bundled task `canary/say-hello` once per arm against the real model. The task lives at `run/canary_task/say-hello/`: its instruction creates `/app/hello.txt` containing `hello`, its environment is `python:3.12-slim` pinned by digest, its agent timeout is 120 s and its verifier timeout is 60 s, and its verifier accepts exactly `hello` or `hello\n`. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
+1. Launch checks (`run/checks.py`): each writes a `launch_check` event; any failure exits 1 before anything is spent. Checks: the job file parses; every arm's commit is in the manifest, is not withdrawn, and its image digest matches the local image; the model card exists and is not withdrawn; every key variable is set; Docker has no residue; host resources are above the limits; the machine check file exists and matches (task set, Harbor version, machine fingerprint, concurrency not above the checked value); every requested task is in the machine check's included list; nothing listens on the proxy port (`proxy_port_free`, bound with `SO_REUSEADDR` as the proxy binds); this process holds the host lock (D22). A refused launch still gets a run folder holding its `launch` and `launch_check` events.
+2. Copy the job's machine-check file to `machine-check.json` (write-once, from the bytes whose sha256 goes into the metadata), then write `run-metadata.json`. Start the resource sampler. Write `proxy-config.json`, start the proxy, wait for `/control/health`. Both services get the read end of a lifeline pipe whose write end only the runner holds; on EOF (the runner died, including SIGKILL) each stops through its own SIGTERM path, so the proxy drains in-flight streams.
+3. Canary: one Harbor job in `canary-job/` running the bundled task `say-hello` (Harbor selects a local task by its folder name; it records the trial under `[task].name`, `canary/say-hello`) once per arm against the real model. The task lives at `run/canary_task/say-hello/`: its instruction creates `/app/hello.txt` containing `hello`, its environment is `python:3.12-slim` pinned by digest, its agent timeout is 120 s and its verifier timeout is 60 s, and its verifier accepts exactly `hello` or `hello\n`. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
 4. Pass 0: `harbor run` with the generated `harbor-job-config.yaml`.
 5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules.
 6. On halt: stop Harbor's process group, stop the proxy and sampler, judge every remaining trial folder, write `halt`, exit 2.
