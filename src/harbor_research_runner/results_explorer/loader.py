@@ -12,7 +12,12 @@ from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.statistics.completeness import completeness
 from harbor_research_runner.statistics.paired import paired_difference
-from harbor_research_runner.statistics.rates import arm_rates, pass_rate_over_time, task_arm_table
+from harbor_research_runner.statistics.rates import (
+    arm_rates,
+    pass_rate_over_time,
+    pass_rate_over_time_by_arm,
+    task_arm_table,
+)
 from harbor_research_runner.statistics.usage import label_counts
 
 logger = logging.getLogger(__name__)
@@ -181,5 +186,12 @@ class EvidenceStore:
             "paired_difference": asdict(paired_difference(rows, view, arm_a, arm_b)),
         }
 
-    def over_time(self, run_id: str) -> list[dict]:
-        return [asdict(bucket) for bucket in pass_rate_over_time(self._load(run_id)["rows"])]
+    def over_time(self, run_id: str) -> dict:
+        rows = self._load(run_id)["rows"]
+        return {
+            "all": [asdict(bucket) for bucket in pass_rate_over_time(rows)],
+            "by_arm": {
+                arm: [asdict(bucket) for bucket in buckets]
+                for arm, buckets in pass_rate_over_time_by_arm(rows).items()
+            },
+        }

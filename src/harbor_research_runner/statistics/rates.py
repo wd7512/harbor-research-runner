@@ -20,6 +20,7 @@ class TimeBucket:
     start_t: float
     passes: int
     trials: int
+    rate: float | None
 
 
 def trials_in_view(rows: list[TrialRow], view: str) -> list[TrialRow]:
@@ -73,21 +74,61 @@ def task_arm_table(rows: list[TrialRow], view: str) -> dict[tuple[str, str], tup
 def pass_rate_over_time(rows: list[TrialRow], bucket_s: int = 7200) -> list[TimeBucket]:
     if bucket_s <= 0:
         raise ValueError("bucket_s must be positive")
-    included = [
+    included = _timed_first_attempts(rows)
+    if not included:
+        return []
+    first_t = min(start_t for _, start_t in included)
+    return _bucket_over_time(included, bucket_s, first_t)
+
+
+def pass_rate_over_time_by_arm(
+    rows: list[TrialRow], bucket_s: int = 7200
+) -> dict[str, list[TimeBucket]]:
+    if bucket_s <= 0:
+        raise ValueError("bucket_s must be positive")
+    included = _timed_first_attempts(rows)
+    arms = sorted({row.arm for row in trials_in_view(rows, "first_attempt")})
+    if not included:
+        return {arm: [] for arm in arms}
+    origin_t = min(start_t for _, start_t in included)
+    shared_bucket_count = len(_bucket_over_time(included, bucket_s, origin_t))
+    return {
+        arm: _bucket_over_time(
+            [(row, start_t) for row, start_t in included if row.arm == arm],
+            bucket_s,
+            origin_t,
+            shared_bucket_count,
+        )
+        for arm in arms
+    }
+
+
+def _timed_first_attempts(rows: list[TrialRow]) -> list[tuple[TrialRow, float]]:
+    return [
         (row, row.agent_started_t)
         for row in trials_in_view(rows, "first_attempt")
         if row.agent_started_t is not None
     ]
-    if not included:
-        return []
-    first_t = min(start_t for _, start_t in included)
+
+
+def _bucket_over_time(
+    included: list[tuple[TrialRow, float]],
+    bucket_s: int,
+    origin_t: float,
+    bucket_count: int | None = None,
+) -> list[TimeBucket]:
     buckets: dict[int, list[int]] = {}
     for row, start_t in included:
-        index = int((start_t - first_t) // bucket_s)
+        index = int((start_t - origin_t) // bucket_s)
         counts = buckets.setdefault(index, [0, 0])
         counts[0] += row.reward == 1.0
         counts[1] += 1
+    count = bucket_count if bucket_count is not None else max(buckets, default=-1) + 1
     return [
-        TimeBucket(first_t + index * bucket_s, *buckets.get(index, [0, 0]))
-        for index in range(max(buckets) + 1)
+        _time_bucket(origin_t + index * bucket_s, *buckets.get(index, [0, 0]))
+        for index in range(count)
     ]
+
+
+def _time_bucket(start_t: float, passes: int, trials: int) -> TimeBucket:
+    return TimeBucket(start_t, passes, trials, passes / trials if trials else None)

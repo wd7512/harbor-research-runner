@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from dataclasses import asdict
 from pathlib import Path
 
 from harbor_research_runner.evidence_bundle.build import build
@@ -11,7 +12,12 @@ from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.results_explorer.loader import EvidenceStore, discover
 from harbor_research_runner.statistics.completeness import completeness
 from harbor_research_runner.statistics.paired import paired_difference
-from harbor_research_runner.statistics.rates import arm_rates, pass_rate_over_time, task_arm_table
+from harbor_research_runner.statistics.rates import (
+    arm_rates,
+    pass_rate_over_time,
+    pass_rate_over_time_by_arm,
+    task_arm_table,
+)
 from harbor_research_runner.statistics.usage import label_counts
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "run_folders"
@@ -70,6 +76,15 @@ def test_summary_uses_statistics_for_bundle_rows(tmp_path: Path) -> None:
     }
     assert summary["over_time"] == [bucket.__dict__ for bucket in pass_rate_over_time(rows)]
 
+    over_time = store.over_time("clean")
+    assert over_time == {
+        "all": [bucket.__dict__ for bucket in pass_rate_over_time(rows)],
+        "by_arm": {
+            arm: [bucket.__dict__ for bucket in buckets]
+            for arm, buckets in pass_rate_over_time_by_arm(rows).items()
+        },
+    }
+
 
 def test_trial_filters_apply_arm_task_and_validity(tmp_path: Path) -> None:
     bundle = _bundle("retries", tmp_path)
@@ -90,7 +105,10 @@ def test_compare_pairs_tasks_across_bundles_by_name(tmp_path: Path) -> None:
     combined = [TrialRow.from_row(row) for row in store.trials("clean") + store.trials("retries")]
     expected = paired_difference(combined, "final", "alpha", "beta")
 
-    assert result["paired_difference"] == expected.__dict__
+    assert result["paired_difference"] == asdict(expected)
+    assert result["paired_difference"]["per_task"] == tuple(
+        task.__dict__ for task in expected.per_task
+    )
     assert {row["task"] for row in result["tasks"]} == {
         task for task, _arm in task_arm_table(combined, "final")
     }

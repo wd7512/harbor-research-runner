@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Harbor results explorer</title>
+<style>
+:root{font:15px/1.5 system-ui,sans-serif;color-scheme:light dark;--ink:#202729;--muted:#657276;
+--surface:#fbfaf7;--panel:#fff;--line:#d9dfdc;--soft:#eef2ef;--accent:#087b78;--good:#16845d;
+--bad:#c44b3b;--series:#1769aa}*{box-sizing:border-box}body{margin:0;background:var(--surface);
+color:var(--ink)}header{padding:16px max(20px,calc((100vw - 1180px)/2));border-bottom:1px solid var(--line);
+background:var(--panel)}main{width:min(1180px,calc(100% - 32px));margin:24px auto 72px}h1{font-size:25px;
+margin:0 0 8px}h2{font-size:19px;margin:28px 0 10px}h3{font-size:15px;margin:14px 0 6px}
+p{margin:8px 0}.muted,small{color:var(--muted)}nav{display:flex;gap:8px;overflow:auto;margin:18px 0}
+button,select,input{font:inherit;color:inherit}button,select,input{border:1px solid var(--line);border-radius:5px;
+background:var(--panel);padding:7px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}
+button[aria-current=true]{background:var(--accent);color:white}
+.panel{padding:16px;margin:14px 0;border:1px solid var(--line);
+border-radius:8px;background:var(--panel)}.table-wrap{overflow:auto;max-width:100%;margin:10px 0 20px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px;border-bottom:1px solid var(--line);
+text-align:left;vertical-align:top}th{color:var(--muted);font-size:11px;text-transform:uppercase;white-space:nowrap}
+td.num,th.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.controls{display:flex;flex-wrap:wrap;
+gap:8px;align-items:center}.controls label{display:flex;gap:6px;align-items:center}.badge{padding:2px 7px;
+border-radius:12px;background:var(--soft);font-size:12px}.good{color:var(--good)}.bad{color:var(--bad)}
+.chart{width:100%;height:auto;min-height:180px;display:block}.legend{display:flex;gap:14px;flex-wrap:wrap}
+.legend span:before{content:"";display:inline-block;width:12px;height:3px;margin:0 6px 3px 0;
+background:var(--series)}.legend span:nth-child(2):before{background:#c56b18}.trial-fields{display:grid;
+grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:8px}.field{padding:8px;border-bottom:1px solid var(--line);
+overflow-wrap:anywhere}.field strong{display:block;color:var(--muted);font-size:12px}
+.empty{padding:24px;color:var(--muted)}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--soft);padding:12px;border-radius:5px}
+@media(prefers-color-scheme:dark){:root{--ink:#e6e9e6;--muted:#aab4af;--surface:#111615;--panel:#1b211f;
+--line:#39433f;--soft:#29312d;--accent:#66cbc0;--good:#75d3a7;--bad:#ff9180;--series:#68b9ff}}
+@media(max-width:520px){header{padding:14px 16px}main{width:calc(100% - 20px);margin-top:14px}.panel{padding:10px}}
+</style>
+</head>
+<body>
+<header><h1>Results explorer</h1><span id="status" class="muted">Loading evidence bundles…</span></header>
+<main>
+<nav aria-label="Explorer views">
+<button data-view="bundles" aria-current="true">Evidence bundles</button>
+<button data-view="summary">Run summary</button>
+<button data-view="compare">Compare</button>
+<button data-view="trials">Trials</button>
+</nav>
+<section id="content" aria-live="polite"></section>
+</main>
+<script>
+"use strict";
+const state={bundles:[],run:null,summary:null,overTime:null,trials:[],requests:[],trial:null,
+view:"bundles",compareA:null,compareB:null};
+const content=document.querySelector("#content");
+const status=document.querySelector("#status");
+const escapeHtml=value=>String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",
+">":"&gt;","\"":"&quot;","'":"&#39;"})[char]);
+const number=(value,digits=2)=>value==null?"—":Number(value).toLocaleString(undefined,{maximumFractionDigits:digits});
+async function get(path){const response=await fetch(path);
+if(!response.ok)throw Error(`Request failed (${response.status})`);
+return response.json()}
+function setView(view){state.view=view;document.querySelectorAll("nav button").forEach(button=>{
+button.setAttribute("aria-current",String(button.dataset.view===view));});render();}
+function table(headers,rows){return `<div class="table-wrap"><table><thead><tr>`
++`${headers.map(item=>`<th>${item}</th>`).join("")}
+</tr></thead><tbody>${rows||""}</tbody></table></div>`;}
+function bundleRows(){return state.bundles.map(bundle=>`<tr><td>`
++`<button data-open="${escapeHtml(bundle.run_id)}">Open</button></td>
+<td>${escapeHtml(bundle.run_id)}</td><td>${escapeHtml(bundle.model)}</td><td>${escapeHtml(bundle.created_t)}</td>
+<td>${escapeHtml(bundle.exit_code)}</td><td>${bundle.arms.map(arm=>escapeHtml(arm.label)).join(", ")}</td>
+<td>${bundle.tasks.length}</td></tr>`).join("");}
+function bundlesView(){return `<section class="panel"><h2>Evidence bundles</h2>${table(
+["","Run","Model","Created","Exit","Arms","Tasks"],bundleRows())}</section>`;}
+function rateRows(){const arms=Object.keys(state.summary.rates.final);
+return arms.map(arm=>`<tr><th>${escapeHtml(arm)}</th>${["first_attempt","final","final_excluding_reruns"].map(view=>{
+const rate=state.summary.rates[view][arm];
+return `<td class="num">${rate?`${rate.passes}/${rate.trials} · ${number(rate.rate*100,1)}% `+
+`(${number(rate.low*100,1)}–${number(rate.high*100,1)}%)`:"—"}</td>`;}).join("")}</tr>`).join("");}
+function completenessRows(){const value=state.summary.completeness;
+return Object.entries(value).map(([name,count])=>`<tr><th>${escapeHtml(name.replaceAll("_"," "))}</th>
+<td class="num">${typeof count==="object"?escapeHtml(JSON.stringify(count)):number(count,0)}</td></tr>`).join("");}
+function labelsRows(){return Object.entries(state.summary.labels_by_arm).map(([arm,labels])=>
+`<tr><th>${escapeHtml(arm)}</th><td>${Object.entries(labels).map(([label,count])=>
+`<span class="badge">${escapeHtml(label)}: ${number(count,0)}</span>`).join(" ")||"—"}</td></tr>`).join("");}
+function timeChart(){const series=state.overTime.by_arm;const arms=Object.keys(series);
+const all=arms.flatMap(arm=>series[arm]);
+if(!all.length)return `<p class="empty">No timed first attempts.</p>`;
+const width=900,height=250,pad=30,maxX=Math.max(1,...all.map(row=>row.start_t));
+const maxY=1;
+const colors=["#1769aa","#c56b18","#16845d","#b64f85","#7663b5"];
+const lines=arms.map((arm,index)=>{const points=series[arm].filter(row=>row.rate!==null).map(row=>{
+const x=pad+(width-pad*2)*(row.start_t-all[0].start_t)/(maxX-all[0].start_t||1);
+const y=height-pad-(height-pad*2)*row.rate/maxY;return `${x},${y}`;}).join(" ");
+return `<polyline points="${points}" fill="none" stroke="${colors[index%colors.length]}"`
++` stroke-width="3"/>`;}).join("");
+return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Pass rate over time by arm">
+<path d="M${pad} ${pad}V${height-pad}H${width-pad}" fill="none" stroke="currentColor"/>
+${lines}</svg><div class="legend">${arms.map((arm,index)=>`<span style="--series:${colors[index%colors.length]}">
+${escapeHtml(arm)}</span>`).join("")}</div><p class="muted">Pass counts per returned time bucket.</p>`;}
+function summaryView(){if(!state.summary)return `<p class="empty">Choose an evidence bundle first.</p>`;
+return `<section class="panel"><h2>Run summary: ${escapeHtml(state.run)}</h2><h3>Pass rates</h3>
+${table(["Arm","First attempt","Final","Final excluding reruns"],rateRows())}<h3>Completeness</h3>
+${table(["Measure","Value"],completenessRows())}<h3>Labels by arm</h3>${table(["Arm","Labels"],labelsRows())}
+<h3>Pass rate over time</h3>${timeChart()}</section>`;}
+function allArms(run){return state.bundles.find(bundle=>bundle.run_id===run)?.arms.map(arm=>arm.label)||[];}
+function compareView(){const ids=state.bundles.map(bundle=>bundle.run_id);const runA=state.compareA||ids[0]||"";
+const runB=state.compareB||ids[0]||"";const arms=[...new Set([...allArms(runA),...allArms(runB)])];
+return `<section class="panel"><h2>Compare arms</h2><div class="controls">
+<label>Bundle A <select id="run-a">${ids.map(id=>`<option ${id===runA?"selected":""}>`
++`${escapeHtml(id)}</option>`).join("")}</select></label>
+<label>Bundle B <select id="run-b">${ids.map(id=>`<option ${id===runB?"selected":""}>`
++`${escapeHtml(id)}</option>`).join("")}</select></label>
+<label>Arm A <select id="arm-a">${arms.map(arm=>`<option>${escapeHtml(arm)}</option>`).join("")}</select></label>
+<label>Arm B <select id="arm-b">${arms.map(arm=>`<option>${escapeHtml(arm)}</option>`).join("")}</select></label>
+<label>View <select id="compare-view"><option>final</option><option>first_attempt</option>
+<option>final_excluding_reruns</option></select></label><button id="compare-go">Compare</button></div>
+<div id="compare-result" class="muted">Choose two arms and compare.</div></section>`;}
+function filteredTrials(){const arm=document.querySelector("#filter-arm")?.value||"";
+const task=document.querySelector("#filter-task")?.value||"";
+const valid=document.querySelector("#filter-valid")?.value||"";
+const label=document.querySelector("#filter-label")?.value||"";
+return state.trials.filter(row=>(!arm||row.arm===arm)&&(!task||row.task===task)&&
+(!valid||String(row.valid)===valid)&&(!label||row.labels.includes(label)));}
+function trialRows(){return filteredTrials().map(row=>`<tr><td>`
++`<button data-trial="${escapeHtml(row.trial)}">${escapeHtml(row.trial)}</button></td>
+<td>${escapeHtml(row.arm)}</td><td>${escapeHtml(row.task)}</td><td>${row.reward==null?"—":number(row.reward,2)}</td>
+<td>${row.valid?"valid":"invalid"}</td><td>${escapeHtml(row.reason)}</td><td>${number(row.requests,0)}</td>
+<td>${number(row.prompt_tokens,0)} / ${number(row.completion_tokens,0)}</td>
+<td>${number(row.prompt_chars,0)} / ${number(row.completion_chars,0)}</td>
+<td>${number(row.cost_usd_estimate,4)}</td></tr>`).join("");}
+function trialsView(){if(!state.run)return `<p class="empty">Choose an evidence bundle first.</p>`;
+const arms=[...new Set(state.trials.map(row=>row.arm))];const tasks=[...new Set(state.trials.map(row=>row.task))];
+const labels=[...new Set(state.trials.flatMap(row=>row.labels))];
+return `<section class="panel"><h2>Trials</h2><div class="controls">
+<label>Arm <select id="filter-arm"><option value="">All</option>`
++`${arms.map(value=>`<option>${escapeHtml(value)}</option>`).join("")}</select></label>
+<label>Task <select id="filter-task"><option value="">All</option>`
++`${tasks.map(value=>`<option>${escapeHtml(value)}</option>`).join("")}</select></label>
+<label>Valid <select id="filter-valid"><option value="">All</option>`
++`<option>true</option><option>false</option></select></label>
+<label>Label <select id="filter-label"><option value="">All</option>`
++`${labels.map(value=>`<option>${escapeHtml(value)}</option>`).join("")}</select></label>
+</div><div id="trial-table">${table(["Trial","Arm","Task","Reward","Validity","Reason","Requests",
+"Tokens (prompt / completion)","Characters (prompt / completion)","Cost USD"],trialRows())}</div>
+<div id="trial-detail"></div></section>`;}
+function requestChart(rows){if(!rows.length)return `<p class="empty">No recorded requests for this trial.</p>`;
+const width=760,height=230,pad=35,max=Math.max(1,...rows.flatMap(row=>[row.prompt_tokens||0,row.completion_tokens||0]));
+const step=(width-pad*2)/Math.max(1,rows.length-1);const points=(key)=>rows.map((row,index)=>
+`${pad+index*step},${height-pad-(height-pad*2)*(row[key]||0)/max}`).join(" ");
+const marks=rows.map((row,index)=>row.upstream_status&&row.upstream_status!=="ok"?
+`<circle cx="${pad+index*step}" cy="${height-pad}" r="5" fill="var(--bad)"/>`:"").join("");
+return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Request token series">
+<path d="M${pad} ${pad}V${height-pad}H${width-pad}" fill="none" stroke="currentColor"/>
+<polyline points="${points("prompt_tokens")}" fill="none" stroke="var(--series)" stroke-width="3"/>
+<polyline points="${points("completion_tokens")}" fill="none" stroke="#c56b18" stroke-width="3"/>
+${marks}</svg><div class="legend"><span>Prompt tokens</span><span>Completion tokens</span>
+<span class="error-key">Errored request</span></div>
+<p class="muted">Prompt and completion tokens by request. Red markers indicate errored requests.
+Refused requests: ${number(state.trial?.refused_requests,0)}.</p>`;}
+function fieldRows(row){return Object.entries(row).map(([key,value])=>`<div class="field">`
++`<strong>${escapeHtml(key)}</strong>
+${escapeHtml(Array.isArray(value)?value.join(", "):value)}</div>`).join("");}
+async function openTrial(trial){state.trial=state.trials.find(row=>row.trial===trial);state.requests=
+await get(`api/evidence/${encodeURIComponent(state.run)}/trials/${encodeURIComponent(trial)}/requests`);
+const detail=document.querySelector("#trial-detail");if(!detail)return;
+detail.innerHTML=`<section class="panel"><h2>Trial: ${escapeHtml(trial)}</h2>${requestChart(state.requests)}
+<div class="trial-fields">${fieldRows(state.trial)}</div><label>Run folder path
+<input id="run-folder" type="text" placeholder="Optional run folder path"></label>`
++`<div id="harbor-view"></div></section>`;}
+function shellQuote(value){return `'${value.replaceAll("'","'\\''")}'`;}
+async function compare(){const runA=document.querySelector("#run-a").value;
+const runB=document.querySelector("#run-b").value;
+const armA=document.querySelector("#arm-a").value;const armB=document.querySelector("#arm-b").value;
+const view=document.querySelector("#compare-view").value;const query=new URLSearchParams();query.append("run",runA);
+query.append("run",runB);query.set("a",armA);query.set("b",armB);query.set("view",view);
+const result=await get(`api/compare?${query}`);const paired=result.paired_difference;
+const sorted=[...(paired.per_task||[])].sort((left,right)=>left.difference-right.difference);
+document.querySelector("#compare-result").innerHTML=`<h3>Paired difference `
++`(${escapeHtml(armA)} − ${escapeHtml(armB)})</h3>
+<p>${number(paired.mean_difference,4)} · interval ${number(paired.low,4)} to ${number(paired.high,4)} ·
+${number(paired.tasks,0)} paired tasks · ${number(paired.unpaired_tasks,0)} unpaired</p>
+${table(["Task","Arm A rate","Arm B rate","Difference"],sorted.map(item=>`<tr><td>${escapeHtml(item.task)}</td>
+<td class="num">${number(item.rate_a,4)}</td><td class="num">${number(item.rate_b,4)}</td>
+<td class="num">${number(item.difference,4)}</td></tr>`).join(""))}`;}
+function render(){content.innerHTML=state.view==="bundles"?bundlesView():state.view==="summary"?summaryView():
+state.view==="compare"?compareView():trialsView();}
+async function openRun(run){state.run=run;const id=encodeURIComponent(run);
+[state.summary,state.overTime,state.trials]=await Promise.all([get(`api/evidence/${id}/summary`),
+get(`api/evidence/${id}/over-time`),get(`api/evidence/${id}/trials`)]);state.view="summary";setView("summary");}
+document.addEventListener("click",async event=>{const button=event.target.closest("button");if(!button)return;
+if(button.dataset.view){setView(button.dataset.view);return;}
+if(button.dataset.open){await openRun(button.dataset.open);return;}
+if(button.dataset.trial){await openTrial(button.dataset.trial);return;}
+if(button.id==="compare-go"){await compare();return;}});
+document.addEventListener("change",event=>{
+if(event.target.matches("#filter-arm,#filter-task,#filter-valid,#filter-label")){
+document.querySelector("#trial-table").innerHTML=table(["Trial","Arm","Task","Reward","Validity","Reason","Requests",
+"Tokens (prompt / completion)","Characters (prompt / completion)","Cost USD"],trialRows());}
+if(event.target.id==="run-a"){state.compareA=event.target.value;render();}
+if(event.target.id==="run-b"){state.compareB=event.target.value;render();}
+if(event.target.id==="run-folder"){const path=event.target.value.trim();
+const target=document.querySelector("#harbor-view");
+target.innerHTML=path&&state.trial?`<p>Open this trial trajectory:</p><pre>harbor view ${shellQuote(
+`${path.replace(/\/$/,"")}/${state.trial.location}/${state.trial.trial}`)}</pre>`:"";}});
+async function start(){try{state.bundles=await get("api/evidence");
+status.textContent=`${state.bundles.length} evidence bundles`;render();}
+catch(error){status.textContent=error.message;
+content.innerHTML=`<p class="empty">Could not load evidence bundles.</p>`;}}
+document.querySelector("nav").addEventListener("click",event=>{const button=event.target.closest("[data-view]");
+if(button)setView(button.dataset.view);});
+start();
+</script>
+</body>
+</html>
