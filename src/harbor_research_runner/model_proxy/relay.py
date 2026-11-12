@@ -9,7 +9,7 @@ import time
 import uuid
 from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import httpx
@@ -39,7 +39,7 @@ _UNAVAILABLE_BODY = (
 @dataclass(frozen=True)
 class Route:
     endpoint: str
-    key: str | None
+    key: str | None = field(repr=False)
 
 
 @dataclass
@@ -232,6 +232,7 @@ class _RelayState:
         clock: StreamClock,
         observation: _Observation,
         body: _UpstreamBody | None,
+        failovers: int,
     ) -> None:
         self.deps = deps
         self.trial = trial
@@ -239,6 +240,7 @@ class _RelayState:
         self.clock = clock
         self.observation = observation
         self.body = body
+        self.failovers = failovers
         self.header_status: int | None = None
         self._written = False
         self._http_status: int | None = None
@@ -270,7 +272,7 @@ class _RelayState:
                 self.clock.first_chunk_s,
                 self.clock.first_content_s,
                 self.clock.finish(),
-                0,
+                self.failovers,
                 self.observation.error_body[:500] or None,
             )
         )
@@ -349,86 +351,111 @@ def relay_chat(
         )
     )
 
-    route = next(deps.routes())
-    upstream_headers = {"content-type": "application/json"}
-    if route.key is not None:
-        upstream_headers["authorization"] = f"Bearer {route.key}"
-    request = deps.client.build_request(
-        "POST",
-        route.endpoint,
-        headers=upstream_headers,
-        json=outbound,
-        timeout=_header_timeout(
-            deps.client,
-            deps.limits.first_chunk_max_s,
-            deps.limits.request_latency_max_s,
-        ),
-    )
-    observation = _Observation()
-    started = time.monotonic()
-    try:
-        response = deps.client.send(request, stream=True)
-    except httpx.TimeoutException as exc:
-        if isinstance(exc, httpx.ReadTimeout):
-            observation.cut_by_proxy = (
-                "latency"
-                if deps.limits.request_latency_max_s <= deps.limits.first_chunk_max_s
-                else "first_chunk"
-            )
-        else:
+    routes = list(deps.routes())
+    for failovers, route in enumerate(routes):
+        upstream_headers = {"content-type": "application/json"}
+        if route.key is not None:
+            upstream_headers["authorization"] = f"Bearer {route.key}"
+        request = deps.client.build_request(
+            "POST",
+            route.endpoint,
+            headers=upstream_headers,
+            json=outbound,
+            timeout=_header_timeout(
+                deps.client,
+                deps.limits.first_chunk_max_s,
+                deps.limits.request_latency_max_s,
+            ),
+        )
+        observation = _Observation()
+        started = time.monotonic()
+        try:
+            response = deps.client.send(request, stream=True)
+        except httpx.TimeoutException as exc:
+            if isinstance(exc, httpx.ReadTimeout):
+                observation.cut_by_proxy = (
+                    "latency"
+                    if deps.limits.request_latency_max_s <= deps.limits.first_chunk_max_s
+                    else "first_chunk"
+                )
+            else:
+                observation.transport_failed = True
+            state = _RelayState(deps, trial, request_id, clock, observation, None, failovers)
+            if _can_fail_over(observation) and failovers + 1 < len(routes):
+                continue
+            status = state.finish()
+            return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+        except httpx.TransportError:
             observation.transport_failed = True
-        state = _RelayState(deps, trial, request_id, clock, observation, None)
-        status = state.finish()
-        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
-    except httpx.TransportError:
-        observation.transport_failed = True
-        state = _RelayState(deps, trial, request_id, clock, observation, None)
-        status = state.finish()
-        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+            state = _RelayState(deps, trial, request_id, clock, observation, None, failovers)
+            if _can_fail_over(observation) and failovers + 1 < len(routes):
+                continue
+            status = state.finish()
+            return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
 
-    request.extensions.setdefault("timeout", {})["read"] = None
-    observation.http_status = response.status_code
-    observation.retry_after_s = retry_after_seconds(response.headers.get("Retry-After"))
-    response_headers = _response_headers(response)
-    body = _UpstreamBody(response, deps.limits, started)
-    state = _RelayState(deps, trial, request_id, clock, observation, body)
+        request.extensions.setdefault("timeout", {})["read"] = None
+        observation.http_status = response.status_code
+        observation.retry_after_s = retry_after_seconds(response.headers.get("Retry-After"))
+        response_headers = _response_headers(response)
+        body = _UpstreamBody(response, deps.limits, started)
+        state = _RelayState(deps, trial, request_id, clock, observation, body, failovers)
 
-    if response.status_code != 200:
-        return _error_response(state, response.charset_encoding or "utf-8", response_headers)
+        if response.status_code != 200:
+            error_response = _error_response(
+                state,
+                response.charset_encoding or "utf-8",
+                response_headers,
+                can_retry=failovers + 1 < len(routes),
+            )
+            if error_response is None:
+                continue
+            return error_response
 
-    try:
-        first = body.next(first_chunk=True)
-    except _Cut as cut:
-        observation.cut_by_proxy = cut.reason
-        state.close_body()
-        status = state.finish()
-        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
-    except _Transport:
-        observation.transport_failed = True
-        state.close_body()
-        status = state.finish()
-        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+        try:
+            first = body.next(first_chunk=True)
+        except _Cut as cut:
+            observation.cut_by_proxy = cut.reason
+            state.close_body()
+            status = state.finish()
+            return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+        except _Transport:
+            observation.transport_failed = True
+            state.close_body()
+            if _can_fail_over(observation) and failovers + 1 < len(routes):
+                continue
+            status = state.finish()
+            return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
 
-    if first is not None:
-        clock.mark_chunk()
+        if first is not None:
+            clock.mark_chunk()
 
-    if not is_stream:
+        if not is_stream:
+            state.header_status = 200
+            return RelayResponse(
+                200, response_headers, _OwnedChunks(_nonstream_chunks(state, first), state)
+            )
+
+        if first is None:
+            state.header_status = 200
+            state.close_body()
+            status = state.finish(200)
+            return RelayResponse(status, response_headers, iter([]))
+
         state.header_status = 200
         return RelayResponse(
-            200, response_headers, _OwnedChunks(_nonstream_chunks(state, first), state)
+            200, response_headers, _OwnedChunks(_stream_chunks(state, first), state)
         )
 
-    if first is None:
-        state.header_status = 200
-        state.close_body()
-        status = state.finish(200)
-        return RelayResponse(status, response_headers, iter([]))
-
-    state.header_status = 200
-    return RelayResponse(200, response_headers, _OwnedChunks(_stream_chunks(state, first), state))
+    raise StopIteration("no upstream routes available")
 
 
-def _error_response(state: _RelayState, charset: str, headers: dict[str, str]) -> RelayResponse:
+def _error_response(
+    state: _RelayState,
+    charset: str,
+    headers: dict[str, str],
+    *,
+    can_retry: bool,
+) -> RelayResponse | None:
     observation = state.observation
     assert state.body is not None
     try:
@@ -441,12 +468,24 @@ def _error_response(state: _RelayState, charset: str, headers: dict[str, str]) -
     except _Transport:
         observation.transport_failed = True
         state.close_body()
+        if can_retry and _can_fail_over(observation):
+            return None
         status = state.finish()
         return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
     observation.error_body = body.decode(charset, errors="replace")[:500]
     state.close_body()
+    if can_retry and _can_fail_over(observation):
+        return None
     status = state.finish()
     return RelayResponse(status, headers, iter([body] if body else []))
+
+
+def _can_fail_over(observation: _Observation) -> bool:
+    return classify(observation.outcome()) in {
+        "rate_limited",
+        "server_error",
+        "transport_error",
+    }
 
 
 def _nonstream_chunks(state: _RelayState, first: bytes | None) -> Generator[bytes, None, None]:
