@@ -91,7 +91,7 @@ def run_command(run_dir: Path, job_name: str, proxy_url: str, task_order: str) -
         "harbor",
         "run",
         "--config",
-        str(run_dir / "harbor-job-config.yaml"),
+        str(run_dir / f"{job_name}-config.yaml"),
         "--jobs-dir",
         str(run_dir),
         "--job-name",

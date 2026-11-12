@@ -226,7 +226,7 @@ def _build_snapshot(
     )
 
 
-def _judged_from_events(run_dir: Path) -> set[str]:
+def judged_trials(run_dir: Path) -> set[str]:
     return {
         row["trial"]
         for row in _read_events(run_dir)
@@ -243,7 +243,7 @@ def watch(
     now=time.time,
     sleep=time.sleep,
 ) -> WatchResult:
-    judged = _judged_from_events(session.run_dir)
+    judged = judged_trials(session.run_dir)
     ledger_tail = JsonlTail(session.run_dir / "proxy-ledger.jsonl")
     resource_tail = JsonlTail(session.run_dir / "resource-stats.jsonl")
     while True:
