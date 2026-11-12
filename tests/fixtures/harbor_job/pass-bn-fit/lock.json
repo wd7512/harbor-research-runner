@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "task": {
+    "name": "terminal-bench/bn-fit-modify",
+    "type": "package",
+    "digest": "sha256:b5f9644970c17ad9ddb46b7266f7bcd87c761d77d7e6f55d7cfe7284d5ff66e9",
+    "source": "terminal-bench/terminal-bench-2-1"
+  },
+  "timeout_multiplier": 1.0
+}

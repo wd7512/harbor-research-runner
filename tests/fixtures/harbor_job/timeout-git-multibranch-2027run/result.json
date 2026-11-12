@@ -1,0 +1,47 @@
+{
+  "task_name": "terminal-bench/git-multibranch",
+  "trial_name": "git-multibranch__oA6a89g",
+  "task_id": {
+    "org": "terminal-bench",
+    "name": "git-multibranch",
+    "ref": "sha256:7759a92a373c967dd31535975bad8659410644025673fe62385444fd2605c5fa"
+  },
+  "source": "terminal-bench/terminal-bench-2-1",
+  "task_checksum": "abe8a7f8f9dcb0e2170740e4735559b368cecd925ddee09c9ed81a7c67dce90a",
+  "agent_result": {
+    "n_input_tokens": 434310,
+    "n_output_tokens": 56820,
+    "n_cache_tokens": 394151,
+    "cost_usd": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 0.0
+    }
+  },
+  "exception_info": {
+    "exception_type": "AgentTimeoutError",
+    "exception_message": "Agent execution timed out after 900.0 seconds",
+    "exception_traceback": "harbor.trial.errors.AgentTimeoutError: Agent execution timed out after 900.0 seconds",
+    "occurred_at": "2026-11-11T21:25:30.842412Z"
+  },
+  "started_at": "2026-11-11T21:09:29.869633Z",
+  "finished_at": "2026-11-11T21:26:18.464523Z",
+  "environment_setup": {
+    "started_at": "2026-11-11T21:10:01.468177Z",
+    "finished_at": "2026-11-11T21:10:06.198159Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-11T21:10:06.198312Z",
+    "finished_at": "2026-11-11T21:10:30.280008Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-11-11T21:10:30.280538Z",
+    "finished_at": "2026-11-11T21:25:30.827778Z"
+  },
+  "verifier": {
+    "started_at": "2026-11-11T21:25:34.682304Z",
+    "finished_at": "2026-11-11T21:26:12.171869Z"
+  },
+  "step_results": null
+}

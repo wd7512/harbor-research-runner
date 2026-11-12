@@ -1,0 +1,68 @@
+{
+  "schema_version": 3,
+  "created_at": "2026-11-11T17:57:16.341989Z",
+  "harbor": {
+    "version": "0.23.0",
+    "is_editable": false
+  },
+  "n_concurrent_trials": 8,
+  "retry": {
+    "max_retries": 0,
+    "exclude_exceptions": [
+      "AgentAuthenticationError",
+      "ApiUsageLimitError",
+      "VerifierTimeoutError",
+      "AgentTimeoutError",
+      "VerifierOutputParseError",
+      "ModelNotFoundError",
+      "RewardFileEmptyError",
+      "RewardFileNotFoundError",
+      "AgentSafetyRefusalError"
+    ],
+    "wait_multiplier": 1.0,
+    "min_wait_sec": 1.0,
+    "max_wait_sec": 60.0
+  },
+  "trials": [
+    {
+      "schema_version": 2,
+      "task": {
+        "name": "terminal-bench/pytorch-model-cli",
+        "type": "package",
+        "digest": "sha256:6f11544dcc81a380dc4611902961f5520259c462d9fceb413419d66ab9a96c79",
+        "source": "terminal-bench/terminal-bench-2-1"
+      },
+      "timeout_multiplier": 1.0
+    },
+    {
+      "schema_version": 2,
+      "task": {
+        "name": "terminal-bench/break-filter-js-from-html",
+        "type": "package",
+        "digest": "sha256:678008d1a4fd1e6e1b9b3cc9a327219fe4b410a31eafc52e9099bbf947eea600",
+        "source": "terminal-bench/terminal-bench-2-1"
+      },
+      "timeout_multiplier": 1.0
+    },
+    {
+      "schema_version": 2,
+      "task": {
+        "name": "terminal-bench/git-multibranch",
+        "type": "package",
+        "digest": "sha256:7759a92a373c967dd31535975bad8659410644025673fe62385444fd2605c5fa",
+        "source": "terminal-bench/terminal-bench-2-1"
+      },
+      "timeout_multiplier": 1.0
+    },
+    {
+      "schema_version": 2,
+      "task": {
+        "name": "terminal-bench/bn-fit-modify",
+        "type": "package",
+        "digest": "sha256:b5f9644970c17ad9ddb46b7266f7bcd87c761d77d7e6f55d7cfe7284d5ff66e9",
+        "source": "terminal-bench/terminal-bench-2-1"
+      },
+      "timeout_multiplier": 1.0
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "task": {
+    "name": "terminal-bench/git-multibranch",
+    "type": "package",
+    "digest": "sha256:7759a92a373c967dd31535975bad8659410644025673fe62385444fd2605c5fa",
+    "source": "terminal-bench/terminal-bench-2-1"
+  },
+  "timeout_multiplier": 1.0
+}

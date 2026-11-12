@@ -1,0 +1,23 @@
+{
+  "task": {
+    "name": "terminal-bench/git-multibranch",
+    "ref": "sha256:7759a92a373c967dd31535975bad8659410644025673fe62385444fd2605c5fa",
+    "source": "terminal-bench/terminal-bench-2-1"
+  },
+  "trial_name": "git-multibranch__oA6a89g",
+  "agent": {
+    "kwargs": {
+      "arm_label": "major",
+      "harness": "opencode",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "manifest_path": "harness-manifest.toml",
+      "container_host": "host.docker.internal",
+      "proxy_port": 8766,
+      "variant": null,
+      "model_card": {
+        "id": "fixture/model",
+        "upstream_model": "fixture-model"
+      }
+    }
+  }
+}
