@@ -161,7 +161,7 @@ def test_session_id_is_trial_name_plus_agent_suffix(harbor_job):
     assert opened["trial"] == trial_dir.name
 
 
-def test_proxy_refusal_body_matches_no_harbor_error_pattern(harbor_job):
+def test_harbor_contract_accepts_proxy_refusal_body(harbor_job):
     refusal_run = harbor_job.run_refused()
     trial_dir = _trial_dirs(harbor_job.refusal_run_dir / "harbor-job")[0]
     result = _trial_result(trial_dir)

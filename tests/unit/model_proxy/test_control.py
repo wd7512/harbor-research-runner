@@ -167,7 +167,7 @@ def test_later_open_row_does_not_reopen_a_closed_trial(ledger_path):
 
 
 @pytest.mark.parametrize("body", [CLOSED_BODY, UPSTREAM_UNAVAILABLE_BODY])
-def test_proxy_refusal_body_matches_no_harbor_error_pattern(body: str) -> None:
+def test_control_refusal_body_avoids_harbor_error_pattern(body: str) -> None:
     for pattern in BaseInstalledAgent.ERROR_PATTERNS:
         assert re.search(pattern.pattern, body, re.IGNORECASE) is None
 

@@ -61,7 +61,7 @@ def _run(tmp_path, first_script, second_script, caplog):
     return response, body, rows, ledger_text, caplog.text, first, second
 
 
-def test_upstream_errors_and_failovers_are_recorded(tmp_path, caplog) -> None:
+def test_failover_records_upstream_errors_and_recovery(tmp_path, caplog) -> None:
     response, _body, rows, ledger_text, log_text, first, second = _run(
         tmp_path, "http_502", "ok", caplog
     )

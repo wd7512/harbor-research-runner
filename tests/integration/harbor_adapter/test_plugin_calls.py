@@ -289,7 +289,7 @@ def test_permanently_closed_gate_queues_without_launching() -> None:
     assert asyncio.run(run()) == []
 
 
-def test_invalid_launch_min_interval_fails_closed() -> None:
+def test_plugin_rejects_invalid_launch_min_interval() -> None:
     with pytest.raises(ValueError, match="launch_min_interval_s"):
         RamSpareGate(min_spare_memory_mb=0, launch_min_interval_s=-1)
 

@@ -424,7 +424,7 @@ def test_machine_check_matches_passes_for_matching_check(tmp_path: Path) -> None
     assert result.ok
 
 
-def test_job_naming_task_outside_machine_check_is_refused(tmp_path: Path) -> None:
+def test_job_checks_refuse_task_outside_machine_check(tmp_path: Path) -> None:
     check = _machine_check(included=["task-a"])
     deps = _deps(tmp_path, read_machine_check=lambda _path: check)
     result = _by_name(_run(tmp_path, job=_job(include=("task-b",)), deps=deps), "tasks_included")

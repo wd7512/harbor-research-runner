@@ -13,7 +13,6 @@ from harbor_research_runner.harbor_adapter.job_folder import (
     task_budgets,
     task_digests,
     task_timeouts,
-    trial_folders,
 )
 from harbor_research_runner.trial_validity.phase_table import failed_phase
 from harbor_research_runner.trial_validity.verdict import TrialFacts
@@ -152,21 +151,6 @@ def _fixture_copy(tmp_path: Path, fixture: str = "pass-bn-fit") -> Path:
     target = tmp_path / fixture
     shutil.copytree(source, target)
     return target
-
-
-def test_trial_folders_are_sorted_and_require_config(tmp_path: Path) -> None:
-    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "z-trial").mkdir()
-    (tmp_path / "a-trial").mkdir()
-    (tmp_path / "a-trial" / "config.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "z-trial" / "config.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "not-a-trial").mkdir()
-
-    assert trial_folders(tmp_path) == [tmp_path / "a-trial", tmp_path / "z-trial"]
-
-
-def test_trial_folders_of_empty_job_are_empty(tmp_path: Path) -> None:
-    assert trial_folders(tmp_path) == []
 
 
 @pytest.mark.parametrize(

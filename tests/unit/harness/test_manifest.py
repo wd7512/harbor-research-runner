@@ -52,7 +52,7 @@ def manifest_file(tmp_path: Path, body: str) -> Path:
     return path
 
 
-def test_unlisted_or_mismatched_image_refuses_launch() -> None:
+def test_manifest_refuses_unlisted_or_mismatched_image() -> None:
     cases = [
         ({}, "opencode", COMMIT, "amd64", DIGEST, "not listed"),
         (

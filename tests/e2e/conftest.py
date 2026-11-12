@@ -36,6 +36,7 @@ from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.machine_check import write as write_machine_check
 from harbor_research_runner.records.proxy_control import ProxyConfig, write
 from tests.support.fake_upstream import FakeUpstream
+from tests.support.processes import ps_command
 
 ROOT = Path(__file__).resolve().parents[2]
 TASK = ROOT / "src/harbor_research_runner/run/canary_task/say-hello"
@@ -419,7 +420,7 @@ class E2ERun:
 
     def _process_groups(self) -> dict[int, set[str]]:
         result = subprocess.run(
-            ["ps", "-axo", "pid=,pgid=,command="],
+            ps_command(),
             capture_output=True,
             text=True,
             check=True,

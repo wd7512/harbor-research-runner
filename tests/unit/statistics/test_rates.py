@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import pytest
 
 from harbor_research_runner.records.trials import TrialRow
@@ -9,6 +12,19 @@ from harbor_research_runner.statistics.rates import (
     trials_in_view,
     wilson_interval,
 )
+from tests.support.old_evidence import old_null_end_count, old_request_rows, old_trial_rows
+
+EVIDENCE = Path("evidence/ollama-beam-119-vs-21-k3-i5-20261106T000709307600Z")
+
+
+@pytest.fixture(scope="module")
+def evidence():
+    evidence_dir = Path(os.environ["HRR_OLD_REPO"]) / EVIDENCE
+    return (
+        old_trial_rows(evidence_dir),
+        old_request_rows(evidence_dir),
+        old_null_end_count(evidence_dir),
+    )
 
 
 def _row(
@@ -175,3 +191,34 @@ def test_pass_rate_over_time_by_arm_aligns_buckets_to_a_shared_origin():
         "arm-a": [(100.0, 1, 1), (200.0, 0, 0), (300.0, 0, 1)],
         "arm-b": [(100.0, 0, 0), (200.0, 0, 1), (300.0, 0, 0)],
     }
+
+
+@pytest.mark.replay
+@pytest.mark.skipif(not os.environ.get("HRR_OLD_REPO"), reason="HRR_OLD_REPO is unset")
+def test_beam_evidence_pass_counts_by_reward(evidence):
+    trial_rows, _, _ = evidence
+    rates = arm_rates(trial_rows, "final")
+
+    assert (rates["1.19.3"].passes, rates["1.19.3"].trials) == (189, 267)
+    assert (rates["2.1"].passes, rates["2.1"].trials) == (189, 267)
+
+
+@pytest.mark.replay
+@pytest.mark.skipif(not os.environ.get("HRR_OLD_REPO"), reason="HRR_OLD_REPO is unset")
+def test_beam_evidence_null_end_duration_substitution_is_visible(evidence):
+    _, request_rows, null_end_count = evidence
+
+    assert null_end_count == 48
+    assert sum(row["duration_s"] == 0.0 for rows in request_rows.values() for row in rows) == 48
+
+
+@pytest.mark.replay
+@pytest.mark.skipif(not os.environ.get("HRR_OLD_REPO"), reason="HRR_OLD_REPO is unset")
+def test_beam_evidence_tokens_outside_final_set(evidence):
+    trial_rows, request_rows, _ = evidence
+    final_trials = {row.trial for row in trial_rows}
+    outside = set(request_rows) - final_trials
+
+    assert len(outside) == 212
+    assert sum(len(request_rows[trial]) for trial in outside) == 12_810
+    assert sum(map(len, request_rows.values())) == 33_615
