@@ -58,6 +58,7 @@ timeout = 600
 markers = [
     "live: real OpenCode, a real model, one real task; run before a release by the owner",
     "contract: an end-to-end test that pins one Harbor behaviour we rely on",
+    "replay: replays the new rules on OLD's committed evidence; needs HRR_OLD_REPO, not in the gate",
 ]
 
 [tool.devtools.gate]
