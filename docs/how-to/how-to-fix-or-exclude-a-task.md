@@ -4,6 +4,8 @@ Keep task maintenance in a separate pinned task repository. A fix may change plu
 
 1. **Pin the task repository.** In the job file, use a git task source with its exact repository URL and commit. The task path may instead point to a local checkout when the study is managed locally.
 
+   Task names are Harbor task IDs: folder names for `path` and `git` sources, and `org/name` for `dataset` tasks, never `[task].name`.
+
    ```yaml
    tasks:
      git:
