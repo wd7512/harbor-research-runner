@@ -172,7 +172,7 @@ def test_write_job_config_refuses_different_content_and_preserves_bytes(tmp_path
 def test_run_command_matches_harbor_command_vector(tmp_path: Path):
     run_dir = tmp_path / "runs" / "study"
 
-    command = run_command(run_dir, "harbor-job", "http://127.0.0.1:8766")
+    command = run_command(run_dir, "harbor-job", "http://127.0.0.1:8766", "slowest_first")
 
     assert command == [
         "uv",
@@ -191,13 +191,15 @@ def test_run_command_matches_harbor_command_vector(tmp_path: Path):
         "proxy_url=http://127.0.0.1:8766",
         "--pk",
         f"limits_file={run_dir / 'proxy-config.json'}",
+        "--pk",
+        "task_order=slowest_first",
     ]
 
 
 def test_run_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Path):
     run_dir = tmp_path / "run with spaces" / "study"
 
-    command = run_command(run_dir, "custom-job", "http://127.0.0.1:8766")
+    command = run_command(run_dir, "custom-job", "http://127.0.0.1:8766", "as_listed")
 
     assert command == [
         "uv",
@@ -216,13 +218,15 @@ def test_run_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Path)
         "proxy_url=http://127.0.0.1:8766",
         "--pk",
         f"limits_file={run_dir / 'proxy-config.json'}",
+        "--pk",
+        "task_order=as_listed",
     ]
 
 
 def test_resume_command_matches_harbor_command_vector(tmp_path: Path):
     run_dir = tmp_path / "runs" / "study"
 
-    command = resume_command(run_dir, "harbor-job", "http://127.0.0.1:8766")
+    command = resume_command(run_dir, "harbor-job", "http://127.0.0.1:8766", "slowest_first")
 
     assert command == [
         "uv",
@@ -240,13 +244,15 @@ def test_resume_command_matches_harbor_command_vector(tmp_path: Path):
         "proxy_url=http://127.0.0.1:8766",
         "--pk",
         f"limits_file={run_dir / 'proxy-config.json'}",
+        "--pk",
+        "task_order=slowest_first",
     ]
 
 
 def test_resume_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Path):
     run_dir = tmp_path / "run with spaces" / "study"
 
-    command = resume_command(run_dir, "custom-job", "http://127.0.0.1:8766")
+    command = resume_command(run_dir, "custom-job", "http://127.0.0.1:8766", "as_listed")
 
     assert command == [
         "uv",
@@ -264,4 +270,6 @@ def test_resume_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Pa
         "proxy_url=http://127.0.0.1:8766",
         "--pk",
         f"limits_file={run_dir / 'proxy-config.json'}",
+        "--pk",
+        "task_order=as_listed",
     ]

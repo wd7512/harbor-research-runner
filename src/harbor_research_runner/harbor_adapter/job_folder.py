@@ -119,7 +119,7 @@ def task_budgets(job_dir: Path, task_tomls: Mapping[str, str]) -> dict[str, tupl
             raise HarborFolderError(
                 f"{trial_dir.name}: no task.toml supplied for {task!r}"
             ) from exc
-        task_agent, task_verifier = _task_timeouts(task, task_toml, trial_dir)
+        task_agent, task_verifier = task_timeouts(task, task_toml)
         agent = config.get("agent")
         agent = agent if isinstance(agent, dict) else {}
         override = agent.get("override_timeout_sec")
@@ -349,21 +349,28 @@ def _trajectory_details(trajectory: Mapping[str, Any] | None) -> tuple[int | Non
     return turns, calls or None
 
 
-def _task_timeouts(task: str, text: str, trial_dir: Path) -> tuple[float, float]:
+def task_timeouts(task: str, text: str) -> tuple[float, float]:
+    """Read the agent and verifier timeout values from a task.toml string."""
     try:
         task_config = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise HarborFolderError(f"{trial_dir.name}: invalid task.toml for {task!r}") from exc
+        raise HarborFolderError(f"task {task!r}: invalid task.toml") from exc
     agent = task_config.get("agent")
     verifier = task_config.get("verifier")
     if not isinstance(agent, dict) or "timeout_sec" not in agent:
-        raise HarborFolderError(f"{trial_dir.name}: missing agent timeout_sec in task.toml")
+        raise HarborFolderError(f"task {task!r}: missing agent timeout_sec in task.toml")
     if not isinstance(verifier, dict) or "timeout_sec" not in verifier:
-        raise HarborFolderError(f"{trial_dir.name}: missing verifier timeout_sec in task.toml")
+        raise HarborFolderError(f"task {task!r}: missing verifier timeout_sec in task.toml")
     return (
-        _timeout_value(agent["timeout_sec"], trial_dir),
-        _timeout_value(verifier["timeout_sec"], trial_dir),
+        _task_timeout_value(agent["timeout_sec"], task),
+        _task_timeout_value(verifier["timeout_sec"], task),
     )
+
+
+def _task_timeout_value(value: object, task: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise HarborFolderError(f"task {task!r}: invalid timeout_sec in task.toml")
+    return float(value)
 
 
 def _timeout_value(value: object, trial_dir: Path) -> float:

@@ -12,6 +12,7 @@ from harbor_research_runner.harbor_adapter.job_folder import (
     read_trial_details,
     task_budgets,
     task_digests,
+    task_timeouts,
     trial_folders,
 )
 from harbor_research_runner.trial_validity.phase_table import failed_phase
@@ -491,6 +492,26 @@ def test_task_budgets_use_supplied_task_tomls_and_trial_locks() -> None:
         "terminal-bench/git-multibranch": (900.0, 900.0),
         "terminal-bench/pytorch-model-cli": (900.0, 900.0),
     }
+
+
+def test_task_timeouts_reads_agent_and_verifier_budgets() -> None:
+    assert task_timeouts(
+        "terminal-bench/test-task",
+        "[agent]\ntimeout_sec = 600\n[verifier]\ntimeout_sec = 45\n",
+    ) == (600.0, 45.0)
+
+
+def test_task_timeouts_reports_the_task_when_agent_timeout_is_missing() -> None:
+    with pytest.raises(HarborFolderError, match="terminal-bench/test-task"):
+        task_timeouts(
+            "terminal-bench/test-task",
+            "[verifier]\ntimeout_sec = 45\n",
+        )
+
+
+def test_task_timeouts_reports_the_task_when_toml_is_invalid() -> None:
+    with pytest.raises(HarborFolderError, match="terminal-bench/test-task"):
+        task_timeouts("terminal-bench/test-task", "[agent\ntimeout_sec = 600\n")
 
 
 def test_task_budget_uses_override_and_lock_multiplier(tmp_path: Path) -> None:

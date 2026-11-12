@@ -50,7 +50,7 @@ def write_job_config(path: Path, config: dict) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def run_command(run_dir: Path, job_name: str, proxy_url: str) -> list[str]:
+def run_command(run_dir: Path, job_name: str, proxy_url: str, task_order: str) -> list[str]:
     return [
         "uv",
         "run",
@@ -68,10 +68,12 @@ def run_command(run_dir: Path, job_name: str, proxy_url: str) -> list[str]:
         f"proxy_url={proxy_url}",
         "--pk",
         f"limits_file={run_dir / 'proxy-config.json'}",
+        "--pk",
+        f"task_order={task_order}",
     ]
 
 
-def resume_command(run_dir: Path, job_name: str, proxy_url: str) -> list[str]:
+def resume_command(run_dir: Path, job_name: str, proxy_url: str, task_order: str) -> list[str]:
     return [
         "uv",
         "run",
@@ -88,4 +90,6 @@ def resume_command(run_dir: Path, job_name: str, proxy_url: str) -> list[str]:
         f"proxy_url={proxy_url}",
         "--pk",
         f"limits_file={run_dir / 'proxy-config.json'}",
+        "--pk",
+        f"task_order={task_order}",
     ]
