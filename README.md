@@ -20,6 +20,7 @@
 - [Architecture](docs/architecture.md): modules, file formats, the rules for judging a trial
 - [Decisions](docs/decisions.md): the rulings behind the design
 - [Testing](docs/testing.md): test tiers and contributor rules
+- [How-to guides](docs/how-to/): running studies, reading evidence, maintaining tasks, tests, harnesses, and models
 
 ## Develop
 
