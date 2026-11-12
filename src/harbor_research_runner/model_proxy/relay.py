@@ -24,6 +24,7 @@ from harbor_research_runner.model_proxy.chars import (
 )
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
 from harbor_research_runner.model_proxy.pacing import Pacer, estimate_request_tokens
+from harbor_research_runner.model_proxy.shaping import shape_request
 from harbor_research_runner.model_proxy.status import (
     UpstreamOutcome,
     classify,
@@ -378,7 +379,12 @@ def relay(
     requested_model = payload.get("model")
     model = requested_model if isinstance(requested_model, str) else deps.model["id"]
     outbound, _warnings = adapter.build_request(payload, deps.model["upstream_model"])
-    estimated_tokens = estimate_request_tokens(outbound, deps.model.get("max_output_tokens"))
+    outbound = shape_request(outbound, deps.model)
+    request_config = deps.model.get("request")
+    max_tokens_cap = (
+        request_config.get("max_tokens_cap") if isinstance(request_config, dict) else None
+    )
+    estimated_tokens = estimate_request_tokens(outbound, max_tokens_cap)
     paced_wait_s = 0.0
     if deps.pacer is not None:
         paced_wait_s = deps.pacer.wait_for(estimated_tokens)
