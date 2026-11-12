@@ -19,9 +19,10 @@
   },
   "job_file_sha256": "0",
   "limits": {},
-  "machine_check_sha256": "0",
+  "machine_check_sha256": "7092784be8b24dc5e617e4c1e57a30d8b2e5d3ccc87ee773f677c5f732668256",
   "model_card": {
     "id": "fixture/model",
+    "key_env": [],
     "pricing": {
       "cached_read": 1.0,
       "input": 2.0,
@@ -32,7 +33,16 @@
   "run_id": "retries",
   "task_set": {
     "ref": "fixture",
-    "tasks": []
+    "tasks": [
+      {
+        "digest": "a",
+        "name": "task/a"
+      },
+      {
+        "digest": "b",
+        "name": "task/b"
+      }
+    ]
   },
   "tool_commit": "0",
   "tool_version": "0"
