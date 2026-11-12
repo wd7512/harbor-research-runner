@@ -104,7 +104,7 @@ def _violations(path: str, source: str) -> list[str]:
             imported_name == "harbor" or imported_name.startswith("harbor.")
         ) and normalized_path not in HARBOR_IMPORTERS:
             violations.append(f"{normalized_path} imports harbor")
-        if package == "model_proxy" and source_module != "model_proxy":
+        if package == "model_proxy" and source_module not in {"model_proxy", "cli"}:
             violations.append(f"{normalized_path} imports model_proxy")
 
     return violations
@@ -156,6 +156,12 @@ def test_checker_allows_harbor_adapter_to_import_docker_host() -> None:
     assert not _violations(
         "harbor_adapter/plugin.py",
         "from harbor_research_runner.docker_host.resources import spare_memory_mb",
+    )
+
+
+def test_checker_allows_cli_to_import_the_model_proxy() -> None:
+    assert not _violations(
+        "cli.py", "from harbor_research_runner.model_proxy.adapters import select_adapter"
     )
 
 

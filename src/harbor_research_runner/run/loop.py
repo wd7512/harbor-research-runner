@@ -50,6 +50,12 @@ class SlotsStatus:
 
 
 @dataclass(frozen=True)
+class RunOutcome:
+    exit_code: int
+    run_dir: Path | None
+
+
+@dataclass(frozen=True)
 class RunDeps:
     checks: CheckDeps
     tool: ToolIdentity
@@ -291,14 +297,15 @@ def run_job(
     manifest_path: Path,
     environment: Mapping[str, str],
     deps: RunDeps,
-) -> int:
+) -> RunOutcome:
     host_lock = deps.checks.host_lock
     try:
         host_lock.acquire()
     except Exception as exc:
         logger.error("run refused because the host lock could not be acquired: %s", exc)
-        return 1
+        return RunOutcome(1, None)
     session = None
+    log_handler = None
     services_started = False
     checks: list[CheckResult] = []
     try:
@@ -331,6 +338,7 @@ def run_job(
             tool=deps.tool,
             host=host,
         )
+        log_handler = _attach_run_log(session.run_dir)
         deps.start_services(session, False)
         services_started = True
         agents = _agent_configs(job, card, manifest_path)
@@ -352,7 +360,7 @@ def run_job(
             )
             deps.stop_services(session)
             services_started = False
-            return 1
+            return RunOutcome(1, session.run_dir)
 
         main_config = commands.job_config(
             job,
@@ -363,18 +371,22 @@ def run_job(
         commands.write_job_config(session.run_dir / "harbor-job-config.yaml", main_config)
         result = _pass_loop(session, planned_slots(job, task_names), deps, 0)
         services_started = False
-        return result
+        return RunOutcome(result, session.run_dir)
     except RefusedToStart as exc:
         failed = [f"{item.name}: {item.detail}" for item in checks if not item.ok]
         logger.error("run refused by launch checks: %s", "; ".join(failed) or exc)
-        return 1
+        return RunOutcome(1, session.run_dir if session is not None else None)
     except Exception:
         logger.exception("run failed")
-        return 1
+        return RunOutcome(1, session.run_dir if session is not None else None)
     finally:
-        if session is not None and services_started:
-            deps.stop_services(session)
-        host_lock.release()
+        try:
+            if session is not None and services_started:
+                deps.stop_services(session)
+        finally:
+            if log_handler is not None:
+                _remove_run_log(log_handler)
+            host_lock.release()
 
 
 def resume_run(
@@ -383,22 +395,24 @@ def resume_run(
     manifest_path: Path,
     environment: Mapping[str, str],
     deps: RunDeps,
-) -> int:
+) -> RunOutcome:
     host_lock = deps.checks.host_lock
     try:
         host_lock.acquire()
     except Exception as exc:
         logger.error("resume refused because the host lock could not be acquired: %s", exc)
-        return 1
+        return RunOutcome(1, None)
     session = None
+    log_handler = None
     services_started = False
     try:
         run_dir = runs_dir / run_id
         session = RunSession.load(run_dir, environment)
+        log_handler = _attach_run_log(run_dir)
         events = jsonl.read_rows(run_dir / "run-events.jsonl").rows
         if events and events[-1].get("type") == "finish":
             logger.error("resume refused because run %s is already finished", run_id)
-            return 1
+            return RunOutcome(1, run_dir)
         manifest = load_manifest(manifest_path)
         host = deps.host()
         checks = run_checks(
@@ -413,7 +427,7 @@ def resume_run(
         failed = [f"{result.name}: {result.detail}" for result in checks if not result.ok]
         if failed:
             logger.error("resume refused by launch checks: %s", "; ".join(failed))
-            return 1
+            return RunOutcome(1, run_dir)
         deps.start_services(session, True)
         services_started = True
         session.mark_resumed(deps.now)
@@ -436,20 +450,36 @@ def resume_run(
         if not status.to_set_aside and not trials_left:
             result = _finish(session, status, deps)
             services_started = False
-            return result
+            return RunOutcome(result, run_dir)
         starts = [
             row for row in events if row.get("type") == "harbor_start" and row.get("job") == "main"
         ]
         result = _pass_loop(session, planned, deps, len(starts) or 1)
         services_started = False
-        return result
+        return RunOutcome(result, run_dir)
     except Exception:
         logger.exception("resume failed")
-        return 1
+        return RunOutcome(1, session.run_dir if session is not None else None)
     finally:
-        if session is not None and services_started:
-            deps.stop_services(session)
-        host_lock.release()
+        try:
+            if session is not None and services_started:
+                deps.stop_services(session)
+        finally:
+            if log_handler is not None:
+                _remove_run_log(log_handler)
+            host_lock.release()
+
+
+def _attach_run_log(run_dir: Path) -> logging.FileHandler:
+    handler = logging.FileHandler(run_dir / "runner.log", mode="a", encoding="utf-8")
+    logging.getLogger().addHandler(handler)
+    return handler
+
+
+def _remove_run_log(handler: logging.FileHandler) -> None:
+    root = logging.getLogger()
+    root.removeHandler(handler)
+    handler.close()
 
 
 def _pass_loop(
