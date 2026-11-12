@@ -97,6 +97,8 @@ def test_default_behavior_is_pinned() -> None:
     assert behavior.ignore_stop is False
     assert behavior.keep_requesting_s == 0
     assert behavior.detached_heartbeat is None
+    assert behavior.detached_requesting_s == 0
+    assert behavior.continue_on_error is False
     assert behavior.solve is True
 
 
@@ -161,7 +163,9 @@ def test_run_command_uses_the_default_behavior(make_agent) -> None:
     assert _value(arguments, "--exit-code") == "0"
     assert _value(arguments, "--sleep-s") == "0"
     assert _value(arguments, "--keep-requesting-s") == "0"
+    assert _value(arguments, "--detached-requesting-s") == "0"
     assert "--detached-heartbeat" not in arguments
+    assert "--continue-on-error" not in arguments
     assert "--solve" in arguments
     assert "--ignore-stop" not in arguments
 
@@ -173,13 +177,21 @@ def test_run_command_uses_the_default_behavior(make_agent) -> None:
         ({"exit_code": 3}, "--exit-code", "3"),
         ({"sleep_s": 2.5}, "--sleep-s", "2.5"),
         ({"keep_requesting_s": 1.5}, "--keep-requesting-s", "1.5"),
+        ({"detached_requesting_s": 1.5}, "--detached-requesting-s", "1.5"),
         (
             {"detached_heartbeat": "/app/heartbeat.txt"},
             "--detached-heartbeat",
             "/app/heartbeat.txt",
         ),
     ],
-    ids=["requests", "exit_code", "sleep_s", "keep_requesting_s", "detached_heartbeat"],
+    ids=[
+        "requests",
+        "exit_code",
+        "sleep_s",
+        "keep_requesting_s",
+        "detached_requesting_s",
+        "detached_heartbeat",
+    ],
 )
 def test_run_command_uses_each_behavior_setting(
     make_agent, behavior: dict, flag: str, expected: str
@@ -193,6 +205,12 @@ def test_run_command_adds_ignore_stop_when_requested(make_agent) -> None:
     arguments = _arguments(make_agent(fake={"ignore_stop": True}))
 
     assert "--ignore-stop" in arguments
+
+
+def test_run_command_adds_continue_on_error_when_requested(make_agent) -> None:
+    arguments = _arguments(make_agent(fake={"continue_on_error": True}))
+
+    assert "--continue-on-error" in arguments
 
 
 def test_run_command_omits_solve_when_disabled(make_agent) -> None:
@@ -210,7 +228,15 @@ def test_preflight_rejects_an_unknown_fake_behavior_field() -> None:
         AgentFactory.run_preflight(_agent_config(_settings(fake={"bogus": 1})))
 
 
-@pytest.mark.parametrize("behavior", [{"requests": -1}, {"sleep_s": -1}, {"keep_requesting_s": -1}])
+@pytest.mark.parametrize(
+    "behavior",
+    [
+        {"requests": -1},
+        {"sleep_s": -1},
+        {"keep_requesting_s": -1},
+        {"detached_requesting_s": -1},
+    ],
+)
 def test_preflight_rejects_negative_counts_and_times(behavior: dict) -> None:
     with pytest.raises(ValueError):
         AgentFactory.run_preflight(_agent_config(_settings(fake=behavior)))

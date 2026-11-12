@@ -601,6 +601,13 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
     task_toml.write_text(
         task_text[:task_table_start] + task_text[metadata_table_start:], encoding="utf-8"
     )
+    if "agent_timeout_s" in options:
+        task_toml.write_text(
+            task_toml.read_text(encoding="utf-8").replace(
+                "timeout_sec = 120.0", f"timeout_sec = {options['agent_timeout_s']}", 1
+            ),
+            encoding="utf-8",
+        )
     limits = {
         "min_spare_memory_mb": 0,
         "max_swap_used_mb": 100000,

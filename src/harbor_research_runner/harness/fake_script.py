@@ -34,6 +34,44 @@ while True:
         stream.flush()
     time.sleep(0.5)
 """
+_REQUESTER_LAUNCHER = """\
+import subprocess
+import sys
+
+subprocess.Popen(
+    [sys.executable, "-c", sys.argv[1], *sys.argv[2:]],
+    close_fds=True,
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+)
+"""
+_REQUESTER_WORKER = """\
+import http.client
+import json
+import sys
+import time
+from urllib.request import Request, urlopen
+
+base_url = sys.argv[1]
+deadline = time.monotonic() + float(sys.argv[2])
+body = json.loads(sys.argv[3])
+while time.monotonic() < deadline:
+    request = Request(
+        f"{base_url.rstrip('/')}/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request) as response:
+            for _line in response:
+                pass
+    except (OSError, http.client.HTTPException):
+        pass
+    time.sleep(0.5)
+"""
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -46,6 +84,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ignore-stop", action="store_true")
     parser.add_argument("--keep-requesting-s", type=float, default=0)
     parser.add_argument("--detached-heartbeat", type=Path)
+    parser.add_argument("--detached-requesting-s", type=float, default=0)
+    parser.add_argument("--continue-on-error", action="store_true")
     parser.add_argument("--solve", action="store_true")
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT)
     return parser.parse_args(argv)
@@ -76,14 +116,32 @@ def main(argv: list[str] | None = None) -> int:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+    if args.detached_requesting_s > 0:
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _REQUESTER_LAUNCHER,
+                _REQUESTER_WORKER,
+                args.base_url,
+                str(args.detached_requesting_s),
+                json.dumps(_BODY),
+            ],
+            close_fds=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
     if args.ignore_stop:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    try:
-        for _ in range(args.requests):
+    for _ in range(args.requests):
+        try:
             _send_request(args.base_url)
-    except (OSError, http.client.HTTPException) as exc:
-        logger.error("request failed: %s", exc)
-        return 1
+        except (OSError, http.client.HTTPException) as exc:
+            logger.error("request failed: %s", exc)
+            if not args.continue_on_error:
+                return 1
     if args.sleep_s > 0:
         time.sleep(args.sleep_s)
     if args.solve:
