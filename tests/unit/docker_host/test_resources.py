@@ -1,13 +1,19 @@
+import hashlib
+import os
+import platform
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from harbor_research_runner.docker_host.resources import (
+    host_description,
     host_fingerprint,
     measure,
     spare_memory_mb,
 )
+from harbor_research_runner.run.loop import HOST_FIELDS
 
 
 def test_linux_memavailable_is_spare() -> None:
@@ -220,15 +226,22 @@ def test_docker_down_marks_measurement_unhealthy(tmp_path: Path) -> None:
 
 
 def test_host_fingerprint_and_description_keep_host_identity_fields() -> None:
+    calls = []
+
     def run(argv, **kwargs):
+        calls.append(argv)
         if argv[:2] == ["docker", "version"]:
             return SimpleNamespace(returncode=0, stdout="29.7.2\n", stderr="")
         raise AssertionError(argv)
 
-    fingerprint = host_fingerprint(run=run)
+    description = host_description(run=run)
+    material = "|".join(
+        (socket.gethostname(), platform.machine(), str(os.cpu_count() or ""), "29.7.2")
+    )
 
-    assert len(fingerprint) == 12
-    assert host_fingerprint(run=run) == fingerprint
+    assert set(description) == HOST_FIELDS
+    assert description["fingerprint"] == hashlib.sha256(material.encode()).hexdigest()[:12]
+    assert len(calls) == 1
 
 
 def test_host_fingerprint_survives_unavailable_docker() -> None:

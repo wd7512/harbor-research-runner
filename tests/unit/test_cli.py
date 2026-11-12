@@ -8,6 +8,7 @@ import pytest
 
 from harbor_research_runner import cli
 from harbor_research_runner.docker_host import cleanup
+from harbor_research_runner.job_config.job_file import Job
 from harbor_research_runner.run.loop import RunOutcome
 
 
@@ -41,10 +42,24 @@ def test_check_machine_parses_options_and_calls_checker(tmp_path: Path) -> None:
     calls = []
 
     def check(job, out, with_do_nothing, runs_dir, deps):
+        assert isinstance(job, Job)
         calls.append((job, out, with_do_nothing, runs_dir, deps))
         return SimpleNamespace(included=[])
 
     job = tmp_path / "job.yaml"
+    job.write_text(
+        "name: study\n"
+        "model: provider/model\n"
+        "repetitions: 1\n"
+        "concurrency: 1\n"
+        "task_order: as_listed\n"
+        "tasks: {dataset: bench/tasks}\n"
+        "machine_check: check.json\n"
+        "arms: [{label: arm, harness: fake, commit: " + "a" * 40 + ", fake: {}}]\n"
+        "proxy: {host: 127.0.0.1, port: 8766, container_host: host.docker.internal}\n"
+        "limits: {}\n",
+        encoding="utf-8",
+    )
     out = tmp_path / "check.json"
     runs = tmp_path / "runs"
     marker = SimpleNamespace(host_lock=SimpleNamespace(release=lambda: None))
@@ -64,7 +79,8 @@ def test_check_machine_parses_options_and_calls_checker(tmp_path: Path) -> None:
         )
         == 0
     )
-    assert calls[0][:4] == (job, out, True, runs)
+    assert isinstance(calls[0][0], Job)
+    assert calls[0][1:4] == (out, True, runs)
     assert calls[0][4].checks is marker
 
 
@@ -258,7 +274,11 @@ def test_clean_docker_apply_passes_flag(tmp_path: Path) -> None:
                 "clean_docker": lambda apply, lock, runs_dir: (
                     calls.append(apply)
                     or SimpleNamespace(
-                        planned_containers=("container",), planned_networks=(), skipped_attached=()
+                        planned_containers=("container",),
+                        planned_networks=(),
+                        removed_containers=("container",),
+                        removed_networks=(),
+                        skipped_attached=(),
                     )
                 )
             },
@@ -266,6 +286,32 @@ def test_clean_docker_apply_passes_flag(tmp_path: Path) -> None:
         == 0
     )
     assert calls == [True]
+
+
+def test_clean_docker_logs_planned_skipped_and_removed_names(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    report = SimpleNamespace(
+        planned_containers=("container-a",),
+        planned_networks=("network-a",),
+        removed_containers=("container-a",),
+        removed_networks=("network-a",),
+        skipped_attached=("network-b",),
+    )
+
+    with caplog.at_level("INFO", logger="harbor_research_runner.cli"):
+        assert (
+            cli.main(
+                ["clean-docker", "--apply"],
+                steps={"clean_docker": lambda *_args, **_kwargs: report},
+            )
+            == 0
+        )
+
+    assert "container-a" in caplog.text
+    assert "network-a" in caplog.text
+    assert "network-b" in caplog.text
+    assert "removed" in caplog.text
 
 
 def test_clean_docker_daemon_failure_returns_one() -> None:

@@ -39,6 +39,7 @@ from harbor_research_runner.run.watch import WatchResult
 from harbor_research_runner.trial_validity.verdict import Verdict
 
 logger = logging.getLogger(__name__)
+HOST_FIELDS = {"fingerprint", "arch", "cpus", "memory_mb", "docker_version"}
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,9 @@ class RunDeps:
 
 
 class RefusedToStart(Exception):
-    pass
+    def __init__(self, message: str, run_dir: Path | None = None) -> None:
+        super().__init__(message)
+        self.run_dir = run_dir
 
 
 class RunSession:
@@ -110,10 +113,9 @@ class RunSession:
         tool: ToolIdentity,
         host: dict,
     ) -> RunSession:
-        expected_host_fields = {"fingerprint", "arch", "cpus", "memory_mb", "docker_version"}
-        if set(host) != expected_host_fields:
-            missing = sorted(expected_host_fields - set(host))
-            extra = sorted(set(host) - expected_host_fields)
+        if set(host) != HOST_FIELDS:
+            missing = sorted(HOST_FIELDS - set(host))
+            extra = sorted(set(host) - HOST_FIELDS)
             raise ValueError(f"host fields differ: missing={missing}, extra={extra}")
         created_t = now()
         timestamp = datetime.fromtimestamp(created_t, UTC).strftime("%Y%m%dT%H%M%S%fZ")
@@ -127,7 +129,7 @@ class RunSession:
         for result in check_results:
             _append_event(run_dir, LaunchCheck(now(), result.name, result.ok, result.detail))
         if any(not result.ok for result in check_results):
-            raise RefusedToStart("one or more launch checks failed")
+            raise RefusedToStart("one or more launch checks failed", run_dir)
         metadata = run_metadata.RunMetadata(
             run_id=run_id,
             created_t=created_t,
@@ -299,11 +301,6 @@ def run_job(
     deps: RunDeps,
 ) -> RunOutcome:
     host_lock = deps.checks.host_lock
-    try:
-        host_lock.acquire()
-    except Exception as exc:
-        logger.error("run refused because the host lock could not be acquired: %s", exc)
-        return RunOutcome(1, None)
     session = None
     log_handler = None
     services_started = False
@@ -375,7 +372,10 @@ def run_job(
     except RefusedToStart as exc:
         failed = [f"{item.name}: {item.detail}" for item in checks if not item.ok]
         logger.error("run refused by launch checks: %s", "; ".join(failed) or exc)
-        return RunOutcome(1, session.run_dir if session is not None else None)
+        return RunOutcome(
+            1,
+            session.run_dir if session is not None else exc.run_dir,
+        )
     except Exception:
         logger.exception("run failed")
         return RunOutcome(1, session.run_dir if session is not None else None)
@@ -386,7 +386,8 @@ def run_job(
         finally:
             if log_handler is not None:
                 _remove_run_log(log_handler)
-            host_lock.release()
+            if host_lock.held:
+                host_lock.release()
 
 
 def resume_run(
