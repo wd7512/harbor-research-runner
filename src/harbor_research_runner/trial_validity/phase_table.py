@@ -7,10 +7,11 @@ PHASES = ("environment_setup", "agent_setup", "agent", "verifier")
 
 
 def failed_phase(facts: "TrialFacts") -> str | None:
-    """The last phase that started, when the trial carries an exception."""
+    """Return the phase active when the trial exception occurred."""
     if facts.exception_type is None:
         return None
     for phase in reversed(PHASES):
-        if facts.phase_started.get(phase) is not None:
+        started = facts.phase_started.get(phase)
+        if started is not None and (facts.exception_at is None or started <= facts.exception_at):
             return phase
     return None

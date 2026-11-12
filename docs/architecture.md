@@ -257,6 +257,7 @@ class TrialFacts:                 # built by harbor_adapter.job_folder
     has_result: bool
     reward: float | None
     exception_type: str | None
+    exception_at: float | None                 # exception_info.occurred_at, Unix seconds
     phase_started: dict[str, float | None]    # environment_setup, agent_setup, agent, verifier
     phase_finished: dict[str, float | None]
     harbor_reported_tokens: int
@@ -275,7 +276,7 @@ def judge_trial(facts: TrialFacts, ledger_rows: list[dict], ledger_problems: Rea
                 earlier_set_aside_reasons: tuple[str, ...]) -> Verdict
 ```
 
-The failed phase is the last phase with a non-null start time, when `exception_type` is not null.
+When `exception_type` is not null, the failed phase is the last phase (in order environment_setup, agent_setup, agent, verifier) whose start time is non-null and no later than `exception_at`. If `exception_at` is null, use the last phase with a non-null start time.
 
 Rules, first match wins:
 

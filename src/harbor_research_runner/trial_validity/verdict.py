@@ -15,6 +15,7 @@ class TrialFacts:
     has_result: bool
     reward: float | None
     exception_type: str | None
+    exception_at: float | None
     phase_started: dict[str, float | None]
     phase_finished: dict[str, float | None]
     harbor_reported_tokens: int

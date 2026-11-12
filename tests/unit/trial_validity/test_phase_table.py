@@ -4,7 +4,7 @@ from harbor_research_runner.trial_validity.phase_table import PHASES, failed_pha
 from harbor_research_runner.trial_validity.verdict import TrialFacts
 
 
-def _facts(exception_type=None, **started):
+def _facts(exception_type=None, exception_at=None, **started):
     return TrialFacts(
         trial="trial",
         task="task",
@@ -12,6 +12,7 @@ def _facts(exception_type=None, **started):
         has_result=True,
         reward=0.0,
         exception_type=exception_type,
+        exception_at=exception_at,
         phase_started={phase: started.get(phase) for phase in PHASES},
         phase_finished={phase: None for phase in PHASES},
         harbor_reported_tokens=0,
@@ -32,10 +33,34 @@ def test_last_started_phase_is_returned():
     assert failed_phase(facts) == "verifier"
 
 
+def test_phase_at_exception_time_is_returned():
+    facts = _facts(
+        "Error",
+        exception_at=3.5,
+        environment_setup=1.0,
+        agent_setup=2.0,
+        agent=3.0,
+        verifier=4.0,
+    )
+
+    assert failed_phase(facts) == "agent"
+
+
 def test_unstarted_later_phase_is_ignored():
     facts = _facts("Error", environment_setup=1.0, agent_setup=2.0, agent=3.0)
 
     assert failed_phase(facts) == "agent"
+
+
+def test_exception_before_agent_setup_is_attributed_to_environment_setup():
+    facts = _facts(
+        "Error",
+        exception_at=1.5,
+        environment_setup=1.0,
+        agent_setup=2.0,
+    )
+
+    assert failed_phase(facts) == "environment_setup"
 
 
 @pytest.mark.parametrize("phase", PHASES)

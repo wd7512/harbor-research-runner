@@ -14,6 +14,7 @@ from harbor_research_runner.harbor_adapter.job_folder import (
     task_digests,
     trial_folders,
 )
+from harbor_research_runner.trial_validity.phase_table import failed_phase
 from harbor_research_runner.trial_validity.verdict import TrialFacts
 
 FIXTURE_ROOT = Path(__file__).parents[2] / "fixtures" / "harbor_job"
@@ -184,12 +185,22 @@ def test_real_fixture_produces_expected_trial_facts(
         has_result=True,
         reward=reward,
         exception_type=exception,
+        exception_at=(
+            _epoch("2026-11-11T21:25:30.842412Z")
+            if fixture == "timeout-git-multibranch-2027run"
+            else _epoch("2026-11-11T21:10:22.984025Z")
+            if fixture == "nonzeroexit-pytorch-2027run"
+            else None
+        ),
         phase_started=starts,
         phase_finished=finishes,
         harbor_reported_tokens=tokens,
     )
 
-    assert read_trial(FIXTURE_ROOT / fixture) == expected
+    facts = read_trial(FIXTURE_ROOT / fixture)
+    assert facts == expected
+    if fixture in {"timeout-git-multibranch-2027run", "nonzeroexit-pytorch-2027run"}:
+        assert failed_phase(facts) == "agent"
 
 
 @pytest.mark.parametrize("result_text", [None, "", "not-json", "[]"])
@@ -405,7 +416,7 @@ def test_missing_unparseable_or_empty_trajectory_has_expected_counts(
     [
         ("pass-bn-fit", False),
         ("timeout-git-multibranch-2027run", False),
-        ("nonzeroexit-pytorch-2027run", False),
+        ("nonzeroexit-pytorch-2027run", True),
     ],
 )
 def test_agent_exit_nonzero_uses_exception_and_failed_phase(fixture: str, expected: bool) -> None:
