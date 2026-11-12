@@ -10,16 +10,20 @@ import uuid
 from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import cast
 
 import httpx
 
+from harbor_research_runner.model_proxy.adapters.base import (
+    UpstreamAdapter,
+    UpstreamDecodeError,
+)
+from harbor_research_runner.model_proxy.bodies import BodyStore
 from harbor_research_runner.model_proxy.chars import (
-    chat_completion_chars,
-    chat_delta_chars,
     prompt_chars_of_payload,
 )
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
+from harbor_research_runner.model_proxy.pacing import Pacer, estimate_request_tokens
 from harbor_research_runner.model_proxy.status import (
     UpstreamOutcome,
     classify,
@@ -27,7 +31,6 @@ from harbor_research_runner.model_proxy.status import (
     status_for_harness,
 )
 from harbor_research_runner.model_proxy.timing import StreamClock
-from harbor_research_runner.model_proxy.usage import normalize_usage
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.proxy_ledger import RequestEnd, RequestStart
 
@@ -50,6 +53,8 @@ class RelayDeps:
     client: httpx.Client
     routes: Callable[[], Iterator[Route]]
     now: Callable[[], float] = time.monotonic
+    pacer: Pacer | None = None
+    bodies: BodyStore | None = None
 
 
 @dataclass
@@ -233,6 +238,8 @@ class _RelayState:
         observation: _Observation,
         body: _UpstreamBody | None,
         failovers: int,
+        estimated_tokens: int,
+        request_body: bytes,
     ) -> None:
         self.deps = deps
         self.trial = trial
@@ -241,9 +248,15 @@ class _RelayState:
         self.observation = observation
         self.body = body
         self.failovers = failovers
+        self.estimated_tokens = estimated_tokens
+        self.request_body = request_body
         self.header_status: int | None = None
         self._written = False
+        self._ledger_written = False
+        self._pacer_recorded = False
+        self._bodies_written = False
         self._http_status: int | None = None
+        self._response_bytes = bytearray()
 
     def finish(self, http_status: int | None = None) -> int:
         if self._written:
@@ -255,27 +268,37 @@ class _RelayState:
         self._http_status = http_status
         self._written = True
         tokens = self.observation.usage or {}
-        self.deps.ledger.write(
-            RequestEnd(
-                0,
-                0.0,
-                self.trial,
-                self.request_id,
-                http_status,
-                upstream_status,
-                self.observation.http_status,
-                self.observation.served_model,
-                tokens.get("prompt_tokens"),
-                tokens.get("completion_tokens"),
-                tokens.get("cached_read_tokens"),
-                self.observation.completion_chars,
-                self.clock.first_chunk_s,
-                self.clock.first_content_s,
-                self.clock.finish(),
-                self.failovers,
-                self.observation.error_body[:500] or None,
+        try:
+            self.deps.ledger.write(
+                RequestEnd(
+                    0,
+                    0.0,
+                    self.trial,
+                    self.request_id,
+                    http_status,
+                    upstream_status,
+                    self.observation.http_status,
+                    self.observation.served_model,
+                    tokens.get("prompt_tokens"),
+                    tokens.get("completion_tokens"),
+                    tokens.get("cached_read_tokens"),
+                    self.observation.completion_chars,
+                    self.clock.first_chunk_s,
+                    self.clock.first_content_s,
+                    self.clock.finish(),
+                    self.failovers,
+                    self.observation.error_body[:500] or None,
+                )
             )
-        )
+            self._ledger_written = True
+        finally:
+            if self.deps.pacer is not None and not self._pacer_recorded:
+                self._pacer_recorded = True
+                usage = self.observation.usage
+                actual = self.estimated_tokens
+                if usage is not None:
+                    actual = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+                self.deps.pacer.record(actual)
         return http_status
 
     def client_disconnect(self) -> None:
@@ -288,9 +311,23 @@ class _RelayState:
         if self.body is not None:
             self.body.close()
 
+    def note_response_bytes(self, chunk: bytes) -> None:
+        self._response_bytes.extend(chunk)
+
+    def store_bodies(self) -> None:
+        if self.deps.bodies is None or not self._ledger_written or self._bodies_written:
+            return
+        self._bodies_written = True
+        self.deps.bodies.write(
+            self.trial,
+            self.request_id,
+            self.request_body,
+            bytes(self._response_bytes),
+        )
+
 
 class _OwnedChunks:
-    def __init__(self, source: Generator[bytes, None, None], state: _RelayState) -> None:
+    def __init__(self, source: Iterator[bytes], state: _RelayState) -> None:
         self._source = source
         self._state = state
         self._closed = False
@@ -302,7 +339,9 @@ class _OwnedChunks:
         if self._closed:
             raise StopIteration
         try:
-            return next(self._source)
+            chunk = next(self._source)
+            self._state.note_response_bytes(chunk)
+            return chunk
         except StopIteration:
             self.close()
             raise
@@ -314,44 +353,76 @@ class _OwnedChunks:
         if self._closed:
             return
         self._closed = True
-        self._state.client_disconnect()
         try:
-            self._source.close()
+            self._state.client_disconnect()
+            closer = getattr(self._source, "close", None)
+            if closer is not None:
+                closer()
         finally:
             self._state.close_body()
+            self._state.store_bodies()
 
 
-def relay_chat(
+def relay(
     request_body: bytes,
     headers: Mapping[str, str],
     trial: str,
     deps: RelayDeps,
+    adapter: UpstreamAdapter,
 ) -> RelayResponse:
-    """Forward one chat-completions request and record its ledger rows."""
+    """Forward one adapted model request and record its ledger rows."""
     payload = json.loads(request_body)
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
     is_stream = bool(payload.get("stream"))
     requested_model = payload.get("model")
     model = requested_model if isinstance(requested_model, str) else deps.model["id"]
-    outbound = {**payload, "model": deps.model["upstream_model"]}
+    outbound, _warnings = adapter.build_request(payload, deps.model["upstream_model"])
+    estimated_tokens = estimate_request_tokens(outbound, deps.model.get("max_output_tokens"))
+    paced_wait_s = 0.0
+    if deps.pacer is not None:
+        paced_wait_s = deps.pacer.wait_for(estimated_tokens)
     request_id = uuid.uuid4().hex
     clock = StreamClock(deps.now)
 
-    deps.ledger.write(
-        RequestStart(
-            0,
-            0.0,
-            trial,
-            request_id,
-            model,
-            is_stream,
-            prompt_chars_of_payload(outbound),
-            0.0,
+    try:
+        deps.ledger.write(
+            RequestStart(
+                0,
+                0.0,
+                trial,
+                request_id,
+                model,
+                is_stream,
+                prompt_chars_of_payload(outbound),
+                paced_wait_s,
+            )
         )
-    )
+    except BaseException:
+        if deps.pacer is not None:
+            deps.pacer.record(estimated_tokens)
+        raise
 
     routes = list(deps.routes())
+    if not routes:
+        observation = _Observation(transport_failed=True)
+        state = _RelayState(
+            deps,
+            trial,
+            request_id,
+            clock,
+            observation,
+            None,
+            0,
+            estimated_tokens,
+            request_body,
+        )
+        status = state.finish()
+        return RelayResponse(
+            status,
+            _json_headers(),
+            _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
+        )
     for failovers, route in enumerate(routes):
         upstream_headers = {"content-type": "application/json"}
         if route.key is not None:
@@ -380,25 +451,63 @@ def relay_chat(
                 )
             else:
                 observation.transport_failed = True
-            state = _RelayState(deps, trial, request_id, clock, observation, None, failovers)
+            state = _RelayState(
+                deps,
+                trial,
+                request_id,
+                clock,
+                observation,
+                None,
+                failovers,
+                estimated_tokens,
+                request_body,
+            )
             if _can_fail_over(observation) and failovers + 1 < len(routes):
                 continue
             status = state.finish()
-            return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+            return RelayResponse(
+                status,
+                _json_headers(),
+                _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
+            )
         except httpx.TransportError:
             observation.transport_failed = True
-            state = _RelayState(deps, trial, request_id, clock, observation, None, failovers)
+            state = _RelayState(
+                deps,
+                trial,
+                request_id,
+                clock,
+                observation,
+                None,
+                failovers,
+                estimated_tokens,
+                request_body,
+            )
             if _can_fail_over(observation) and failovers + 1 < len(routes):
                 continue
             status = state.finish()
-            return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+            return RelayResponse(
+                status,
+                _json_headers(),
+                _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
+            )
 
         request.extensions.setdefault("timeout", {})["read"] = None
         observation.http_status = response.status_code
         observation.retry_after_s = retry_after_seconds(response.headers.get("Retry-After"))
         response_headers = _response_headers(response)
         body = _UpstreamBody(response, deps.limits, started)
-        state = _RelayState(deps, trial, request_id, clock, observation, body, failovers)
+        state = _RelayState(
+            deps,
+            trial,
+            request_id,
+            clock,
+            observation,
+            body,
+            failovers,
+            estimated_tokens,
+            request_body,
+        )
 
         if response.status_code != 200:
             error_response = _error_response(
@@ -417,14 +526,22 @@ def relay_chat(
             observation.cut_by_proxy = cut.reason
             state.close_body()
             status = state.finish()
-            return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+            return RelayResponse(
+                status,
+                _json_headers(),
+                _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
+            )
         except _Transport:
             observation.transport_failed = True
             state.close_body()
             if _can_fail_over(observation) and failovers + 1 < len(routes):
                 continue
             status = state.finish()
-            return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+            return RelayResponse(
+                status,
+                _json_headers(),
+                _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
+            )
 
         if first is not None:
             clock.mark_chunk()
@@ -432,18 +549,30 @@ def relay_chat(
         if not is_stream:
             state.header_status = 200
             return RelayResponse(
-                200, response_headers, _OwnedChunks(_nonstream_chunks(state, first), state)
+                200,
+                response_headers,
+                _OwnedChunks(
+                    _nonstream_chunks(
+                        state,
+                        first,
+                        adapter,
+                        response_headers["Content-Type"],
+                    ),
+                    state,
+                ),
             )
 
         if first is None:
             state.header_status = 200
             state.close_body()
             status = state.finish(200)
-            return RelayResponse(status, response_headers, iter([]))
+            return RelayResponse(status, response_headers, _OwnedChunks(iter([]), state))
 
         state.header_status = 200
         return RelayResponse(
-            200, response_headers, _OwnedChunks(_stream_chunks(state, first), state)
+            200,
+            response_headers,
+            _OwnedChunks(_stream_chunks(state, first, adapter), state),
         )
 
     raise StopIteration("no upstream routes available")
@@ -464,20 +593,32 @@ def _error_response(
         observation.cut_by_proxy = cut.reason
         state.close_body()
         status = state.finish()
-        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+        return RelayResponse(
+            status,
+            _json_headers(),
+            _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
+        )
     except _Transport:
         observation.transport_failed = True
         state.close_body()
         if can_retry and _can_fail_over(observation):
             return None
         status = state.finish()
-        return RelayResponse(status, _json_headers(), iter([_UNAVAILABLE_BODY]))
+        return RelayResponse(
+            status,
+            _json_headers(),
+            _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
+        )
     observation.error_body = body.decode(charset, errors="replace")[:500]
     state.close_body()
     if can_retry and _can_fail_over(observation):
         return None
     status = state.finish()
-    return RelayResponse(status, headers, iter([body] if body else []))
+    return RelayResponse(
+        status,
+        headers,
+        _OwnedChunks(iter([body] if body else []), state),
+    )
 
 
 def _can_fail_over(observation: _Observation) -> bool:
@@ -488,7 +629,12 @@ def _can_fail_over(observation: _Observation) -> bool:
     }
 
 
-def _nonstream_chunks(state: _RelayState, first: bytes | None) -> Generator[bytes, None, None]:
+def _nonstream_chunks(
+    state: _RelayState,
+    first: bytes | None,
+    adapter: UpstreamAdapter,
+    content_type: str,
+) -> Generator[bytes, None, None]:
     observation = state.observation
     assert state.body is not None
     try:
@@ -500,17 +646,29 @@ def _nonstream_chunks(state: _RelayState, first: bytes | None) -> Generator[byte
         except _Transport:
             observation.transport_failed = True
             return
-        obj = _json_object(body)
-        observation.usage = normalize_usage(obj)
-        observation.completion_chars = chat_completion_chars(obj)
+        try:
+            decoded = adapter.decode_response(
+                body, state.deps.model["upstream_model"], content_type
+            )
+        except UpstreamDecodeError as exc:
+            observation.error_body = str(exc)
+            observation.usage = exc.usage
+            observation.got_terminator = False
+            state.finish(state.header_status)
+            state.close_body()
+            if body:
+                yield body
+            return
+        observation.usage = decoded.usage
+        observation.completion_chars = decoded.completion_chars
         if observation.completion_chars:
             state.clock.mark_content()
-        observation.served_model = _served_model_of(obj)
-        observation.got_terminator = obj is not None
+        observation.served_model = decoded.served_model
+        observation.got_terminator = True
         state.finish(state.header_status)
         state.close_body()
-        if body:
-            yield body
+        if decoded.client_body:
+            yield decoded.client_body
     finally:
         state.finish(state.header_status)
         state.close_body()
@@ -539,32 +697,45 @@ def _collect_with_first(body: _UpstreamBody, clock: StreamClock, first: bytes | 
         chunks.append(chunk)
 
 
-def _stream_chunks(state: _RelayState, first: bytes) -> Generator[bytes, None, None]:
+def _stream_chunks(
+    state: _RelayState, first: bytes, adapter: UpstreamAdapter
+) -> Generator[bytes, None, None]:
     observation = state.observation
     assert state.body is not None
     tail: list[bytes] = []
     aborted = False
+    translator = adapter.new_stream_translator(
+        state.deps.model["upstream_model"], lambda _usage: None
+    )
     try:
         try:
-            for raw, obj, done in _iter_events(_chunk_stream(state.body, first), state.clock):
-                found_usage, found_chars, found_model = _observe(obj, state.clock)
-                if found_usage is not None:
-                    observation.usage = found_usage
-                if found_model is not None:
-                    observation.served_model = found_model
-                observation.completion_chars += found_chars
-                if tail or done or _is_terminal(obj):
-                    tail.append(raw)
-                    if done:
+            for raw in _iter_events(_chunk_stream(state.body, first), state.clock):
+                before_chars = translator.completion_chars
+                translated: list[str] = []
+                for line in raw.decode("utf-8", "replace").splitlines():
+                    translated.extend(translator.feed_line(line))
+                observation.usage = translator.usage
+                observation.served_model = translator.served_model
+                observation.completion_chars = translator.completion_chars
+                if translator.completion_chars > before_chars:
+                    state.clock.mark_content()
+                client_bytes = raw if adapter.passthrough else "".join(translated).encode("utf-8")
+                if tail or translator.terminal:
+                    tail.append(client_bytes)
+                    if translator.finished:
                         observation.got_terminator = True
                         break
                     continue
-                yield raw
+                yield client_bytes
         except _Cut as cut:
             observation.cut_by_proxy = cut.reason
             aborted = True
         except _Transport:
             observation.transport_failed = True
+            aborted = True
+        except UpstreamDecodeError as exc:
+            observation.error_body = str(exc)
+            observation.usage = exc.usage or translator.usage or observation.usage
             aborted = True
         finally:
             state.finish(state.header_status)
@@ -613,9 +784,7 @@ def _header_timeout(
 _EVENT_SEPARATOR = re.compile(rb"\r\n\r\n|\n\n|\r\r")
 
 
-def _iter_events(
-    chunks: Iterator[bytes], clock: StreamClock
-) -> Iterator[tuple[bytes, dict | None, bool]]:
+def _iter_events(chunks: Iterator[bytes], clock: StreamClock) -> Iterator[bytes]:
     buffer = b""
     for chunk in chunks:
         if not chunk:
@@ -628,71 +797,6 @@ def _iter_events(
                 break
             raw = buffer[: match.end()]
             buffer = buffer[match.end() :]
-            yield _parse_event(raw)
+            yield raw
     if buffer:
-        yield _parse_event(buffer)
-
-
-def _parse_event(raw: bytes) -> tuple[bytes, dict | None, bool]:
-    data_lines: list[str] = []
-    for line in raw.decode("utf-8", "replace").splitlines():
-        if not line.startswith("data:"):
-            continue
-        value = line[5:]
-        if value.startswith(" "):
-            value = value[1:]
-        data_lines.append(value)
-    if not data_lines:
-        return raw, None, False
-    payload = "\n".join(data_lines)
-    if payload.strip() == "[DONE]":
-        return raw, None, True
-    try:
-        parsed = json.loads(payload)
-    except json.JSONDecodeError:
-        return raw, None, False
-    return raw, parsed if isinstance(parsed, dict) else None, False
-
-
-def _is_terminal(obj: Any) -> bool:
-    if not isinstance(obj, dict):
-        return False
-    choices = obj.get("choices")
-    if isinstance(choices, list):
-        for choice in choices:
-            if isinstance(choice, dict) and choice.get("finish_reason") is not None:
-                return True
-        if choices:
-            return False
-    return normalize_usage(obj) is not None
-
-
-def _observe(obj: Any, clock: StreamClock) -> tuple[dict[str, int] | None, int, str | None]:
-    if obj is None:
-        return None, 0, None
-    completion_chars = chat_delta_chars(obj)
-    if completion_chars:
-        clock.mark_content()
-    return normalize_usage(obj), completion_chars, _served_model_of(obj)
-
-
-def _served_model_of(obj: Any) -> str | None:
-    if not isinstance(obj, dict):
-        return None
-    model = obj.get("model")
-    if isinstance(model, str):
-        return model
-    response = obj.get("response")
-    if isinstance(response, dict):
-        model = response.get("model")
-        if isinstance(model, str):
-            return model
-    return None
-
-
-def _json_object(body: bytes) -> dict | None:
-    try:
-        value = json.loads(body)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    return value if isinstance(value, dict) else None
+        yield buffer

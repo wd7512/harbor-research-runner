@@ -22,7 +22,11 @@ from harbor_research_runner.model_proxy.adapters.base import (
     UpstreamDecodeError,
     normalize_usage,
 )
-from harbor_research_runner.model_proxy.chars import responses_delta_chars, tool_call_chars
+from harbor_research_runner.model_proxy.chars import (
+    responses_delta_chars,
+    responses_output_chars,
+    tool_call_chars,
+)
 from harbor_research_runner.model_proxy.usage import as_int
 
 logger = logging.getLogger(__name__)
@@ -396,6 +400,7 @@ class ResponsesStreamTranslator(StreamTranslator):
         self._functions: dict[int, dict[str, str]] = {}
         self._call_ordinals: dict[int, int] = {}
         self._usage: dict[str, Any] | None = None
+        self._served_model: str | None = None
         self._finish_reason = "stop"
         self._streamed_tool_args: dict[int, bool] = {}
         self._streamed_text = False
@@ -417,6 +422,10 @@ class ResponsesStreamTranslator(StreamTranslator):
     @property
     def completion_chars(self) -> int:
         return self._completion_chars
+
+    @property
+    def served_model(self) -> str | None:
+        return self._served_model
 
     def _ordinal(self, upstream_index: int) -> int:
         if upstream_index not in self._call_ordinals:
@@ -460,6 +469,9 @@ class ResponsesStreamTranslator(StreamTranslator):
         response = obj.get("response") or {}
         if not isinstance(response, dict):
             return []
+        model = response.get("model")
+        if isinstance(model, str):
+            self._served_model = model
         if isinstance(response.get("id"), str):
             self._chat_id = response["id"]
         if isinstance(response.get("created_at"), int):
@@ -512,6 +524,12 @@ class ResponsesStreamTranslator(StreamTranslator):
         ]
 
     def feed(self, obj: dict[str, Any]) -> list[str]:
+        model = obj.get("model")
+        response = obj.get("response")
+        if isinstance(response, dict) and isinstance(response.get("model"), str):
+            model = response["model"]
+        if isinstance(model, str):
+            self._served_model = model
         event = obj.get("type", "")
         if event == "response.created":
             return self._on_created(obj)
@@ -642,7 +660,7 @@ class ResponsesAdapter(UpstreamAdapter):
     def decode_response(self, upstream_body: bytes, model: str, content_type: str) -> DecodeResult:
         try:
             upstream = json.loads(upstream_body)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             raise UpstreamDecodeError("upstream body is not JSON") from None
         if not isinstance(upstream, dict):
             raise UpstreamDecodeError("upstream body is not a JSON object") from None
@@ -652,6 +670,8 @@ class ResponsesAdapter(UpstreamAdapter):
             upstream_body,
             "application/json",
             normalize_usage(translated),
+            upstream.get("model") if isinstance(upstream.get("model"), str) else None,
+            responses_output_chars(upstream.get("output")),
         )
 
     def new_stream_translator(
