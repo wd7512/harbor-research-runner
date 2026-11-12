@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import re
-import subprocess
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -17,6 +15,7 @@ from harbor.models.job.result import JobResult
 from harbor.models.trial.config import TrialConfig
 from harbor.trial.hooks import TrialEvent, TrialHookEvent
 
+from harbor_research_runner.docker_host.resources import spare_memory_mb
 from harbor_research_runner.harbor_adapter.job_folder import HarborFolderError, task_timeouts
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.proxy_control import (
@@ -29,87 +28,9 @@ from harbor_research_runner.records.proxy_control import (
 
 logger = logging.getLogger(__name__)
 
-_LINUX_MEMINFO = Path("/proc/meminfo")
-_MACOS_PAGE_SIZE = re.compile(r"page size of (\d+) bytes")
-_MACOS_SPARE_KEYS = ("Pages free", "Pages inactive", "Pages speculative", "Pages purgeable")
 _TASK_TOML = "task.toml"
 _INITIAL_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 60.0
-
-
-class MemoryProbeError(RuntimeError):
-    """Spare memory could not be measured safely."""
-
-
-def parse_linux_meminfo(text: str) -> int:
-    """Return MemAvailable in MiB from Linux /proc/meminfo text."""
-    for line in text.splitlines():
-        key, separator, rest = line.partition(":")
-        if not separator or key.strip() != "MemAvailable":
-            continue
-        fields = rest.split()
-        if not fields:
-            break
-        try:
-            kib = int(fields[0])
-        except ValueError as exc:
-            raise MemoryProbeError(f"unparseable MemAvailable value {fields[0]!r}") from exc
-        if kib < 0:
-            raise MemoryProbeError(f"negative MemAvailable value {kib}")
-        return kib // 1024
-    raise MemoryProbeError("MemAvailable is missing from /proc/meminfo")
-
-
-def parse_macos_vm_stat(text: str, *, page_size: int | None = None) -> int:
-    """Return free and reclaimable vm_stat pages in MiB."""
-    if page_size is None:
-        match = _MACOS_PAGE_SIZE.search(text)
-        if match is None:
-            raise MemoryProbeError("vm_stat header carries no page size")
-        page_size = int(match.group(1))
-    if page_size <= 0:
-        raise MemoryProbeError(f"invalid page size {page_size}")
-
-    pages: dict[str, int] = {}
-    for line in text.splitlines():
-        key, separator, rest = line.partition(":")
-        if not separator:
-            continue
-        name = key.strip()
-        if name not in _MACOS_SPARE_KEYS:
-            continue
-        value_text = rest.strip().rstrip(".").strip()
-        try:
-            pages[name] = int(value_text)
-        except ValueError as exc:
-            raise MemoryProbeError(f"unparseable vm_stat {name} value {value_text!r}") from exc
-    if "Pages free" not in pages:
-        raise MemoryProbeError("Pages free is missing from vm_stat")
-    if any(value < 0 for value in pages.values()):
-        raise MemoryProbeError("vm_stat page counts must be non-negative")
-    return sum(pages.values()) * page_size // (1024 * 1024)
-
-
-def current_spare_mb() -> int:
-    """Measure spare memory using the host's native memory report."""
-    if _LINUX_MEMINFO.is_file():
-        try:
-            return parse_linux_meminfo(_LINUX_MEMINFO.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raise MemoryProbeError(f"cannot read {_LINUX_MEMINFO}: {exc}") from exc
-    try:
-        result = subprocess.run(
-            ["vm_stat"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5.0,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise MemoryProbeError(f"cannot run vm_stat: {exc}") from exc
-    if result.returncode != 0:
-        raise MemoryProbeError(f"vm_stat exited {result.returncode}: {result.stderr.strip()}")
-    return parse_macos_vm_stat(result.stdout)
 
 
 def spare_is_sufficient(spare_mb: int, required_mb: int) -> bool:
@@ -123,7 +44,7 @@ class RamSpareGate:
         *,
         min_spare_memory_mb: int,
         launch_min_interval_s: float = 0.0,
-        spare_reader: Callable[[], int] = current_spare_mb,
+        spare_reader: Callable[[], int] = spare_memory_mb,
         sleep: Callable[[float], Any] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
         initial_backoff_s: float = _INITIAL_BACKOFF_S,
@@ -160,10 +81,8 @@ class RamSpareGate:
         while True:
             try:
                 spare_mb = int(await asyncio.to_thread(self._spare_reader))
-            except MemoryProbeError:
-                raise
             except (OSError, TypeError, ValueError) as exc:
-                raise MemoryProbeError(str(exc)) from exc
+                raise RuntimeError(str(exc)) from exc
             now = self._clock()
             enough_memory = spare_is_sufficient(spare_mb, self.min_spare_memory_mb)
             since_last = None if self._last_launch is None else now - self._last_launch

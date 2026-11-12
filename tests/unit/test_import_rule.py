@@ -10,7 +10,7 @@ MAY_IMPORT = {
     "job_config": set(),
     "trial_validity": {"records"},
     "statistics": {"records"},
-    "harbor_adapter": {"records", "job_config", "trial_validity"},
+    "harbor_adapter": {"records", "job_config", "trial_validity", "docker_host"},
     "docker_host": {"records"},
     "harness": {"records"},
     "run": {
@@ -148,6 +148,13 @@ def test_checker_allows_harbor_adapter_to_import_trial_validity() -> None:
     assert not _violations(
         "harbor_adapter/job_folder.py",
         "from harbor_research_runner.trial_validity.verdict import TrialFacts",
+    )
+
+
+def test_checker_allows_harbor_adapter_to_import_docker_host() -> None:
+    assert not _violations(
+        "harbor_adapter/plugin.py",
+        "from harbor_research_runner.docker_host.resources import spare_memory_mb",
     )
 
 
