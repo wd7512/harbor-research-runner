@@ -17,6 +17,10 @@ class MachineCheck:
     included: list[str]
     verifier_timeout_multiplier: float
 
+    def excluded_tasks(self) -> list[str]:
+        included = set(self.included)
+        return sorted(task["name"] for task in self.tasks if task["name"] not in included)
+
     def to_row(self) -> dict:
         return {item.name: getattr(self, item.name) for item in fields(self)}
 

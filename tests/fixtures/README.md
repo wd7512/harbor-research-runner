@@ -36,3 +36,4 @@ Every file in this folder has one line here saying where it came from. No file o
 | `harbor_job/task-tomls/pytorch-model-cli.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/pytorch-model-cli`. |
 
 - `run_folders/`: hand-made compact run-folder samples for `evidence_bundle.trials`, covering a clean two-task/two-arm run and a set-aside, unmeasured, unfinished, and canary trial.
+- `run_folders/{clean,retries}/machine-check.json` and `expected-report.md`: hand-made five-task machine-check records and the resulting evidence report goldens; each includes three tasks and excludes two.

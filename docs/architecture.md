@@ -408,7 +408,7 @@ built_at = "2026-12-01"
 - `trials.jsonl`: section 4.7.
 - `proxy-requests.jsonl.gz`: one row per request, `request_start` and `request_end` merged on `request_id`, sorted by `seq` of the start row; gzip with `mtime=0`.
 - `resource-stats.jsonl.gz`, `run-events.jsonl`, `run-metadata.json`: copied.
-- `report.md`: generated from `statistics`.
+- `report.md`: generated from `statistics`; `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, and the loaded `MachineCheck` record.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
 The secret scan runs before anything is written: it searches every output for the literal values of the model card's `key_env` variables and for the patterns ported from OLD's `runtime/secrets.py`. A hit exits 4 and writes nothing.
@@ -418,5 +418,9 @@ The secret scan runs before anything is written: it searches every output for th
 Three views of every rate, always reported together: `first_attempt` (trials with `is_first_attempt`; an invalid first attempt counts as it scored, a missing reward counts as a failure), `final` (trials with `is_final`), `final_excluding_reruns` (slots in which no trial was set aside).
 
 Per arm: passes, trials, pass rate, Wilson 95% interval. Per task and arm: passes out of valid trials. Paired comparison of two arms: per-task difference in mean reward, its mean over tasks, and a bootstrap 95% interval over tasks (10,000 resamples, seed 0). Completeness table: slots planned, complete, incomplete; trials valid, set aside by reason, unmeasured; tokens spent on set-aside trials.
+
+`statistics.usage_medians(rows, arm)` returns the median requests, prompt and completion tokens, prompt and completion characters, turns, and estimated cost over valid trials for the arm; fields without values return `None`. `statistics.label_counts(rows, arm)` returns verdict-label counts for the arm.
+
+`MachineCheck.excluded_tasks()` returns the sorted task names listed in `tasks` but absent from `included`.
 
 The pure era renderer in harness/opencode_eras.py exposes `config_files(facts, model, proxy_base_url, variant, *, variants=None, default_variant=None)`. The PinnedHarness instance methods keep the abstract signatures above and supply the embedded model card’s variant settings when calling this renderer.
