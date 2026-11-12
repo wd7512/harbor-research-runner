@@ -125,3 +125,37 @@ def test_non_string_default_variant_is_rejected(tmp_path: Path) -> None:
     _write_card(tmp_path, variants={"low": {"reasoningEffort": "low"}}, default_variant=1)
     with pytest.raises(ModelCardError, match="default_variant must be a string or null"):
         load_card("provider/model", tmp_path)
+
+
+def test_request_shaping_configuration_loads(tmp_path: Path) -> None:
+    _write_card(
+        tmp_path,
+        request={"drop_message_fields": ["reasoning_content"], "max_tokens_cap": 128},
+    )
+    card = load_card("provider/model", tmp_path)
+    assert card.request == {"drop_message_fields": ["reasoning_content"], "max_tokens_cap": 128}
+
+
+def test_unknown_request_shaping_key_is_rejected(tmp_path: Path) -> None:
+    _write_card(tmp_path, request={"transform": "strip_reasoning"})
+    with pytest.raises(ModelCardError, match="unknown request key"):
+        load_card("provider/model", tmp_path)
+
+
+@pytest.mark.parametrize(
+    "shaping",
+    [
+        None,
+        {"drop_message_fields": "reasoning_content"},
+        {"drop_message_fields": [""]},
+        {"drop_message_fields": [1]},
+        {"max_tokens_cap": True},
+        {"max_tokens_cap": 0},
+        {"max_tokens_cap": -1},
+        {"max_tokens_cap": 1.5},
+    ],
+)
+def test_invalid_request_shaping_value_is_rejected(tmp_path: Path, shaping: dict) -> None:
+    _write_card(tmp_path, request=shaping)
+    with pytest.raises(ModelCardError):
+        load_card("provider/model", tmp_path)

@@ -244,7 +244,7 @@ An arm with `harness: fake` may carry one opaque `fake` mapping. The fake harnes
 
 A slot is a (task, arm) pair. Each slot needs `repetitions` valid, measured trials.
 
-A model card (`job_config/model_cards/<provider>/<model>.json`) has: `id`, `upstream_model` (the exact identifier sent upstream and expected back), `api` (`chat` or `responses`), `endpoints` (list of base URLs), `key_env` (list of environment variable names), `tokens_per_minute`, `pricing` (`input`, `output`, `cached_read` per million tokens), `variants` (nonempty string ids mapped to nonempty settings dictionaries), `default_variant` (optional, null by default; when set, a string naming a declared variant), `withdrawn` (bool, with `reason`). Secrets are read from the environment only and are never written to any file.
+A model card (`job_config/model_cards/<provider>/<model>.json`) has: `id`, `upstream_model` (the exact identifier sent upstream and expected back), `api` (`chat` or `responses`), `endpoints` (list of base URLs), `key_env` (list of environment variable names), `tokens_per_minute`, `pricing` (`input`, `output`, `cached_read` per million tokens), `variants` (nonempty string ids mapped to nonempty settings dictionaries), `default_variant` (optional, null by default; when set, a string naming a declared variant), `withdrawn` (bool, with `reason`), and an optional `request` object with `drop_message_fields` (list of non-empty strings) and `max_tokens_cap` (positive integer or null). The proxy applies request shaping once, after `build_request` and before pacing. Secrets are read from the environment only and are never written to any file.
 
 ## 6. Trial validity
 

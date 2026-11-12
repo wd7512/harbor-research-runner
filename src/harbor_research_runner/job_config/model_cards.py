@@ -18,6 +18,7 @@ class ModelCard:
     withdrawn: bool
     reason: str | None
     default_variant: str | None = None
+    request: dict | None = None
 
 
 class ModelCardError(ValueError):
@@ -37,8 +38,9 @@ _FIELDS = {
     "withdrawn",
     "reason",
     "default_variant",
+    "request",
 }
-_OPTIONAL_FIELDS = {"default_variant"}
+_OPTIONAL_FIELDS = {"default_variant", "request"}
 
 
 def _card_relative_path(model_id: str) -> Path:
@@ -111,6 +113,24 @@ def load_card(model_id: str, extra_dir: Path | None = None) -> ModelCard:
         raise ModelCardError("model card withdrawn must be a boolean")
     if raw["reason"] is not None and not isinstance(raw["reason"], str):
         raise ModelCardError("model card reason must be a string or null")
+    request = raw.get("request")
+    if "request" in raw:
+        if not isinstance(request, dict):
+            raise ModelCardError("model card request must be an object")
+        unknown_request = sorted(set(request) - {"drop_message_fields", "max_tokens_cap"})
+        if unknown_request:
+            raise ModelCardError(f"unknown request key(s): {', '.join(unknown_request)}")
+        if "drop_message_fields" in request and (
+            not isinstance(request["drop_message_fields"], list)
+            or any(
+                not isinstance(value, str) or not value for value in request["drop_message_fields"]
+            )
+        ):
+            raise ModelCardError("request drop_message_fields must be a list of non-empty strings")
+        if "max_tokens_cap" in request:
+            cap = request["max_tokens_cap"]
+            if cap is not None and (not isinstance(cap, int) or isinstance(cap, bool) or cap <= 0):
+                raise ModelCardError("request max_tokens_cap must be a positive integer or null")
     if not isinstance(raw["upstream_model"], str) or not isinstance(raw["id"], str):
         raise ModelCardError("model card id and upstream_model must be strings")
     return ModelCard(**raw)

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import asdict
 from threading import Event, Thread
 
 import httpx
 import pytest
 
+from harbor_research_runner.job_config.model_cards import load_card
 from harbor_research_runner.model_proxy.adapters.chat import ChatAdapter
 from harbor_research_runner.model_proxy.bodies import BodyStore
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
@@ -19,12 +21,14 @@ from tests.support.fake_upstream import FakeUpstream, RawResponse
 _CARD = {"id": "card/model", "upstream_model": "served-model"}
 
 
-def _deps(tmp_path, base_url, now=time.monotonic, *, pacer=None, bodies=None, routes=None):
+def _deps(
+    tmp_path, base_url, now=time.monotonic, *, card=None, pacer=None, bodies=None, routes=None
+):
     ledger = LedgerWriter(tmp_path / "proxy-ledger.jsonl")
     client = httpx.Client(trust_env=False)
     deps = RelayDeps(
         ledger=ledger,
-        model=_CARD,
+        model=card or _CARD,
         limits=Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.0),
         client=client,
         routes=routes or (lambda: iter([Route(f"{base_url}/v1/chat/completions", "test-key")])),
@@ -116,6 +120,122 @@ def test_body_store_records_the_response_bytes_sent_to_the_harness(tmp_path):
     assert body_rows[0]["request"] == request_body.decode()
     assert body_rows[0]["response"].encode() == response_bytes
     assert _rows(tmp_path)[-1]["type"] == "request_end"
+
+
+def test_relay_shapes_groq_request_before_pacing_and_body_capture(tmp_path):
+    class Clock:
+        value = 0.0
+
+        def now(self):
+            return self.value
+
+        def sleep(self, duration):
+            self.value += duration
+
+    clock = Clock()
+    pacer = Pacer(100, clock.now, clock.sleep)
+    assert pacer.wait_for(40) == 0.0
+    upstream = FakeUpstream(["ok"], model="served-model")
+    base_url = upstream.start()
+    card = {
+        **_CARD,
+        "id": "groq/model",
+        "request": {"drop_message_fields": ["reasoning_content"], "max_tokens_cap": 40},
+    }
+    bodies = BodyStore(tmp_path / "bodies")
+    (tmp_path / "bodies").mkdir()
+    deps, ledger, client = _deps(
+        tmp_path, base_url, now=clock.now, card=card, pacer=pacer, bodies=bodies
+    )
+    request_body = json.dumps(
+        {
+            "model": "groq/model",
+            "stream": True,
+            "messages": [
+                {"role": "assistant", "content": "answer", "reasoning_content": "thinking"}
+            ],
+            "max_tokens": 999_999,
+        }
+    ).encode()
+    try:
+        response = relay(request_body, {}, "trial-groq", deps, ChatAdapter())
+        b"".join(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    assert upstream.requests[0]["body"] == {
+        "model": "served-model",
+        "stream": True,
+        "messages": [{"role": "assistant", "content": "answer"}],
+        "max_tokens": 40,
+    }
+    starts = [row for row in _rows(tmp_path) if row["type"] == "request_start"]
+    assert starts[0]["paced_wait_s"] == 0.0
+    body_rows = read_rows(tmp_path / "bodies" / "trial-groq.jsonl").rows
+    assert body_rows[0]["request"] == request_body.decode()
+
+
+def test_relay_without_request_shaping_preserves_outbound_bytes(tmp_path):
+    go_card = asdict(load_card("opencodego/mimo-v2.6-pro"))
+    upstream = FakeUpstream(["ok"], model=go_card["upstream_model"])
+    base_url = upstream.start()
+    deps, ledger, client = _deps(tmp_path, base_url, card=go_card)
+    request_body = json.dumps(
+        {
+            "model": go_card["id"],
+            "stream": True,
+            "messages": [{"role": "assistant", "content": "answer", "reasoning_content": "keep"}],
+            "max_tokens": 999_999,
+        }
+    ).encode()
+    try:
+        response = relay(request_body, {}, "trial-go", deps, ChatAdapter())
+        b"".join(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    assert upstream.requests[0]["body"] == {
+        "model": go_card["upstream_model"],
+        "stream": True,
+        "messages": [{"role": "assistant", "content": "answer", "reasoning_content": "keep"}],
+        "max_tokens": 999_999,
+    }
+
+
+def test_relay_pacing_estimate_uses_card_cap_without_payload_limit(tmp_path):
+    class Clock:
+        value = 0.0
+
+        def now(self):
+            return self.value
+
+        def sleep(self, duration):
+            self.value += duration
+
+    clock = Clock()
+    pacer = Pacer(80, clock.now, clock.sleep)
+    assert pacer.wait_for(50) == 0.0
+    upstream = FakeUpstream(["ok"], model="served-model")
+    base_url = upstream.start()
+    card = {**_CARD, "request": {"max_tokens_cap": 40}}
+    deps, ledger, client = _deps(tmp_path, base_url, now=clock.now, card=card, pacer=pacer)
+    request_body = json.dumps(
+        {"model": "card/model", "stream": True, "messages": [{"role": "user", "content": "a"}]}
+    ).encode()
+    try:
+        response = relay(request_body, {}, "trial-cap", deps, ChatAdapter())
+        b"".join(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    starts = [row for row in _rows(tmp_path) if row["type"] == "request_start"]
+    assert starts[0]["paced_wait_s"] == 60.0
 
 
 def test_request_without_an_upstream_route_is_recorded_as_transport_error(tmp_path):
