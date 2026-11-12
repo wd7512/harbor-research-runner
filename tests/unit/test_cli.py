@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,52 @@ from harbor_research_runner import cli
 from harbor_research_runner.docker_host import cleanup
 from harbor_research_runner.job_config.job_file import Job
 from harbor_research_runner.run.loop import RunOutcome
+
+
+def test_cli_path_arguments_are_absolute_with_relative_values_and_defaults() -> None:
+    parser = cli._parser()
+    commands = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    relative_argv = {
+        "build-harness": ["--harness", "opencode", "--commit", "abc"],
+        "check-machine": ["--job", "job.yaml", "--out", "check.json"],
+        "run": ["study.yaml", "--no-evidence"],
+        "build-evidence": ["run-1"],
+        "explore": [],
+        "clean-docker": [],
+    }
+    for command_name, command_parser in commands.choices.items():
+        assert not [action.dest for action in command_parser._actions if action.type is Path]
+        path_actions = [
+            action for action in command_parser._actions if action.type is cli._absolute_path
+        ]
+        assert path_actions
+        for action in path_actions:
+            argv = [command_name, *relative_argv[command_name]]
+            value = "relative-path"
+            if action.option_strings:
+                argv.extend([action.option_strings[0], value])
+            elif command_name == "run":
+                argv[1] = value
+            else:
+                argv.append(value)
+            parsed = parser.parse_args(argv)
+            assert all(
+                path.is_absolute()
+                for path_action in path_actions
+                for path in _as_path_list(getattr(parsed, path_action.dest))
+            )
+        parsed_defaults = parser.parse_args([command_name, *relative_argv[command_name]])
+        assert all(
+            path.is_absolute()
+            for action in path_actions
+            for path in _as_path_list(getattr(parsed_defaults, action.dest))
+        )
+
+
+def _as_path_list(value: Path | list[Path]) -> list[Path]:
+    return value if isinstance(value, list) else [value]
 
 
 def test_build_harness_parses_options_and_calls_builder(tmp_path: Path) -> None:
@@ -157,7 +204,9 @@ def test_run_resume_routes_run_id_to_resume_function(tmp_path: Path) -> None:
         )
         == 2
     )
-    assert calls == [("run-1", Path("runs"), Path("harness-manifest.toml"), "deps")]
+    assert calls == [
+        ("run-1", Path("runs").resolve(), Path("harness-manifest.toml").resolve(), "deps")
+    ]
 
 
 def test_run_no_evidence_skips_bundle_build(tmp_path: Path) -> None:

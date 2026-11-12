@@ -32,6 +32,10 @@ def _run_id(value: str) -> str:
     return value
 
 
+def _absolute_path(value: str) -> Path:
+    return Path(value).resolve()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hrr")
     parser.add_argument("--version", action="version", version=version("harbor-research-runner"))
@@ -40,35 +44,37 @@ def _parser() -> argparse.ArgumentParser:
     build_harness = commands.add_parser("build-harness")
     build_harness.add_argument("--harness", required=True)
     build_harness.add_argument("--commit", required=True)
-    build_harness.add_argument("--manifest", type=Path, default=Path("harness-manifest.toml"))
+    build_harness.add_argument("--manifest", type=_absolute_path, default="harness-manifest.toml")
 
     check = commands.add_parser("check-machine")
-    check.add_argument("--job", type=Path, required=True)
-    check.add_argument("--out", type=Path, required=True)
+    check.add_argument("--job", type=_absolute_path, required=True)
+    check.add_argument("--out", type=_absolute_path, required=True)
     check.add_argument("--with-do-nothing", action="store_true")
-    check.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    check.add_argument("--runs-dir", type=_absolute_path, default="runs")
 
     run = commands.add_parser("run")
     run_source = run.add_mutually_exclusive_group(required=True)
-    run_source.add_argument("job", type=Path, nargs="?")
+    run_source.add_argument("job", type=_absolute_path, nargs="?")
     run_source.add_argument("--resume", type=_run_id)
-    run.add_argument("--runs-dir", type=Path, default=Path("runs"))
-    run.add_argument("--evidence-dir", type=Path, default=Path("evidence"))
-    run.add_argument("--manifest", type=Path, default=Path("harness-manifest.toml"))
+    run.add_argument("--runs-dir", type=_absolute_path, default="runs")
+    run.add_argument("--evidence-dir", type=_absolute_path, default="evidence")
+    run.add_argument("--manifest", type=_absolute_path, default="harness-manifest.toml")
     run.add_argument("--no-evidence", action="store_true")
 
     evidence = commands.add_parser("build-evidence")
     evidence.add_argument("run_id", type=_run_id)
-    evidence.add_argument("--runs-dir", type=Path, default=Path("runs"))
-    evidence.add_argument("--evidence-dir", type=Path, default=Path("evidence"))
+    evidence.add_argument("--runs-dir", type=_absolute_path, default="runs")
+    evidence.add_argument("--evidence-dir", type=_absolute_path, default="evidence")
 
     explore = commands.add_parser("explore")
-    explore.add_argument("paths", type=Path, nargs="*", default=[Path("evidence")])
+    explore.add_argument(
+        "paths", type=_absolute_path, nargs="*", default=[_absolute_path("evidence")]
+    )
     explore.add_argument("--port", type=int, default=8780)
 
     clean = commands.add_parser("clean-docker")
     clean.add_argument("--apply", action="store_true")
-    clean.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    clean.add_argument("--runs-dir", type=_absolute_path, default="runs")
     return parser
 
 
