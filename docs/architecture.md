@@ -186,7 +186,7 @@ One row every 10 seconds, `type` = `sample`: `t`, `mem_available_mb`, `swap_used
 
 ### 4.5a Machine check file (`records/machine_check.py`)
 
-Written by `hrr check-machine`, read by the launch checks. Fields: `created_t`, `tool_version`, `harbor_version`, `host_fingerprint`, `task_source` (the job file's `tasks` block without `include`/`exclude`), `concurrency`, `tasks` (list of `name`, `digest`, `oracle_reward`, `agent_s`, `verifier_s`, `verifier_budget_s`, `nothing_reward` or null), `included` (task names with `oracle_reward == 1.0`, and `nothing_reward == 0.0` where measured), `verifier_timeout_multiplier`.
+Written by `hrr check-machine`, read by the launch checks. Fields: `created_t`, `tool_version`, `harbor_version`, `host_fingerprint`, `task_source` (the job file's `tasks` block without `include`/`exclude`), `concurrency`, `tasks` (list of `name`, `digest`, `oracle_reward`, `agent_s`, `agent_budget_s`, `verifier_s`, `verifier_budget_s`, `nothing_reward` or null), `included` (task names with `oracle_reward == 1.0`, and `nothing_reward == 0.0` where measured), `verifier_timeout_multiplier`.
 
 ### 4.6 Limits (`records/limits.py`)
 
