@@ -1,0 +1,26 @@
+{
+  "agent_execution": {
+    "finished_at": "2026-01-01T00:00:16Z",
+    "started_at": "2026-01-01T00:00:11Z"
+  },
+  "agent_setup": {
+    "finished_at": "2026-01-01T00:00:11Z",
+    "started_at": "2026-01-01T00:00:10Z"
+  },
+  "environment_setup": {
+    "finished_at": "2026-01-01T00:00:10Z",
+    "started_at": "2026-01-01T00:00:09Z"
+  },
+  "exception_info": null,
+  "task_name": "task/b",
+  "trial_name": "b-beta-trial",
+  "verifier": {
+    "finished_at": "2026-01-01T00:00:17Z",
+    "started_at": "2026-01-01T00:00:16Z"
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 1.0
+    }
+  }
+}

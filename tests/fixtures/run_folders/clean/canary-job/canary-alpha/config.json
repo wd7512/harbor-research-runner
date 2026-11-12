@@ -1,0 +1,12 @@
+{
+  "agent": {
+    "kwargs": {
+      "arm_label": "alpha",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "task": {
+    "name": "canary/say-hello"
+  },
+  "trial_name": "canary-alpha"
+}
