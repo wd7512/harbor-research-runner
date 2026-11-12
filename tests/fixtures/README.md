@@ -12,3 +12,4 @@ Every file in this folder has one line here saying where it came from. No file o
 | `opencode_eras/modern-1.19.3.cmd` | Ported from OLD `tests/fixtures/opencode_eras/modern-1.19.3.cmd`. |
 | `opencode_eras/2x.json` | Ported from OLD `tests/fixtures/opencode_eras/2x.json`; the proxy URL is trial-scoped and the `x-trial-id` header is removed. |
 | `opencode_eras/2x.cmd` | Ported from OLD `tests/fixtures/opencode_eras/2x.cmd`. |
+| `opencode_build/opencode-1.19.5-listing.txt` | `tar -tzf` archive entries for the public upstream commit `810c0eba1a7348036f8bdf61e6632d0c36c6876c` (v1.19.5) of `https://github.com/anomalyco/opencode`. |
