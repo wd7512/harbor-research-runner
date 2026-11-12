@@ -209,7 +209,7 @@ def test_run_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Path)
         "harbor",
         "run",
         "--config",
-        str(run_dir / "harbor-job-config.yaml"),
+        str(run_dir / "custom-job-config.yaml"),
         "--jobs-dir",
         str(run_dir),
         "--job-name",

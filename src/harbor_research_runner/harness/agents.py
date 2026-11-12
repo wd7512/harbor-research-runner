@@ -24,6 +24,11 @@ from harbor_research_runner.records.proxy_control import trial_base_url
 
 logger = logging.getLogger(__name__)
 
+_AGENT_IMPORT_PATHS = {
+    "opencode": "harbor_research_runner.harness.agents:OpenCodeAgent",
+    "fake": "harbor_research_runner.harness.fake:FakeHarnessAgent",
+}
+
 _UPLOAD_TARGET = "/usr/local"
 _OPENCODE_BIN = "/usr/local/bin/opencode"
 _UNAME_COMMAND = "uname -m"
@@ -130,6 +135,14 @@ _SETTINGS_KEYS = tuple(AgentSettings.model_fields)
 
 class OpenCodeHarnessOptions(OpenCodeOptions, AgentSettings):
     pass
+
+
+def agent_import_path(harness: str) -> str:
+    """Return Harbor's import path for a supported harness."""
+    try:
+        return _AGENT_IMPORT_PATHS[harness]
+    except KeyError:
+        raise ValueError(f"unknown harness {harness!r}") from None
 
 
 def agent_settings(

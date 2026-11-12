@@ -14,6 +14,7 @@ from harbor_research_runner.harness.agents import (
     OpenCodeAgent,
     PinnedHarness,
     ProbeError,
+    agent_import_path,
     agent_settings,
 )
 from harbor_research_runner.harness.manifest import ManifestError
@@ -763,3 +764,13 @@ def test_run_cancelled_reraises_when_the_stop_script_fails(make_agent) -> None:
             await task
 
     asyncio.run(_run())
+
+
+def test_agent_import_path_maps_each_supported_harness() -> None:
+    assert agent_import_path("opencode") == _AGENT_IMPORT_PATH
+    assert agent_import_path("fake") == "harbor_research_runner.harness.fake:FakeHarnessAgent"
+
+
+def test_agent_import_path_refuses_unknown_harness() -> None:
+    with pytest.raises(ValueError, match="unknown harness"):
+        agent_import_path("other")
