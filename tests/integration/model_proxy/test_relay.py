@@ -188,7 +188,7 @@ def test_non_streaming_request_records_start_and_end_rows(tmp_path):
     assert upstream.requests[0]["body"]["model"] == "served-model"
 
 
-def test_truncated_stream_is_recorded_as_server_error(tmp_path):
+def test_truncated_stream_is_recorded_as_truncated(tmp_path):
     upstream = FakeUpstream(["truncate_after:3"], model="served-model")
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
@@ -203,7 +203,7 @@ def test_truncated_stream_is_recorded_as_server_error(tmp_path):
     end = _rows(tmp_path)[-1]
     assert len(chunks) == 3
     assert end["type"] == "request_end"
-    assert end["upstream_status"] == "server_error"
+    assert end["upstream_status"] == "truncated"
     assert end["upstream_http_status"] == 200
     assert end["prompt_tokens"] is None
     assert end["completion_chars"] == len("hel")
@@ -563,7 +563,7 @@ def test_done_ends_the_stream_without_waiting_for_connection_close(tmp_path):
 
 
 def test_response_close_before_iteration_closes_upstream(tmp_path):
-    raw = RawResponse([], hold_open=True)
+    raw = RawResponse([b": keepalive\r\n\r\n"], hold_open=True)
     upstream = FakeUpstream([raw], model="served-model")
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
@@ -580,7 +580,7 @@ def test_response_close_before_iteration_closes_upstream(tmp_path):
 
 
 def test_chunks_close_before_iteration_closes_upstream(tmp_path):
-    raw = RawResponse([], hold_open=True)
+    raw = RawResponse([b": keepalive\r\n\r\n"], hold_open=True)
     upstream = FakeUpstream([raw], model="served-model")
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url)
@@ -612,7 +612,7 @@ def test_empty_non_stream_body_is_not_ok(tmp_path):
 
     end = _rows(tmp_path)[-1]
     assert chunks == []
-    assert end["upstream_status"] == "server_error"
+    assert end["upstream_status"] == "truncated"
     assert end["first_chunk_s"] is None
     assert end["first_content_s"] is None
     assert end["prompt_tokens"] is None
@@ -636,6 +636,6 @@ def test_unparseable_non_stream_body_is_not_ok(tmp_path):
 
     end = _rows(tmp_path)[-1]
     assert chunks == [body]
-    assert end["upstream_status"] == "server_error"
+    assert end["upstream_status"] == "truncated"
     assert end["first_chunk_s"] is not None
     assert end["completion_chars"] == 0

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import socket
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -19,9 +20,14 @@ class RawResponse:
     gate: Event | None = None
     gate_after: int = 0
     content_type: str = "text/event-stream"
+    status_code: int = 200
+    headers: dict[str, str] = field(default_factory=dict)
+    chunk_delay_s: float = 0.0
+    wait_for_client_close: bool = False
     ready: Event = field(default_factory=Event)
     release: Event = field(default_factory=Event)
     disconnected: Event = field(default_factory=Event)
+    client_closed: Event = field(default_factory=Event)
 
 
 class FakeUpstream:
@@ -195,15 +201,19 @@ class FakeUpstream:
 
     @staticmethod
     def _respond_raw(handler: BaseHTTPRequestHandler, entry: RawResponse) -> None:
-        handler.send_response(200)
+        handler.send_response(entry.status_code)
         handler.send_header("Content-Type", entry.content_type)
         handler.send_header("Cache-Control", "no-cache")
         handler.send_header("Connection", "close")
+        for name, value in entry.headers.items():
+            handler.send_header(name, value)
         handler.end_headers()
         entry.ready.set()
         for index, chunk in enumerate(entry.chunks):
             if entry.gate is not None and index == entry.gate_after:
                 entry.gate.wait(timeout=5)
+            if index and entry.chunk_delay_s:
+                time.sleep(entry.chunk_delay_s)
             handler.wfile.write(chunk)
             handler.wfile.flush()
         if entry.hold_open:
@@ -217,6 +227,21 @@ class FakeUpstream:
                     continue
                 except OSError:
                     entry.disconnected.set()
+                    break
+        if entry.wait_for_client_close:
+            with suppress(OSError):
+                handler.connection.shutdown(socket.SHUT_WR)
+            handler.connection.settimeout(0.05)
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    if handler.connection.recv(1) == b"":
+                        entry.client_closed.set()
+                        break
+                except TimeoutError:
+                    continue
+                except OSError:
+                    entry.client_closed.set()
                     break
         handler.close_connection = True
 
