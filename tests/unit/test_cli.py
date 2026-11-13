@@ -62,8 +62,11 @@ def _as_path_list(value: Path | list[Path]) -> list[Path]:
 def test_build_harness_parses_options_and_calls_builder(tmp_path: Path) -> None:
     calls = []
 
-    def build(harness, commit, manifest_path):
-        calls.append((harness, commit, manifest_path))
+    def resolve_arch(arch):
+        return "arm64" if arch is None else arch
+
+    def build(harness, commit, manifest_path, arch):
+        calls.append((harness, commit, manifest_path, arch))
         return 0
 
     manifest = tmp_path / "manifest.toml"
@@ -78,11 +81,41 @@ def test_build_harness_parses_options_and_calls_builder(tmp_path: Path) -> None:
                 "--manifest",
                 str(manifest),
             ],
-            steps={"build_harness": build},
+            steps={"build_harness": build, "resolve_arch": resolve_arch},
         )
         == 0
     )
-    assert calls == [("opencode", "abc", manifest)]
+    assert calls == [("opencode", "abc", manifest, "arm64")]
+
+
+def test_build_harness_forwards_architecture_to_builder(tmp_path: Path) -> None:
+    calls = []
+
+    def resolve_arch(arch):
+        return arch
+
+    def build(harness, commit, manifest_path, arch):
+        calls.append((harness, commit, manifest_path, arch))
+        return 0
+
+    assert (
+        cli.main(
+            [
+                "build-harness",
+                "--harness",
+                "opencode",
+                "--commit",
+                "abc",
+                "--manifest",
+                str(tmp_path / "manifest.toml"),
+                "--arch",
+                "amd64",
+            ],
+            steps={"build_harness": build, "resolve_arch": resolve_arch},
+        )
+        == 0
+    )
+    assert calls == [("opencode", "abc", tmp_path / "manifest.toml", "amd64")]
 
 
 def test_check_machine_parses_options_and_calls_checker(tmp_path: Path) -> None:

@@ -12,6 +12,7 @@ from harbor_research_runner.harness.build import (
     build,
     build_command,
     layout_for,
+    resolve_arch,
 )
 from harbor_research_runner.harness.manifest import ImageEntry, load_manifest
 
@@ -235,7 +236,7 @@ def test_build_command_rejects_unsupported_architecture() -> None:
 def test_build_rejects_unknown_harness_without_running_commands(tmp_path: Path) -> None:
     run = FakeRun()
     with pytest.raises(BuildError, match="opencode"):
-        build("codex", COMMIT, tmp_path / "harness-manifest.toml", run=run)
+        build("codex", COMMIT, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
     assert run.calls == []
 
 
@@ -243,21 +244,21 @@ def test_build_rejects_unknown_harness_without_running_commands(tmp_path: Path) 
 def test_build_rejects_invalid_commit_without_running_commands(tmp_path: Path, commit: str) -> None:
     run = FakeRun()
     with pytest.raises(BuildError, match="commit"):
-        build("opencode", commit, tmp_path / "harness-manifest.toml", run=run)
+        build("opencode", commit, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
     assert run.calls == []
 
 
-def test_build_rejects_unsupported_docker_architecture(tmp_path: Path) -> None:
+def test_build_rejects_unsupported_docker_architecture() -> None:
     run = FakeRun(docker_arch="mips")
     with pytest.raises(BuildError, match="architecture"):
-        build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run)
+        resolve_arch(None, run=run)
     assert run.calls == [["docker", "info", "--format", "{{.Architecture}}"]]
 
 
 def test_build_rejects_unknown_source_layout(tmp_path: Path) -> None:
     run = FakeRun(listing=["opencode-abc123/packages/other/script/build.ts"])
     with pytest.raises(BuildError, match="layout"):
-        build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run)
+        build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
     assert not any(call[:2] == ["docker", "build"] for call in run.calls)
 
 
@@ -269,13 +270,14 @@ def test_build_rejects_duplicate_source_marker(tmp_path: Path) -> None:
         ]
     )
     with pytest.raises(BuildError, match="ambiguous"):
-        build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run)
+        build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
     assert not any(call[:2] == ["docker", "build"] for call in run.calls)
 
 
 def test_build_downloads_the_commit_archive_and_runs_the_platform_build(tmp_path: Path) -> None:
     run = FakeRun(docker_arch="aarch64")
-    build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run)
+    arch = resolve_arch(None, run=run)
+    build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run, arch=arch)
 
     assert run.calls[0] == ["docker", "info", "--format", "{{.Architecture}}"]
     curl = next(call for call in run.calls if call[0] == "curl")
@@ -286,9 +288,31 @@ def test_build_downloads_the_commit_archive_and_runs_the_platform_build(tmp_path
     assert build_command("opencode", COMMIT, "arm64", "v1") in run.calls
 
 
+def test_build_uses_requested_architecture_on_an_arm64_host(tmp_path: Path) -> None:
+    run = FakeRun(docker_arch="aarch64", image_arch="amd64", label=COMMIT_2X)
+
+    entry = build("opencode", COMMIT_2X, tmp_path / "harness-manifest.toml", run=run, arch="amd64")
+
+    assert build_command("opencode", COMMIT_2X, "amd64", "v1") in run.calls
+    assert [
+        "docker",
+        "run",
+        "--rm",
+        "--platform",
+        "linux/amd64",
+        image_ref(COMMIT_2X, "amd64"),
+        "opencode",
+        "--version",
+    ] in run.calls
+    assert entry.arch == "amd64"
+    assert (
+        load_manifest(tmp_path / "harness-manifest.toml")[("opencode", COMMIT_2X, "amd64")] == entry
+    )
+
+
 def test_build_inspects_the_built_image_identity_and_runs_version(tmp_path: Path) -> None:
     run = FakeRun(image_arch="arm64")
-    build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run)
+    build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
     ref = image_ref(COMMIT, "arm64")
 
     assert inspect_calls(run) == [
@@ -306,7 +330,7 @@ def test_build_with_real_mixed_listing_uses_the_v1_recipe(tmp_path: Path) -> Non
     listing = LISTING_FIXTURE.read_text(encoding="utf-8").splitlines()
     run = FakeRun(listing=listing, version="1.19.5\n")
 
-    entry = build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run)
+    entry = build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
 
     build_call = next(call for call in run.calls if call[:2] == ["docker", "build"])
     assert build_call == build_command("opencode", COMMIT, "arm64", "v1")
@@ -317,7 +341,7 @@ def test_build_with_real_mixed_listing_uses_the_v1_recipe(tmp_path: Path) -> Non
 def test_build_writes_one_manifest_entry_with_the_image_digest(tmp_path: Path) -> None:
     path = tmp_path / "harness-manifest.toml"
     run = FakeRun()
-    entry = build("opencode", COMMIT, path, run=run)
+    entry = build("opencode", COMMIT, path, run=run, arch="arm64")
 
     assert entry == ImageEntry(
         harness="opencode",
@@ -340,7 +364,7 @@ def test_build_preserves_withdrawal_on_same_architecture_rebuild(tmp_path: Path)
     before = load_manifest(path)
     run = FakeRun(docker_arch="aarch64", version="1.19.5\n")
 
-    entry = build("opencode", COMMIT, path, run=run)
+    entry = build("opencode", COMMIT, path, run=run, arch="arm64")
     after = load_manifest(path)
 
     assert entry.withdrawn is True
@@ -355,7 +379,7 @@ def test_build_preserves_withdrawal_when_adding_another_architecture(tmp_path: P
     before = load_manifest(path)
     run = FakeRun(docker_arch="x86_64", image_arch="amd64", version="1.19.5\n")
 
-    entry = build("opencode", COMMIT, path, run=run)
+    entry = build("opencode", COMMIT, path, run=run, arch="amd64")
     after = load_manifest(path)
 
     assert entry.withdrawn is True
@@ -371,7 +395,7 @@ def test_build_parses_the_two_x_version_banner(tmp_path: Path) -> None:
         version="opencode v2.2.7\n",
         label=COMMIT_2X,
     )
-    entry = build("opencode", COMMIT_2X, tmp_path / "harness-manifest.toml", run=run)
+    entry = build("opencode", COMMIT_2X, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
     assert entry.version == "2.2.7"
     assert entry.ref == image_ref(COMMIT_2X, "arm64")
 
@@ -389,7 +413,7 @@ def test_build_keeps_stable_source_sweep_versions(
     tmp_path: Path, banner: str, expected: str
 ) -> None:
     run = FakeRun(version=banner)
-    entry = build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run)
+    entry = build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
     assert entry.version == expected
 
 
@@ -413,7 +437,7 @@ def test_build_preserves_prerelease_and_build_suffixes(
     expected: str,
 ) -> None:
     run = FakeRun(listing=listing, version=banner, label=commit)
-    entry = build("opencode", commit, tmp_path / "harness-manifest.toml", run=run)
+    entry = build("opencode", commit, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
     assert entry.version == expected
 
 
@@ -422,7 +446,7 @@ def test_build_rejects_image_architecture_mismatch(tmp_path: Path) -> None:
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(docker_arch="aarch64", image_arch="amd64")
     with pytest.raises(BuildError, match="architecture"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
@@ -431,7 +455,7 @@ def test_build_rejects_non_linux_image(tmp_path: Path) -> None:
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(image_os="windows")
     with pytest.raises(BuildError, match="linux"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
@@ -440,7 +464,7 @@ def test_build_rejects_missing_image_digest(tmp_path: Path) -> None:
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(image_id_exit=1, image_id="")
     with pytest.raises(BuildError, match="image id"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
@@ -449,7 +473,7 @@ def test_build_rejects_absent_label(tmp_path: Path) -> None:
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(label="<no value>")
     with pytest.raises(BuildError, match="label"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
@@ -458,7 +482,7 @@ def test_build_rejects_mismatched_label(tmp_path: Path) -> None:
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(label=COMMIT_2X)
     with pytest.raises(BuildError, match="label"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
@@ -467,7 +491,7 @@ def test_build_rejects_empty_version(tmp_path: Path) -> None:
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(version="\n")
     with pytest.raises(BuildError, match="version"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
@@ -476,7 +500,7 @@ def test_build_rejects_unparseable_version(tmp_path: Path) -> None:
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(version="opencode vdev\n")
     with pytest.raises(BuildError, match="version"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
@@ -495,7 +519,7 @@ def test_build_rejects_malformed_version_suffix(tmp_path: Path, banner: str) -> 
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(version=banner)
     with pytest.raises(BuildError, match="version"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
@@ -504,7 +528,7 @@ def test_build_rejects_failed_version_command(tmp_path: Path) -> None:
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(version_exit=1)
     with pytest.raises(BuildError, match="version"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
@@ -513,7 +537,7 @@ def test_build_rejects_failed_docker_build(tmp_path: Path) -> None:
     path.write_text("original manifest bytes\n", encoding="utf-8")
     run = FakeRun(build_exit=1)
     with pytest.raises(BuildError, match="build"):
-        build("opencode", COMMIT, path, run=run)
+        build("opencode", COMMIT, path, run=run, arch="arm64")
     assert path.read_text(encoding="utf-8") == "original manifest bytes\n"
 
 
