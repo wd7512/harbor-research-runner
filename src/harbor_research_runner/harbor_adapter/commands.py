@@ -29,6 +29,15 @@ def job_config(
     return config
 
 
+def apply_memory_policy(config: dict, memory_cap: str) -> dict:
+    if memory_cap == "none":
+        config["memory_enforcement_policy"] = "ignore"
+        config["cpu_enforcement_policy"] = "ignore"
+    elif memory_cap != "kernel":
+        raise ValueError(f"unsupported memory cap {memory_cap!r}")
+    return config
+
+
 def _task_entries(job: Job, task_names: list[str]) -> dict:
     if job.tasks.kind == "dataset":
         return {"datasets": [{"name": job.tasks.dataset, "task_names": task_names}]}

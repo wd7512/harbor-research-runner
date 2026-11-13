@@ -13,6 +13,7 @@ class RunSnapshot:
     open_trials: int
     proxy_alive: bool
     oom_watch_alive: bool
+    memory_watch_alive: bool
     resource_rows: list[dict]
     last_activity_t: float
     longest_agent_budget_s: float
@@ -108,6 +109,9 @@ def should_halt(snapshot: RunSnapshot, limits: Limits) -> tuple[str, str] | None
 
     if not snapshot.oom_watch_alive:
         return ("oom_watch_dead", "OOM watcher process exited")
+
+    if not snapshot.memory_watch_alive:
+        return ("memory_watch_dead", "memory watcher process exited")
 
     samples = _samples(snapshot)
     if not samples:

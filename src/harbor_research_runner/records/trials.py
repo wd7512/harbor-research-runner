@@ -31,6 +31,7 @@ class TrialRow:
     labels: list[str]
     measured: bool
     unmeasured_reason: str | None
+    oom_source: str | None
     requests: int
     error_requests: int
     refused_requests: int
@@ -46,6 +47,8 @@ class TrialRow:
     median_first_content_s: float | None
     output_rate_tokens_per_s: float | None
     agent_wall_s: float | None
+    peak_memory_mb: float | None
+    memory_limit_mb: int | None
     type: str = "trial"
 
     def to_row(self) -> dict:

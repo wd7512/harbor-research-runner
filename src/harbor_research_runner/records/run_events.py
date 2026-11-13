@@ -62,6 +62,7 @@ class TrialVerdict(_Event):
     labels: list[str]
     measured: bool
     unmeasured_reason: str | None
+    oom_source: str | None = None
     type: str = "trial_verdict"
 
 

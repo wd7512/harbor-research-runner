@@ -105,6 +105,7 @@ class RunSession:
         self.manifest_path = manifest_path
         self._sampler: subprocess.Popen | None = None
         self._oom_watch: subprocess.Popen | None = None
+        self._memory_watch: subprocess.Popen | None = None
         self._proxy: subprocess.Popen | None = None
         self._lifeline_read_fd: int | None = None
         self._lifeline_write_fd: int | None = None
@@ -241,6 +242,26 @@ class RunSession:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,
             )
+            memory_cap = self.metadata.host["host_profile"]["memory_cap"]
+            self._memory_watch = process_group.spawn_group(
+                [
+                    "uv",
+                    "run",
+                    "python",
+                    "-m",
+                    "harbor_research_runner.run.memory_watch",
+                    "--run-dir",
+                    str(self.run_dir),
+                    "--memory-cap",
+                    memory_cap,
+                    "--lifeline-fd",
+                    str(read_fd),
+                ],
+                env=environment,
+                pass_fds=(read_fd,),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+            )
             self._proxy = process_group.spawn_group(
                 [
                     "uv",
@@ -281,7 +302,7 @@ class RunSession:
 
     def stop_services(self) -> None:
         try:
-            for name in ("_proxy", "_sampler", "_oom_watch"):
+            for name in ("_proxy", "_sampler", "_oom_watch", "_memory_watch"):
                 process = getattr(self, name)
                 if process is not None and process.poll() is None:
                     process_group.stop_group(process, grace_s=15)
@@ -305,6 +326,9 @@ class RunSession:
 
     def oom_watch_alive(self) -> bool:
         return self._oom_watch is not None and self._oom_watch.poll() is None
+
+    def memory_watch_alive(self) -> bool:
+        return self._memory_watch is not None and self._memory_watch.poll() is None
 
 
 def slots_status(
@@ -401,6 +425,8 @@ def run_job(
         canary_config = canary.canary_job_config(
             job, agents, machine_check.verifier_timeout_multiplier
         )
+        memory_cap = host["host_profile"]["memory_cap"]
+        commands.apply_memory_policy(canary_config, memory_cap)
         commands.write_job_config(session.run_dir / "canary-job-config.yaml", canary_config)
         canary_argv = commands.run_command(
             session.run_dir, "canary-job", _proxy_url(job), job.task_order
@@ -424,6 +450,7 @@ def run_job(
             agents,
             machine_check.verifier_timeout_multiplier,
         )
+        commands.apply_memory_policy(main_config, memory_cap)
         commands.write_job_config(session.run_dir / "harbor-job-config.yaml", main_config)
         result = _pass_loop(session, planned_slots(job, task_names), deps, 0)
         services_started = False

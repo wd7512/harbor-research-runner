@@ -16,9 +16,9 @@ A study flows top to bottom through six steps. Six helper modules are shared.
 | helper | `trial_validity` | The verdict for one trial; the halt rules for a run | `records` |
 | helper | `statistics` | Pass rates, intervals, paired comparison, completeness table | `records` |
 | helper | `harbor_adapter` | Harbor command lines, reading Harbor's job folder, the set-aside move, the Harbor plugin | `records`, `job_config`, `trial_validity`, `docker_host` |
-| helper | `docker_host` | Host lock, Docker image operations and cleanup, resource check, resource sampler | `records` |
+| helper | `docker_host` | Host lock, Docker image operations and cleanup, resource check, resource sampler, container memory readers and kill | `records` |
 | step | `harness` | Commit manifest, image build, extraction, `PinnedHarness`, `OpenCodeAgent`, the fake harness | `records`, `docker_host` |
-| step | `run` | Launch checks, canary, machine check, the run loop | `job_config`, `records`, `trial_validity`, `harbor_adapter`, `docker_host`, `harness` |
+| step | `run` | Launch checks, canary, machine check, the run loop, memory watcher | `job_config`, `records`, `trial_validity`, `harbor_adapter`, `docker_host`, `harness` |
 | step | `model_proxy` | The relay between harness and model; writes the proxy ledger | `records`, `local_http` |
 | step | `evidence_bundle` | Run folder to evidence bundle, secret scan, report | `records`, `statistics`, `harbor_adapter` |
 | step | `results_explorer` | Read-only comparison server and page | `records`, `statistics`, `local_http` |
@@ -86,6 +86,7 @@ runs/<run-id>/                         evidence/<run-id>/
   proxy-config.json
   proxy-ledger.jsonl
   docker-oom-events.jsonl
+  memory-watch.jsonl
   proxy.log
   resource-stats.jsonl
   request-bodies/<trial>.jsonl[.gz]
@@ -176,17 +177,19 @@ Each row has `t` and `type`:
 | `launch_check` | `name`, `ok`, `detail` |
 | `harbor_start` | `pass` (0 for `harbor run`, then 1, 2, ...), `command`, `job` (`canary` or `main`) |
 | `harbor_exit` | `pass`, `returncode`, `job` |
-| `trial_verdict` | `trial`, `task`, `arm`, `valid` (bool), `reason`, `instrument`, `labels` (list), `measured` (bool), `unmeasured_reason` |
+| `trial_verdict` | `trial`, `task`, `arm`, `valid` (bool), `reason`, `instrument`, `labels` (list), `measured` (bool), `unmeasured_reason`, `oom_source` (`kernel`, `watchdog`, or null) |
 | `set_aside` | `trial`, `task`, `arm`, `reason` |
 | `halt` | `reason`, `detail` |
 | `resume` | `tool_version`, `tool_commit`, `pid` |
 | `finish` | `exit_code`, `slots_complete`, `slots_incomplete` |
 
-A `trial_verdict` is written exactly once per trial, by `run`, when the trial has finished or is found unfinished at a halt or resume. Nothing else decides validity.
+A `trial_verdict` is written exactly once per trial, by `run`, when the trial has finished or is found unfinished at a halt or resume. Nothing else decides validity. The event includes `oom_source` (`kernel`, `watchdog`, or null); if both OOM records fall within the trial's agent/verifier window, the earlier record determines the source.
 
 ### 4.5 `resource-stats.jsonl`
 
 One row every 10 seconds, `type` = `sample`: `t`, `mem_available_mb`, `swapped_out_pages`, `disk_free_gb`, `load1`, `trial_containers`, `docker_ok` (bool). `swapped_out_pages` is the increase in the cumulative swap-out counter since the previous sample; the first sample and a counter reset record 0.
+
+`memory-watch.jsonl` records every 2 seconds, per main or canary trial container. A sample row has `type: "sample"`, `t`, `trial`, `location` (`harbor-job` or `canary-job`), `container`, `used_mb`, `limit_mb` (integer or null), and `reader` (`docker_stats`, `proc_pss` or `proc_rss`). A watchdog kill adds a `type: "kill"` row with the same fields. The always-on memory watcher uses Docker stats when the host memory cap is `kernel` and process PSS with RSS fallback otherwise; it kills a container only when `used_mb > limit_mb`. A null task memory limit is sampled without a kill. Canary trials use the bundled canary task's memory limit.
 
 ### 4.5a Machine check file (`records/machine_check.py`)
 
@@ -209,10 +212,11 @@ One row per trial, including set-aside trials and canary trials. Sorted by `task
 Identity: `trial`, `task`, `arm`, `harness`, `commit`, `model`, `location` (`harbor-job`, `set-aside-trials` or `canary-job`), `is_first_attempt`, `is_final`.
 
 Outcome: `reward` (number or null), `is_pass` (`reward == 1.0`), `harbor_exception` (Harbor's label, verbatim, or null), `agent_exit_nonzero` (bool).
+Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null), `memory_limit_mb` (the task's declared limit, or null), and `oom_source` (`kernel`, `watchdog`, or null).
 
 Phases: `environment_setup_started_t`, `environment_setup_finished_t`, `agent_setup_started_t`, `agent_setup_finished_t`, `agent_started_t`, `agent_finished_t`, `verifier_started_t`, `verifier_finished_t`.
 
-Validity: `valid`, `reason`, `instrument`, `labels`, `measured`, `unmeasured_reason` (copied from the `trial_verdict` event).
+Validity: `valid`, `reason`, `instrument`, `labels`, `measured`, `unmeasured_reason`, `oom_source` (copied from the `trial_verdict` event).
 
 Usage: `requests`, `error_requests`, `refused_requests`, `prompt_tokens`, `completion_tokens`, `cached_read_tokens`, `prompt_chars`, `completion_chars`, `cost_usd_estimate`, `harbor_reported_tokens`.
 
@@ -326,10 +330,10 @@ Harbor's exception labels are never an input to a halt rule.
 ## 7. The run loop
 
 1. Launch checks (`run/checks.py`): each writes a `launch_check` event; any failure exits 1 before anything is spent. Checks: the job file parses; every arm's commit is in the manifest, is not withdrawn, and its image digest matches the local image; the model card exists and is not withdrawn; every key variable is set; Docker has no residue; host resources are above the limits; concurrent task memory plus `memory_reserve_mb` fits Docker's total memory (`memory_fits`); the machine check file exists and matches (task set, Harbor version, machine fingerprint, concurrency not above the checked value); every requested task is in the machine check's included list; nothing listens on the proxy port (`proxy_port_free`, bound with `SO_REUSEADDR` as the proxy binds); on resume, no process names the run folder (`run_folder_not_live`, with matching pids in the detail); this process holds the host lock (D22). A fresh run has no existing run folder. A refused launch still gets a run folder holding its `launch` and `launch_check` events.
-2. Copy the job's machine-check file to `machine-check.json` (write-once, from the bytes whose sha256 goes into the metadata), then write `run-metadata.json`. Start the resource sampler and Docker OOM watcher. Write `proxy-config.json`, start the proxy, wait for `/control/health`. The sampler, OOM watcher, proxy and every Harbor guard get the read end of a lifeline pipe whose write end only the runner holds. On EOF (the runner died, including SIGKILL), the services stop through their own SIGTERM path and each guard sends SIGTERM to Harbor, waits the Harbor stop grace, then SIGKILLs its process group if needed. Each guard starts Harbor in its own process group, so the runner's existing group signals still reach Harbor.
+2. Copy the job's machine-check file to `machine-check.json` (write-once, from the bytes whose sha256 goes into the metadata), then write `run-metadata.json`. Start the resource sampler, Docker OOM watcher, and memory watcher. Write `proxy-config.json`, start the proxy, wait for `/control/health`. The sampler, OOM watcher, memory watcher, proxy and every Harbor guard get the read end of a lifeline pipe whose write end only the runner holds. On EOF (the runner died, including SIGKILL), the services stop through their own SIGTERM path and each guard sends SIGTERM to Harbor, waits the Harbor stop grace, then SIGKILLs its process group if needed. Each guard starts Harbor in its own process group, so the runner's existing group signals still reach Harbor.
 3. Canary: one Harbor job in `canary-job/` running the bundled task `say-hello` (Harbor selects a local task by its folder name; it records the trial under `[task].name`, `canary/say-hello`) once per arm against the real model. The task lives at `run/canary_task/say-hello/`: its instruction creates `/app/hello.txt` containing `hello`, its environment is `python:3.12-slim` pinned by digest, its agent timeout is 120 s and its verifier timeout is 60 s, and its verifier accepts exactly `hello` or `hello\n`. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
 4. Pass 0: `harbor run` with the generated `harbor-job-config.yaml`.
-5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules.
+5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules. The memory watcher samples each running `harbor-job` and `canary-job` trial container every 2 seconds and kills it when measured use exceeds its task memory limit. Watchdog kill rows only label main-job verdicts.
 6. On halt: stop Harbor's process group, stop the proxy and sampler, judge every remaining trial folder, write `halt`, exit 2.
 7. When Harbor exits on its own: judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
 8. Finish: stop the proxy and sampler, write `finish`, make the run folder read-only, exit 0 or 3.
@@ -421,6 +425,7 @@ built_at = "2026-12-01"
 - `trials.jsonl`: section 4.7.
 - `proxy-requests.jsonl.gz`: one row per request, `request_start` and `request_end` merged on `request_id`, sorted by `seq` of the start row; gzip with `mtime=0`.
 - `resource-stats.jsonl.gz`, `docker-oom-events.jsonl`, `run-events.jsonl`, `run-metadata.json`: copied.
+- `memory-watch.jsonl`: copied.
 - `report.md`: generated from `statistics`; `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, and the loaded `MachineCheck` record.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 

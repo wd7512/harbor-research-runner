@@ -93,6 +93,7 @@ def _snapshot(**overrides):
         "open_trials": 0,
         "proxy_alive": True,
         "oom_watch_alive": True,
+        "memory_watch_alive": True,
         "resource_rows": [_sample(NOW)],
         "last_activity_t": NOW,
         "longest_agent_budget_s": 3600.0,
@@ -107,6 +108,13 @@ def test_consecutive_clean_timeouts_do_not_halt():
     verdicts = [_verdict(labels=("timed_out",)) for _ in range(10)]
 
     assert should_halt(_snapshot(verdicts=verdicts), DEFAULT_LIMITS) is None
+
+
+def test_dead_memory_watch_halts():
+    assert should_halt(_snapshot(memory_watch_alive=False), DEFAULT_LIMITS) == (
+        "memory_watch_dead",
+        "memory watcher process exited",
+    )
 
 
 def test_healthy_snapshot_does_not_halt():

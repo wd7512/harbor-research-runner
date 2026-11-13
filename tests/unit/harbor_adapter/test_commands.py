@@ -5,6 +5,7 @@ import yaml
 from harbor.models.job.config import JobConfig
 
 from harbor_research_runner.harbor_adapter.commands import (
+    apply_memory_policy,
     job_config,
     machine_check_command,
     oracle_job_config,
@@ -138,6 +139,22 @@ def test_job_config_uses_the_given_job_name():
 
     assert config["job_name"] == "custom-job"
     assert JobConfig.model_validate(config).job_name == "custom-job"
+
+
+def test_memory_policy_is_ignored_only_when_host_has_no_memory_cap():
+    config = {"job_name": "harbor-job"}
+
+    assert apply_memory_policy(config, "none") == {
+        "job_name": "harbor-job",
+        "memory_enforcement_policy": "ignore",
+        "cpu_enforcement_policy": "ignore",
+    }
+
+
+def test_kernel_memory_policy_leaves_harbor_defaults_untouched():
+    config = {"job_name": "harbor-job"}
+
+    assert apply_memory_policy(config, "kernel") == {"job_name": "harbor-job"}
 
 
 def test_write_job_config_writes_yaml_with_sorted_keys(tmp_path: Path):

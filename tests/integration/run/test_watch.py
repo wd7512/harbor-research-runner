@@ -39,6 +39,7 @@ def _session(run_dir: Path):
         metadata=SimpleNamespace(task_set={"tasks": [{"name": "task-a"}]}),
         proxy_alive=lambda: True,
         oom_watch_alive=lambda: True,
+        memory_watch_alive=lambda: True,
     )
 
 

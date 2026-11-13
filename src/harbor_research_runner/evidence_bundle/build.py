@@ -106,11 +106,14 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
     resource_bytes = resource_path.read_bytes() if resource_path.exists() else b""
     oom_path = run_dir / "docker-oom-events.jsonl"
     oom_bytes = oom_path.read_bytes() if oom_path.exists() else b""
+    memory_path = run_dir / "memory-watch.jsonl"
+    memory_bytes = memory_path.read_bytes() if memory_path.exists() else b""
     files = {
         "trials.jsonl": _jsonl([row.to_row() for row in rows]),
         "proxy-requests.jsonl.gz": _gzip(_jsonl(merged_requests(ledger_rows))),
         "resource-stats.jsonl.gz": _gzip(resource_bytes),
         "docker-oom-events.jsonl": oom_bytes,
+        "memory-watch.jsonl": memory_bytes,
         "run-events.jsonl": events_bytes,
         "run-metadata.json": metadata_bytes,
         "report.md": (report + "\n").encode("utf-8"),

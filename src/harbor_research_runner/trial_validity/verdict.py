@@ -7,6 +7,10 @@ from harbor_research_runner.trial_validity.phase_table import failed_phase
 from harbor_research_runner.trial_validity.upstream import upstream_reason
 
 
+def compose_project(trial: str) -> str:
+    return f"{trial.lower()}__env"
+
+
 @dataclass(frozen=True)
 class TrialFacts:
     trial: str
@@ -29,6 +33,7 @@ class Verdict:
     labels: tuple[str, ...]
     measured: bool
     unmeasured_reason: str | None
+    oom_source: str | None = None
 
 
 def _valid(row: dict) -> bool:
@@ -221,6 +226,7 @@ def judge_trial(
     limits: Limits,
     earlier_set_aside_reasons: tuple[str, ...],
     oom_events: list[dict] | tuple[()] = (),
+    memory_watch_events: list[dict] | tuple[()] = (),
 ) -> Verdict:
     """Decide one trial's validity, applying rules 1 to 11 in order."""
     phase = failed_phase(facts)
@@ -233,21 +239,38 @@ def judge_trial(
         if facts.phase_started.get("verifier") is not None
         else facts.phase_finished.get("agent")
     )
-    oom_project = f"{facts.trial.lower()}__env"
-    oom_killed = any(
-        event.get("Actor", {}).get("Attributes", {}).get("com.docker.compose.project")
-        == oom_project
-        and isinstance(event.get("timeNano"), (int, float))
-        and not isinstance(event.get("timeNano"), bool)
-        and start is not None
-        and end is not None
-        and start <= event["timeNano"] / 1_000_000_000 <= end
-        for event in oom_events
-        if isinstance(event, dict)
-    )
+    oom_project = compose_project(facts.trial)
+    oom_sources = []
+    if start is not None and end is not None:
+        for event in oom_events:
+            if not isinstance(event, dict):
+                continue
+            event_time = event.get("timeNano")
+            project = event.get("Actor", {}).get("Attributes", {}).get("com.docker.compose.project")
+            if (
+                project == oom_project
+                and isinstance(event_time, (int, float))
+                and not isinstance(event_time, bool)
+            ):
+                timestamp = event_time / 1_000_000_000
+                if start <= timestamp <= end:
+                    oom_sources.append((timestamp, "kernel"))
+        for event in memory_watch_events:
+            if (
+                isinstance(event, dict)
+                and event.get("type") == "kill"
+                and event.get("location") == "harbor-job"
+                and event.get("trial") == facts.trial
+                and isinstance(event.get("t"), (int, float))
+                and not isinstance(event.get("t"), bool)
+                and start <= event["t"] <= end
+            ):
+                oom_sources.append((float(event["t"]), "watchdog"))
+    oom_source = min(oom_sources)[1] if oom_sources else None
+    oom_killed = oom_source is not None
 
     def invalid(reason: str, instrument: str) -> Verdict:
-        return Verdict(False, reason, instrument, (), measured, unmeasured_reason)
+        return Verdict(False, reason, instrument, (), measured, unmeasured_reason, None)
 
     if not facts.has_result:
         return invalid("never_finished", "harbor")
@@ -265,6 +288,7 @@ def judge_trial(
             _labels(facts, phase, trial_rows, True, False),
             measured,
             unmeasured_reason,
+            None,
         )
     if _host_fault(facts, resource_rows, limits):
         return invalid("host_fault", "host")
@@ -281,4 +305,5 @@ def judge_trial(
         _labels(facts, phase, trial_rows, False, oom_killed),
         measured,
         unmeasured_reason,
+        oom_source,
     )

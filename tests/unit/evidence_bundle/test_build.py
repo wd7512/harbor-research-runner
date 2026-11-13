@@ -50,6 +50,16 @@ def test_build_copies_docker_oom_events(tmp_path: Path) -> None:
     assert (output / "docker-oom-events.jsonl").read_bytes() == events
 
 
+def test_build_copies_memory_watch(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    samples = b'{"type":"sample","trial":"trial-a"}\n'
+    (run_dir / "memory-watch.jsonl").write_bytes(samples)
+    output = tmp_path / "bundle"
+
+    assert build(run_dir, output, {}) == 0
+    assert (output / "memory-watch.jsonl").read_bytes() == samples
+
+
 def test_merged_requests_keeps_a_start_without_an_end() -> None:
     rows = merged_requests(
         [

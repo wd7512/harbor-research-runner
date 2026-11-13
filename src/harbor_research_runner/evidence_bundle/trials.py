@@ -25,6 +25,26 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
         if row.get("type") == "trial_verdict"
     }
     ledger_rows = read_rows(run_dir / "proxy-ledger.jsonl").rows
+    memory_path = run_dir / "memory-watch.jsonl"
+    memory_rows = read_rows(memory_path).rows if memory_path.exists() else []
+    memory_peaks = {}
+    memory_limits = {}
+    for sample in memory_rows:
+        trial = sample.get("trial")
+        location = sample.get("location")
+        if not isinstance(trial, str) or location not in {"harbor-job", "canary-job"}:
+            continue
+        key = (location, trial)
+        limit_mb = sample.get("limit_mb")
+        if isinstance(limit_mb, int) or limit_mb is None:
+            memory_limits[key] = limit_mb
+        if sample.get("type") != "sample":
+            continue
+        used_mb = sample.get("used_mb")
+        if isinstance(used_mb, (int, float)) and not isinstance(used_mb, bool):
+            memory_peaks[key] = max(memory_peaks.get(key, float("-inf")), used_mb)
+    machine_check = json.loads((run_dir / "machine-check.json").read_text(encoding="utf-8"))
+    task_memory = {row["name"]: row.get("memory_mb") for row in machine_check["tasks"]}
     candidates: list[tuple[TrialRow, float]] = []
     for location in ("harbor-job", "set-aside-trials", "canary-job"):
         for trial_dir in trial_folders(run_dir / location):
@@ -80,6 +100,13 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 labels=verdict["labels"],
                 measured=verdict["measured"],
                 unmeasured_reason=verdict["unmeasured_reason"],
+                oom_source=verdict.get("oom_source"),
+                peak_memory_mb=memory_peaks.get((location, facts.trial)),
+                memory_limit_mb=(
+                    memory_limits.get((location, facts.trial))
+                    if location == "canary-job"
+                    else task_memory.get(facts.task)
+                ),
                 requests=len(ends),
                 error_requests=sum(row["upstream_status"] in COUNTS_AGAINST_TRIAL for row in ends),
                 refused_requests=sum(row.get("type") == "refused" for row in trial_ledger),
