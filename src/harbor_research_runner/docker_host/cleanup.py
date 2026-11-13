@@ -14,6 +14,7 @@ from harbor_research_runner.docker_host.host_lock import (
     HostLockUnavailable,
     HostLockUnsupported,
 )
+from harbor_research_runner.docker_host.processes import pids_naming_run
 from harbor_research_runner.records.jsonl import read_rows
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,7 @@ def clean(
     lock: HostLock,
     run: Callable = subprocess.run,
     runs_dir: Path | None = None,
+    processes: Callable[[Path], list[int]] = pids_naming_run,
 ) -> Report:
     if not apply:
         return _report(_planned(inventory(run), None, run))
@@ -236,13 +238,16 @@ def clean(
             try:
                 lock.acquire()
             except HostLockUnavailable as exc:
-                holder = live_run(runs_dir) if runs_dir is not None else None
+                holder = live_run(runs_dir, processes=processes) if runs_dir is not None else None
                 identity = holder if holder is not None else str(lock.path)
                 raise RunActive(
                     f"refusing Docker cleanup: host lock is held by {identity}"
                 ) from exc
             except HostLockUnsupported:
                 raise
+        holder = live_run(runs_dir, processes=processes) if runs_dir is not None else None
+        if holder is not None:
+            raise RunActive(f"refusing Docker cleanup: run {holder} is active")
         return _remove(_planned(inventory(run), None, run), run)
     finally:
         if acquired and lock.held:
@@ -307,6 +312,7 @@ def _default_pid_alive(pid: int) -> bool:
 def live_run(
     runs_dir: Path,
     pid_alive: Callable[[int], bool] = _default_pid_alive,
+    processes: Callable[[Path], list[int]] = pids_naming_run,
 ) -> str | None:
     try:
         run_dirs = sorted(path for path in runs_dir.iterdir() if path.is_dir())
@@ -315,6 +321,11 @@ def live_run(
     except OSError:
         return "unknown"
     for run_dir in run_dirs:
+        try:
+            if processes(run_dir):
+                return run_dir.name
+        except Exception:
+            return "unknown"
         path = run_dir / "run-events.jsonl"
         try:
             events = read_rows(path)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import stat
 import subprocess
 import time
@@ -9,7 +10,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from harbor_research_runner.docker_host.processes import pids_naming_run
 from harbor_research_runner.records.jsonl import read_rows
+from harbor_research_runner.run.process_group import HARBOR_STOP_GRACE_S
 
 pytestmark = pytest.mark.timeout(300)
 
@@ -129,6 +132,43 @@ def test_killed_runner_resume_sets_aside_unfinished_trial_and_reruns_slot(e2e_ru
         and (e2e_run.run_dir / "harbor-job" / row["trial"]).is_dir()
     ]
     assert len(valid) == 2
+
+
+@pytest.mark.parametrize(
+    "e2e_run",
+    [{"repetitions": 2, "fake": {"sleep_s": 10}}],
+    indirect=True,
+)
+def test_runner_only_death_stops_harbor_before_cleanup_and_resume(e2e_run) -> None:
+    e2e_run.start()
+    e2e_run.wait_for_main_trial()
+    e2e_run.kill_runner_only()
+
+    deadline = time.monotonic() + HARBOR_STOP_GRACE_S + 5
+    while pids_naming_run(e2e_run.run_dir) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert not pids_naming_run(e2e_run.run_dir)
+
+    cleaned = e2e_run.clean_docker(apply=True)
+    assert cleaned.returncode == 0, cleaned.stdout + cleaned.stderr
+    e2e_run.start(resume=True)
+    resumed = e2e_run.wait()
+    assert resumed.returncode == 0, resumed.stdout
+
+    evidence_rows = read_rows(e2e_run.evidence_dir / e2e_run.run_id / "trials.jsonl").rows
+    metadata = json.loads((e2e_run.run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+    final_rows = [row for row in evidence_rows if row["is_final"]]
+    for task in metadata["task_set"]["tasks"]:
+        for arm in metadata["arms"]:
+            slot_trials = [
+                row
+                for row in final_rows
+                if row["task"] == task["name"] and row["arm"] == arm["label"]
+            ]
+            assert len(slot_trials) == metadata["job"]["repetitions"]
+            assert all(row["valid"] and row["measured"] for row in slot_trials)
+    trial_ids = [row["trial"] for row in evidence_rows]
+    assert len(trial_ids) == len(set(trial_ids))
 
 
 @pytest.mark.parametrize(

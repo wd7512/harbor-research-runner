@@ -13,6 +13,7 @@ from harbor_research_runner.docker_host.host_lock import (
     HostLockUnavailable,
     HostLockUnsupported,
 )
+from harbor_research_runner.docker_host.processes import pids_naming_run
 from harbor_research_runner.harness.manifest import ImageEntry, ManifestError, verify_arm
 from harbor_research_runner.harness.request_path import request_path
 from harbor_research_runner.job_config.job_file import Job
@@ -46,6 +47,7 @@ class CheckDeps:
     host_fingerprint: Callable[[], str]
     harbor_version: Callable[[], str]
     bind_port: Callable[[str, int], None] = _bind_port
+    processes: Callable[[Path], list[int]] = pids_naming_run
 
 
 def _evaluate(name: str, check: Callable[[], tuple[bool, str]]) -> CheckResult:
@@ -101,6 +103,15 @@ def proxy_port_free_check(job: Job, deps: CheckDeps) -> tuple[bool, str]:
     return True, f"proxy port {job.proxy_port} is free"
 
 
+def run_folder_not_live_check(run_dir: Path | None, deps: CheckDeps) -> tuple[bool, str]:
+    if run_dir is None:
+        return True, "new run folder is not live"
+    pids = deps.processes(run_dir)
+    if pids:
+        return False, f"processes name run folder {run_dir}: {', '.join(map(str, pids))}"
+    return True, f"no process names run folder {run_dir}"
+
+
 def machine_check_launch_checks(job: Job, runs_dir: Path, deps: CheckDeps) -> list[CheckResult]:
     return [
         _evaluate("docker_clean", lambda: docker_clean_check(deps)),
@@ -117,6 +128,8 @@ def run_checks(
     runs_dir: Path,
     environment: Mapping[str, str],
     deps: CheckDeps,
+    *,
+    run_dir: Path | None = None,
 ) -> list[CheckResult]:
     try:
         machine_check = deps.read_machine_check(job.machine_check)
@@ -191,6 +204,7 @@ def run_checks(
         _evaluate("arms_pinned", arms_pinned_check),
         _evaluate("docker_clean", lambda: docker_clean_check(deps)),
         _evaluate("proxy_port_free", lambda: proxy_port_free_check(job, deps)),
+        _evaluate("run_folder_not_live", lambda: run_folder_not_live_check(run_dir, deps)),
         _evaluate("single_run", lambda: single_run_check(runs_dir, deps)),
         _evaluate(
             "host_resources",

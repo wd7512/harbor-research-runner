@@ -516,6 +516,24 @@ class E2ERun:
             with suppress(subprocess.TimeoutExpired):
                 self.process.wait(timeout=10)
 
+    def kill_runner_only(self) -> None:
+        runner_pids = [
+            row["pid"]
+            for row in self.events
+            if row.get("type") in {"launch", "resume"} and isinstance(row.get("pid"), int)
+        ]
+        if not runner_pids:
+            raise AssertionError("no runner pid was recorded")
+        os.kill(runner_pids[-1], signal.SIGKILL)
+        if self.process is not None:
+            try:
+                output, _ = self.process.communicate(timeout=10)
+            except subprocess.TimeoutExpired as exc:
+                raise AssertionError("the hrr launcher did not exit after its runner died") from exc
+            self.last_result = subprocess.CompletedProcess(
+                self.process.args, self.process.returncode, output, ""
+            )
+
     def kill_proxy(self) -> None:
         groups = self._process_groups()
         proxy_groups = {

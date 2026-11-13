@@ -116,6 +116,7 @@ def _deps(
     fingerprint: str = "fingerprint",
     harbor_version: str = "0.23.0",
     bind_port=lambda _host, _port: None,
+    processes=lambda _run_dir: [],
 ) -> CheckDeps:
     return CheckDeps(
         select_adapter=select_adapter,
@@ -127,6 +128,7 @@ def _deps(
         host_fingerprint=lambda: fingerprint,
         harbor_version=lambda: harbor_version,
         bind_port=bind_port,
+        processes=processes,
     )
 
 
@@ -138,6 +140,7 @@ def _run(
     manifest: dict[tuple[str, str, str], ImageEntry] | None = None,
     deps: CheckDeps | None = None,
     environment: dict[str, str] | None = None,
+    run_dir: Path | None = None,
     keep_lock: bool = False,
 ) -> list[CheckResult]:
     selected_deps = deps or _deps(tmp_path)
@@ -149,6 +152,7 @@ def _run(
         tmp_path / "runs",
         {"MODEL_KEY": "configured"} if environment is None else environment,
         selected_deps,
+        run_dir=run_dir,
     )
     if selected_deps.host_lock.held and not keep_lock:
         selected_deps.host_lock.release()
@@ -217,6 +221,30 @@ def test_proxy_port_free_is_a_run_check_and_not_a_machine_check(tmp_path: Path) 
 
     assert "proxy_port_free" in {result.name for result in run_results}
     assert "proxy_port_free" not in {result.name for result in machine_results}
+
+
+def test_run_folder_check_fails_with_pids_that_name_the_run(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "study"
+    results = _run(
+        tmp_path,
+        run_dir=run_dir,
+        deps=_deps(tmp_path, processes=lambda path: [123, 456] if path == run_dir else []),
+    )
+    result = _by_name(results, "run_folder_not_live")
+
+    assert not result.ok
+    assert "123" in result.detail
+    assert "456" in result.detail
+
+
+def test_run_folder_check_passes_when_no_process_names_the_run(tmp_path: Path) -> None:
+    results = _run(
+        tmp_path,
+        run_dir=tmp_path / "runs" / "study",
+        deps=_deps(tmp_path, processes=lambda _path: []),
+    )
+
+    assert _by_name(results, "run_folder_not_live").ok
 
 
 @pytest.mark.parametrize("failure", ["unlisted", "wrong-architecture"])
@@ -461,6 +489,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
         "arms_pinned",
         "docker_clean",
         "proxy_port_free",
+        "run_folder_not_live",
         "single_run",
         "host_resources",
         "machine_check_present",

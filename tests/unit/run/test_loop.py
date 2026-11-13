@@ -166,6 +166,10 @@ class Session:
         (run_dir / "run-events.jsonl").touch()
         (run_dir / "harbor-job").mkdir()
 
+    @property
+    def lifeline_read_fd(self) -> int:
+        return 0
+
     def event(self, event) -> None:
         fd = jsonl.open_for_append(self.run_dir / "run-events.jsonl")
         try:
@@ -190,6 +194,9 @@ def dependencies(
     commands: list[list[str]],
     stopped: list[bool],
 ) -> RunDeps:
+    def start_services(session, _restart) -> None:
+        session._lifeline_read_fd = 0
+
     return RunDeps(
         checks=CheckDeps(
             select_adapter=lambda *_args: None,
@@ -200,12 +207,13 @@ def dependencies(
             read_machine_check=lambda _path: None,
             host_fingerprint=lambda: "fingerprint",
             harbor_version=lambda: "0.23.0",
+            processes=lambda _run_dir: [],
         ),
         tool=ToolIdentity("0.1.0", "a" * 40),
         host=lambda: {},
-        start_harbor=lambda argv, _cwd: commands.append(argv) or Process(),
+        start_harbor=lambda argv, _cwd, _lifeline_fd: commands.append(argv) or Process(),
         watch=watch_fn,
-        start_services=lambda _session, _restart: None,
+        start_services=start_services,
         stop_services=lambda _session: stopped.append(True),
         now=lambda: 1.0,
     )
@@ -218,6 +226,9 @@ def _resume_dependencies(
     commands: list[list[str]],
     stopped: list[bool],
 ) -> RunDeps:
+    def start_services(session, _restart) -> None:
+        session._lifeline_read_fd = 0
+
     return RunDeps(
         checks=CheckDeps(
             select_adapter=lambda *_args: object(),
@@ -228,6 +239,7 @@ def _resume_dependencies(
             read_machine_check=lambda _path: machine_check,
             host_fingerprint=lambda: "fingerprint",
             harbor_version=lambda: "0.23.0",
+            processes=lambda _run_dir: [],
         ),
         tool=ToolIdentity("0.1.0", "a" * 40),
         host=lambda: {
@@ -237,9 +249,9 @@ def _resume_dependencies(
             "memory_mb": 32768,
             "docker_version": "27.0.0",
         },
-        start_harbor=lambda argv, _cwd: commands.append(argv) or Process(),
+        start_harbor=lambda argv, _cwd, _lifeline_fd: commands.append(argv) or Process(),
         watch=watch_fn,
-        start_services=lambda _session, _restart: None,
+        start_services=start_services,
         stop_services=lambda _session: stopped.append(True),
         now=lambda: 2.0,
     )
@@ -398,6 +410,7 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
         read_machine_check=lambda _path: machine_check,
         host_fingerprint=lambda: "fingerprint",
         harbor_version=lambda: "0.23.0",
+        processes=lambda _run_dir: [],
     )
     deps = RunDeps(
         checks=checks,
