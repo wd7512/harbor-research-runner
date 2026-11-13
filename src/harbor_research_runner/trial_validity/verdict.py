@@ -189,11 +189,14 @@ def _labels(
     phase: str | None,
     trial_rows: list[dict],
     setup_repeated: bool,
+    oom_killed: bool,
 ) -> tuple[str, ...]:
     labels = []
     if setup_repeated:
         labels.append("harness_could_not_start")
-    if facts.exception_type == "AgentTimeoutError":
+    if oom_killed:
+        labels.append("oom_killed")
+    elif facts.exception_type == "AgentTimeoutError":
         labels.append("timed_out")
     elif phase == "agent" and facts.exception_type is not None:
         labels.append("exit_nonzero")
@@ -217,12 +220,31 @@ def judge_trial(
     resource_rows: list[dict],
     limits: Limits,
     earlier_set_aside_reasons: tuple[str, ...],
+    oom_events: list[dict] | tuple[()] = (),
 ) -> Verdict:
     """Decide one trial's validity, applying rules 1 to 11 in order."""
     phase = failed_phase(facts)
     trial_rows = rows_for_trial(ledger_rows, facts.trial)
     usable_rows = [row for row in trial_rows if _valid(row)]
     measured, unmeasured_reason = _measurement(facts.trial, trial_rows, ledger_problems)
+    start = facts.phase_started.get("agent")
+    end = (
+        facts.phase_finished.get("verifier")
+        if facts.phase_started.get("verifier") is not None
+        else facts.phase_finished.get("agent")
+    )
+    oom_project = f"{facts.trial.lower()}__env"
+    oom_killed = any(
+        event.get("Actor", {}).get("Attributes", {}).get("com.docker.compose.project")
+        == oom_project
+        and isinstance(event.get("timeNano"), (int, float))
+        and not isinstance(event.get("timeNano"), bool)
+        and start is not None
+        and end is not None
+        and start <= event["timeNano"] / 1_000_000_000 <= end
+        for event in oom_events
+        if isinstance(event, dict)
+    )
 
     def invalid(reason: str, instrument: str) -> Verdict:
         return Verdict(False, reason, instrument, (), measured, unmeasured_reason)
@@ -240,7 +262,7 @@ def judge_trial(
             True,
             None,
             None,
-            _labels(facts, phase, trial_rows, True),
+            _labels(facts, phase, trial_rows, True, False),
             measured,
             unmeasured_reason,
         )
@@ -249,14 +271,14 @@ def judge_trial(
     reason = upstream_reason(usable_rows, limits)
     if reason is not None:
         return invalid(reason, "proxy")
-    if facts.reward is None and phase != "verifier":
+    if facts.reward is None and phase != "verifier" and not oom_killed:
         return invalid("no_verdict", "harbor")
 
     return Verdict(
         True,
         None,
         None,
-        _labels(facts, phase, trial_rows, False),
+        _labels(facts, phase, trial_rows, False, oom_killed),
         measured,
         unmeasured_reason,
     )

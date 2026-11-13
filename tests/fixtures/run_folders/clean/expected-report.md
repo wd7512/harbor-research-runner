@@ -57,10 +57,10 @@ Final view; medians are per valid trial.
 
 ## Outcome labels by arm
 
-| Arm | timed_out | exit_nonzero | verifier_failed | harness_could_not_start | no_requests | possible_bypass |
-|---|---:|---:|---:|---:|---:|---:|
-| alpha | 0 | 0 | 0 | 0 | 0 | 0 |
-| beta | 0 | 0 | 0 | 0 | 0 | 0 |
+| Arm | timed_out | exit_nonzero | verifier_failed | harness_could_not_start | no_requests | possible_bypass | oom_killed |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| alpha | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| beta | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## Set-aside trials
 

@@ -1,5 +1,7 @@
 import json
 from dataclasses import replace
+from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -156,7 +158,7 @@ def _write_ledger(tmp_path, entries):
     return read_rows(path)
 
 
-def _judge(facts=None, rows=None, samples=None, earlier=(), problems=None):
+def _judge(facts=None, rows=None, samples=None, earlier=(), problems=None, oom_events=()):
     facts = _facts() if facts is None else facts
     rows = _clean_ledger() if rows is None else rows
     if problems is None:
@@ -168,7 +170,100 @@ def _judge(facts=None, rows=None, samples=None, earlier=(), problems=None):
         [] if samples is None else samples,
         DEFAULT_LIMITS,
         earlier,
+        oom_events,
     )
+
+
+def _fixture_oom_facts(name):
+    fixture = Path(__file__).parents[2] / "fixtures" / "oom" / f"{name}-result.json"
+    result = json.loads(fixture.read_text())
+    phases = {
+        "environment_setup": "environment_setup",
+        "agent_setup": "agent_setup",
+        "agent": "agent_execution",
+        "verifier": "verifier",
+    }
+
+    def stamp(value):
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() if value else None
+
+    return TrialFacts(
+        trial=result["trial_name"],
+        task=result["task_name"],
+        arm="arm",
+        has_result=True,
+        reward=(result.get("verifier_result") or {}).get("rewards", {}).get("reward"),
+        exception_type=(result.get("exception_info") or {}).get("exception_type"),
+        exception_at=stamp((result.get("exception_info") or {}).get("occurred_at")),
+        phase_started={
+            key: stamp(result.get(value, {}).get("started_at")) for key, value in phases.items()
+        },
+        phase_finished={
+            key: stamp(result.get(value, {}).get("finished_at")) for key, value in phases.items()
+        },
+        harbor_reported_tokens=0,
+    )
+
+
+def _fixture_oom_events():
+    path = Path(__file__).parents[2] / "fixtures" / "oom" / "docker-oom-events.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def test_agent_oom_event_labels_valid_reward_one_trial():
+    facts = _fixture_oom_facts("agent")
+    verdict = _judge(facts, oom_events=_fixture_oom_events())
+
+    assert verdict.valid
+    assert verdict.labels == ("oom_killed", "no_requests")
+    assert facts.reward == 1.0
+
+
+def test_verifier_oom_event_labels_valid_zero_reward_trial():
+    facts = _fixture_oom_facts("verifier")
+    verdict = _judge(facts, oom_events=_fixture_oom_events())
+
+    assert verdict.valid
+    assert verdict.labels == ("oom_killed", "verifier_failed", "no_requests")
+    assert facts.reward is None
+
+
+def test_oom_event_outside_window_does_not_label_trial():
+    facts = _facts(exception_type="NonZeroExitError")
+    event = {
+        "Actor": {"Attributes": {"com.docker.compose.project": f"{facts.trial.lower()}__env"}},
+        "timeNano": 1,
+    }
+
+    verdict = _judge(facts, oom_events=[event])
+
+    assert "oom_killed" not in verdict.labels
+
+
+def test_oom_label_takes_precedence_over_agent_exception_label():
+    facts = _facts(exception_type="NonZeroExitError")
+    event = {
+        "Actor": {"Attributes": {"com.docker.compose.project": f"{facts.trial.lower()}__env"}},
+        "timeNano": 4_000_000_000,
+    }
+
+    verdict = _judge(facts, oom_events=[event])
+
+    assert verdict.valid
+    assert "oom_killed" in verdict.labels
+    assert "exit_nonzero" not in verdict.labels
+
+
+def test_oom_event_for_another_trial_does_not_label_trial():
+    facts = _facts(exception_type="NonZeroExitError")
+    event = {
+        "Actor": {"Attributes": {"com.docker.compose.project": "other__env"}},
+        "timeNano": 4_000_000_000,
+    }
+
+    verdict = _judge(facts, oom_events=[event])
+
+    assert "oom_killed" not in verdict.labels
 
 
 def _assert_invalid(verdict, reason, instrument):

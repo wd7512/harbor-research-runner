@@ -35,6 +35,8 @@ def _trial_verdict(
     facts = job_folder.read_trial(trial_dir)
     ledger = ledger_tail.read()
     resources = resource_tail.read()
+    oom_path = session.run_dir / "docker-oom-events.jsonl"
+    oom_events = jsonl.read_rows(oom_path).rows if oom_path.exists() else []
     events = _read_events(session.run_dir)
     earlier = set_aside.earlier_reasons(events, facts.task, facts.arm)
     result = verdict.judge_trial(
@@ -44,6 +46,7 @@ def _trial_verdict(
         resources.rows,
         session.limits,
         earlier,
+        oom_events,
     )
     event = TrialVerdict(
         t=now,
@@ -218,6 +221,7 @@ def _build_snapshot(
         verdicts=verdicts,
         open_trials=len(opens - closed),
         proxy_alive=proxy_alive,
+        oom_watch_alive=session.oom_watch_alive(),
         resource_rows=resources.rows,
         last_activity_t=last_activity,
         longest_agent_budget_s=longest_agent,

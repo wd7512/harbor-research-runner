@@ -16,6 +16,7 @@ LABELS = (
     "harness_could_not_start",
     "no_requests",
     "possible_bypass",
+    "oom_killed",
 )
 VIEWS = (
     ("first_attempt", "First attempt"),

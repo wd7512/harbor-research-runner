@@ -50,6 +50,7 @@ JSONL files contain one UTF-8 JSON object per line. Gzip files are compressed JS
 | `verifier_failed` | The verifier phase failed; this is a valid failure with reward 0. |
 | `no_requests` | The trial has no `request_start` row. |
 | `possible_bypass` | Harbor reports tokens but the proxy has no request end rows. |
+| `oom_killed` | Docker recorded an out-of-memory kill for the trial container during the agent or verifier window. The trial remains a valid failure or pass according to its reward. |
 | `refused_after_close` | The proxy refused one or more requests because the trial was already closed. |
 
-   The report's label summary shows timed out, nonzero exit, verifier failed, harness could not start, no requests, and possible bypass counts. Inspect `trials.jsonl` for any `refused_after_close` labels.
+   The report's label summary shows timed out, nonzero exit, verifier failed, harness could not start, no requests, possible bypass, and OOM-killed counts. Inspect `trials.jsonl` for any `refused_after_close` labels. `docker-oom-events.jsonl` preserves the Docker event stream used for OOM labels.

@@ -38,6 +38,7 @@ def _session(run_dir: Path):
         job=SimpleNamespace(machine_check=run_dir / "machine-check.json"),
         metadata=SimpleNamespace(task_set={"tasks": [{"name": "task-a"}]}),
         proxy_alive=lambda: True,
+        oom_watch_alive=lambda: True,
     )
 
 

@@ -17,6 +17,7 @@ def _session(run_dir: Path):
         run_dir=run_dir,
         limits=Limits(max_set_asides_per_slot=2, verifier_timeout_multiplier=1.0),
         event=lambda event: _append_event(run_dir, event),
+        oom_watch_alive=lambda: True,
     )
 
 
@@ -197,6 +198,7 @@ def _snapshot_session(run_dir: Path, selected_tasks: list[str]):
             task_set={"tasks": [{"name": name, "digest": "sha256:task"} for name in selected_tasks]}
         ),
         limits=Limits(max_set_asides_per_slot=2, verifier_timeout_multiplier=1.0),
+        oom_watch_alive=lambda: True,
     )
 
 

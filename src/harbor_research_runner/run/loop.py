@@ -95,6 +95,7 @@ class RunSession:
         self.tool = tool
         self.manifest_path = manifest_path
         self._sampler: subprocess.Popen | None = None
+        self._oom_watch: subprocess.Popen | None = None
         self._proxy: subprocess.Popen | None = None
         self._lifeline_read_fd: int | None = None
         self._lifeline_write_fd: int | None = None
@@ -214,6 +215,23 @@ class RunSession:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,
             )
+            self._oom_watch = process_group.spawn_group(
+                [
+                    "uv",
+                    "run",
+                    "python",
+                    "-m",
+                    "harbor_research_runner.docker_host.oom_watch",
+                    "--out",
+                    str(self.run_dir / "docker-oom-events.jsonl"),
+                    "--lifeline-fd",
+                    str(read_fd),
+                ],
+                env=environment,
+                pass_fds=(read_fd,),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+            )
             self._proxy = process_group.spawn_group(
                 [
                     "uv",
@@ -254,7 +272,7 @@ class RunSession:
 
     def stop_services(self) -> None:
         try:
-            for name in ("_proxy", "_sampler"):
+            for name in ("_proxy", "_sampler", "_oom_watch"):
                 process = getattr(self, name)
                 if process is not None and process.poll() is None:
                     process_group.stop_group(process, grace_s=15)
@@ -275,6 +293,9 @@ class RunSession:
 
     def proxy_alive(self) -> bool:
         return self._proxy is not None and self._proxy.poll() is None
+
+    def oom_watch_alive(self) -> bool:
+        return self._oom_watch is not None and self._oom_watch.poll() is None
 
 
 def slots_status(
