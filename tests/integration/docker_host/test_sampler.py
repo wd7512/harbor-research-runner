@@ -7,6 +7,15 @@ import time
 from pathlib import Path
 
 
+def _stub_docker_env(tmp_path: Path) -> dict[str, str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    docker.chmod(0o755)
+    return {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
 def test_sampler_writes_complete_rows_until_sigterm(tmp_path: Path) -> None:
     output = tmp_path / "resource-stats.jsonl"
     process = subprocess.Popen(
@@ -21,6 +30,7 @@ def test_sampler_writes_complete_rows_until_sigterm(tmp_path: Path) -> None:
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=_stub_docker_env(tmp_path),
     )
     try:
         deadline = time.monotonic() + 4
@@ -70,6 +80,7 @@ def test_sampler_exits_when_lifeline_closes(tmp_path: Path) -> None:
         pass_fds=(read_fd,),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=_stub_docker_env(tmp_path),
     )
     os.close(read_fd)
     try:
