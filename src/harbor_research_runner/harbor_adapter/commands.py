@@ -31,8 +31,9 @@ def job_config(
 
 def apply_memory_policy(config: dict, memory_cap: str) -> dict:
     if memory_cap == "none":
-        config["memory_enforcement_policy"] = "ignore"
-        config["cpu_enforcement_policy"] = "ignore"
+        environment = config.setdefault("environment", {})
+        environment["memory_enforcement_policy"] = "ignore"
+        environment["cpu_enforcement_policy"] = "ignore"
     elif memory_cap != "kernel":
         raise ValueError(f"unsupported memory cap {memory_cap!r}")
     return config
