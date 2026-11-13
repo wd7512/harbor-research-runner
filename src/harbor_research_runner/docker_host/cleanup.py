@@ -100,6 +100,24 @@ def _error_detail(text: str) -> str:
     return detail
 
 
+def docker_memory_mb(run: Callable = subprocess.run) -> int:
+    try:
+        info = _run_docker(["docker", "info", "--format", "{{.MemTotal}}"], run)
+    except DockerDown as exc:
+        raise DockerDown(f"could not read Docker memory: {exc}") from exc
+    if info.returncode != 0:
+        detail = _error_detail(info.stderr or info.stdout or "docker info failed")
+        raise DockerDown(f"could not read Docker memory: {detail}")
+    value = info.stdout.strip()
+    try:
+        memory_bytes = int(value)
+    except ValueError as exc:
+        raise DockerDown(f"Docker returned an invalid MemTotal value {value!r}") from exc
+    if memory_bytes <= 0:
+        raise DockerDown(f"Docker returned a non-positive MemTotal value {memory_bytes}")
+    return memory_bytes // (1024**2)
+
+
 def inventory(run: Callable = subprocess.run) -> Inventory:
     try:
         info = _run_docker(["docker", "info", "--format", "{{.ServerVersion}}"], run)

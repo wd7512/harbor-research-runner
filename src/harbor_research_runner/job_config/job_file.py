@@ -70,6 +70,7 @@ _LIMITS = {
     "halt_after_consecutive_invalid",
     "zero_billed_window_s",
     "min_spare_memory_mb",
+    "memory_reserve_mb",
     "max_swapped_out_pages",
     "min_free_disk_gb",
     "host_breach_halt_s",

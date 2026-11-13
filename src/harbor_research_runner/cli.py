@@ -89,6 +89,7 @@ def _check_deps() -> CheckDeps:
         read_machine_check=read,
         host_fingerprint=resources.host_fingerprint,
         harbor_version=lambda: version("harbor"),
+        docker_memory_mb=cleanup.docker_memory_mb,
     )
 
 

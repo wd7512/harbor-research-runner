@@ -753,6 +753,7 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
                     {
                         "name": study_task.name,
                         "digest": "0" * 64,
+                        "memory_mb": 512,
                         "oracle_reward": 1.0,
                         "agent_s": 1.0,
                         "agent_budget_s": 120.0,

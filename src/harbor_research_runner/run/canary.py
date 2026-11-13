@@ -1,3 +1,4 @@
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 
@@ -7,6 +8,11 @@ from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.trial_validity.verdict import TrialFacts, Verdict
 
 CANARY_TASK = Path(__file__).parent / "canary_task" / "say-hello"
+
+
+def canary_memory_mb() -> int:
+    data = tomllib.loads((CANARY_TASK / "task.toml").read_text(encoding="utf-8"))
+    return data["environment"]["memory_mb"]
 
 
 def canary_job_config(

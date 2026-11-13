@@ -51,6 +51,14 @@ def test_rejects_obsolete_swap_limit_with_replacement_name(tmp_path: Path) -> No
         load_job(write_job(tmp_path, text))
 
 
+def test_job_accepts_memory_reserve_limit(tmp_path: Path) -> None:
+    text = valid_job().replace("limits: {}", "limits: {memory_reserve_mb: 2048}")
+
+    job = load_job(write_job(tmp_path, text))
+
+    assert job.limit_overrides["memory_reserve_mb"] == 2048
+
+
 @pytest.mark.parametrize("field", ["repetitions", "concurrency"])
 @pytest.mark.parametrize("value", [0, -1, True, 1.5, "2"])
 def test_rejects_invalid_positive_integer(tmp_path: Path, field: str, value: object) -> None:

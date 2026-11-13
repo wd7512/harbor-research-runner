@@ -2,6 +2,9 @@ import json
 from dataclasses import dataclass, field, fields
 from typing import Any, cast
 
+_RETIRED_FIELDS = {"max_swap_used_mb"}
+_ADDED_FIELDS = {"max_swapped_out_pages": 0, "memory_reserve_mb": 4096}
+
 
 @dataclass(frozen=True)
 class Limits:
@@ -14,6 +17,7 @@ class Limits:
     halt_after_consecutive_invalid: int = 5
     zero_billed_window_s: float = 900
     min_spare_memory_mb: int = 2048
+    memory_reserve_mb: int = 4096
     max_swapped_out_pages: int = 0
     min_free_disk_gb: int = 20
     host_breach_halt_s: float = 120
@@ -45,7 +49,8 @@ class Limits:
     @classmethod
     def from_row(cls, row: dict) -> "Limits":
         names = {item.name for item in fields(cls)}
-        row = {key: value for key, value in row.items() if key != "max_swap_used_mb"}
+        row = {key: value for key, value in row.items() if key not in _RETIRED_FIELDS}
+        row = {**_ADDED_FIELDS, **row}
         if set(row) != names:
             raise ValueError("limits fields do not match")
         return cls(**row)

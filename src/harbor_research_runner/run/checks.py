@@ -26,6 +26,7 @@ from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.records.limits import Limits, host_breach
 from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
+from harbor_research_runner.run.canary import canary_memory_mb
 
 
 def _bind_port(host: str, port: int) -> None:
@@ -51,6 +52,7 @@ class CheckDeps:
     read_machine_check: Callable[[Path], MachineCheck]
     host_fingerprint: Callable[[], str]
     harbor_version: Callable[[], str]
+    docker_memory_mb: Callable[[], int]
     bind_port: Callable[[str, int], None] = _bind_port
     processes: Callable[[Path], list[int]] = pids_naming_run
     digest_of: Callable[[str], str | None] = local_image_digest
@@ -213,6 +215,62 @@ def run_checks(
             return False, f"task(s) are not included in the machine check: {', '.join(missing)}"
         return True, "all requested tasks are included in the machine check"
 
+    def memory_fits_check() -> tuple[bool, str]:
+        limits = Limits.from_dict(job.limit_overrides, job.repetitions, 1.0)
+        task_names = resolve_tasks(job, machine_check) if machine_check is not None else []
+        task_memory: dict[str, int | None] = {}
+        for task in machine_check.tasks if machine_check is not None else []:
+            name = task.get("name")
+            value = task.get("memory_mb")
+            if isinstance(name, str):
+                task_memory[name] = (
+                    value if isinstance(value, int) and not isinstance(value, bool) else None
+                )
+        missing: list[str] = []
+        memory_values: list[int] = []
+        for name in task_names:
+            value = task_memory.get(name)
+            if value is None:
+                missing.append(name)
+            else:
+                memory_values.append(value)
+        memory_values.append(canary_memory_mb())
+        max_task_memory = max(memory_values) if not missing else None
+        concurrency = job.concurrency
+        reserve = limits.memory_reserve_mb
+        try:
+            docker_memory = deps.docker_memory_mb()
+        except Exception as exc:
+            detail = (
+                f"concurrency={concurrency}, max_task_memory_mb={max_task_memory}, "
+                f"memory_reserve_mb={reserve}, docker_memory_mb=unavailable; "
+                f"could not read Docker memory: {str(exc) or exc.__class__.__name__}"
+            )
+            return False, detail
+        numbers = (
+            f"concurrency={concurrency}, max_task_memory_mb={max_task_memory}, "
+            f"memory_reserve_mb={reserve}, docker_memory_mb={docker_memory}"
+        )
+        if machine_check is not None and any("memory_mb" not in t for t in machine_check.tasks):
+            return (
+                False,
+                "the machine check predates task memory recording; rerun `hrr check-machine`",
+            )
+        if missing:
+            names = ", ".join(missing)
+            return (
+                False,
+                f"task {names} declares no memory limit; its container would run unbounded; {numbers}",
+            )
+        if machine_check is None:
+            return False, f"machine check is unavailable; {numbers}"
+        if max_task_memory is None:
+            return False, f"task memory could not be determined; {numbers}"
+        required = concurrency * max_task_memory + reserve
+        if required > docker_memory:
+            return False, f"required_memory_mb={required} exceeds Docker memory; {numbers}"
+        return True, f"required_memory_mb={required} fits Docker memory; {numbers}"
+
     return [
         _evaluate("model_card", model_card_check),
         _evaluate("keys_present", keys_present_check),
@@ -232,6 +290,7 @@ def run_checks(
         _evaluate("machine_check_present", machine_check_present_check),
         _evaluate("machine_check_matches", machine_check_matches_check),
         _evaluate("tasks_included", tasks_included_check),
+        _evaluate("memory_fits", memory_fits_check),
     ]
 
 
