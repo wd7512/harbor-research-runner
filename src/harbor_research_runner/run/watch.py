@@ -47,6 +47,9 @@ def _trial_verdict(
         session.limits,
         earlier,
         oom_events,
+        jsonl.read_rows(session.run_dir / "memory-watch.jsonl").rows
+        if (session.run_dir / "memory-watch.jsonl").exists()
+        else [],
     )
     event = TrialVerdict(
         t=now,
@@ -59,6 +62,7 @@ def _trial_verdict(
         labels=list(result.labels),
         measured=result.measured,
         unmeasured_reason=result.unmeasured_reason,
+        oom_source=result.oom_source,
     )
     session.event(event)
     return event.to_row()
@@ -230,6 +234,7 @@ def _build_snapshot(
         open_trials=len(opens - closed),
         proxy_alive=proxy_alive,
         oom_watch_alive=session.oom_watch_alive(),
+        memory_watch_alive=session.memory_watch_alive(),
         resource_rows=resources.rows,
         last_activity_t=last_activity,
         longest_agent_budget_s=longest_agent,

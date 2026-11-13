@@ -3,8 +3,10 @@ from pathlib import Path
 import pytest
 import yaml
 from harbor.models.job.config import JobConfig
+from harbor.models.trial.config import ResourceMode
 
 from harbor_research_runner.harbor_adapter.commands import (
+    apply_memory_policy,
     job_config,
     machine_check_command,
     oracle_job_config,
@@ -138,6 +140,22 @@ def test_job_config_uses_the_given_job_name():
 
     assert config["job_name"] == "custom-job"
     assert JobConfig.model_validate(config).job_name == "custom-job"
+
+
+def test_memory_policy_is_ignored_only_when_host_has_no_memory_cap():
+    config = apply_memory_policy({"job_name": "harbor-job"}, "none")
+
+    environment = JobConfig.model_validate(config).environment
+    assert environment.memory_enforcement_policy == ResourceMode.IGNORE
+    assert environment.cpu_enforcement_policy == ResourceMode.IGNORE
+
+
+def test_kernel_memory_policy_leaves_harbor_defaults_untouched():
+    config = apply_memory_policy({"job_name": "harbor-job"}, "kernel")
+
+    assert config == {"job_name": "harbor-job"}
+    environment = JobConfig.model_validate(config).environment
+    assert environment.memory_enforcement_policy == ResourceMode.AUTO
 
 
 def test_write_job_config_writes_yaml_with_sorted_keys(tmp_path: Path):

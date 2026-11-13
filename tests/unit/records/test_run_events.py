@@ -20,7 +20,7 @@ EVENTS = [
     HarborStart(1.0, 0, "harbor run", "main"),
     HarborExit(1.0, 0, 0, "main"),
     StopLaunchingAt(1.0, 0, "2030-01-01T00:00:00+00:00"),
-    TrialVerdict(1.0, "tr", "task", "arm", True, None, None, [], True, None),
+    TrialVerdict(1.0, "tr", "task", "arm", True, None, None, [], True, None, None),
     SetAside(1.0, "tr", "task", "arm", "bad"),
     Halt(1.0, "inactive", "detail"),
     Resume(1.0, "v", "c", 10),

@@ -158,7 +158,15 @@ def _write_ledger(tmp_path, entries):
     return read_rows(path)
 
 
-def _judge(facts=None, rows=None, samples=None, earlier=(), problems=None, oom_events=()):
+def _judge(
+    facts=None,
+    rows=None,
+    samples=None,
+    earlier=(),
+    problems=None,
+    oom_events=(),
+    memory_watch_events=(),
+):
     facts = _facts() if facts is None else facts
     rows = _clean_ledger() if rows is None else rows
     if problems is None:
@@ -171,6 +179,7 @@ def _judge(facts=None, rows=None, samples=None, earlier=(), problems=None, oom_e
         DEFAULT_LIMITS,
         earlier,
         oom_events,
+        memory_watch_events,
     )
 
 
@@ -216,7 +225,53 @@ def test_agent_oom_event_labels_valid_reward_one_trial():
 
     assert verdict.valid
     assert verdict.labels == ("oom_killed", "no_requests")
+    assert verdict.oom_source == "kernel"
     assert facts.reward == 1.0
+
+
+def test_earlier_watchdog_kill_sets_oom_source_and_precedes_kernel_event():
+    facts = _facts(exception_type="NonZeroExitError")
+    kernel_event = {
+        "Actor": {"Attributes": {"com.docker.compose.project": f"{facts.trial.lower()}__env"}},
+        "timeNano": 5_000_000_000,
+    }
+    watchdog_event = {
+        "type": "kill",
+        "trial": facts.trial,
+        "location": "harbor-job",
+        "t": 4.0,
+        "container": "container-a",
+        "used_mb": 101,
+        "limit_mb": 100,
+        "reader": "proc_rss",
+    }
+
+    verdict = _judge(facts, oom_events=[kernel_event], memory_watch_events=[watchdog_event])
+
+    assert verdict.valid
+    assert "oom_killed" in verdict.labels
+    assert "exit_nonzero" not in verdict.labels
+    assert verdict.oom_source == "watchdog"
+
+
+def test_canary_watchdog_kill_does_not_add_an_oom_label():
+    facts = _facts(exception_type="NonZeroExitError")
+    watchdog_event = {
+        "type": "kill",
+        "trial": facts.trial,
+        "location": "canary-job",
+        "t": 4.0,
+        "container": "container-a",
+        "used_mb": 513,
+        "limit_mb": 512,
+        "reader": "docker_stats",
+    }
+
+    verdict = _judge(facts, memory_watch_events=[watchdog_event])
+
+    assert verdict.valid
+    assert "oom_killed" not in verdict.labels
+    assert verdict.oom_source is None
 
 
 def test_verifier_oom_event_labels_valid_zero_reward_trial():

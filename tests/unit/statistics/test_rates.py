@@ -66,6 +66,7 @@ def _row(
         labels=[],
         measured=True,
         unmeasured_reason=None,
+        oom_source=None,
         requests=1,
         error_requests=0,
         refused_requests=0,
@@ -81,6 +82,8 @@ def _row(
         median_first_content_s=0.2,
         output_rate_tokens_per_s=5.0,
         agent_wall_s=1.0,
+        peak_memory_mb=None,
+        memory_limit_mb=None,
     )
 
 

@@ -9,6 +9,7 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
+from types import SimpleNamespace
 
 from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
 from harbor_research_runner.job_config.model_cards import ModelCard
@@ -53,13 +54,19 @@ def _service_helper(run_dir: Path, port: int, pids_path: Path) -> int:
         job,
         card,
         Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.0),
-        None,
+        SimpleNamespace(host={"host_profile": {"memory_cap": "kernel"}}),
         {},
         ToolIdentity("1.0.0", "a" * 40),
     )
     session.start_services(restart=False)
     pids_path.write_text(
-        json.dumps({"proxy": session._proxy.pid, "sampler": session._sampler.pid}),
+        json.dumps(
+            {
+                "proxy": session._proxy.pid,
+                "sampler": session._sampler.pid,
+                "memory_watch": session._memory_watch.pid,
+            }
+        ),
         encoding="utf-8",
     )
     while True:
@@ -105,7 +112,7 @@ def test_service_process_groups_exit_when_runner_is_killed(tmp_path: Path) -> No
             output = helper.communicate(timeout=2)[0]
             raise AssertionError(f"service helper did not start: {output}")
         process_ids = json.loads(pids_path.read_text(encoding="utf-8"))
-        groups = [process_ids["proxy"], process_ids["sampler"]]
+        groups = [process_ids["proxy"], process_ids["sampler"], process_ids["memory_watch"]]
         helper.send_signal(signal.SIGKILL)
         helper.communicate(timeout=2)
 
