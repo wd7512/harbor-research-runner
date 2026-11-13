@@ -158,7 +158,7 @@ def test_proxy_process_stops_serving_after_ledger_write_failure(proxy):
     assert code == 70
 
 
-@pytest.mark.parametrize("proxy", [{"script": ["slow:5"]}], indirect=True)
+@pytest.mark.parametrize("proxy", [{"script": ["slow:20"]}], indirect=True)
 def test_sigterm_waits_for_stream_to_finish(proxy):
     opened = _post(
         f"{proxy.url}/control/open", {"trial": "trial-1", "task": "task-1", "arm": "arm-1"}
