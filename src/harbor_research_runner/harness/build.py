@@ -98,8 +98,12 @@ def build_command(harness: str, commit: str, arch: str, layout: str) -> list[str
         raise BuildError(f"unsupported architecture {arch!r}; expected 'amd64' or 'arm64'")
     if layout not in _DOCKERFILES:
         raise BuildError(f"unsupported layout {layout!r}; expected 'v1' or 'v2'")
+    return images.build_argv(*_build_args(commit, arch, layout))
+
+
+def _build_args(commit: str, arch: str, layout: str) -> tuple[str, str, str, str, str, str]:
     build_dir = _build_dir()
-    return images.build_argv(
+    return (
         arch,
         _NODE_BASES[arch],
         commit,
@@ -219,17 +223,7 @@ def build(
             )
         layout = layout_for(_archive_listing(archive, run))
 
-        result = _run_docker(
-            lambda: images.build_image(
-                arch,
-                _NODE_BASES[arch],
-                commit,
-                _image_ref(commit, arch),
-                str(_build_dir() / _DOCKERFILES[layout]),
-                str(_build_dir()),
-                run,
-            )
-        )
+        result = _run_docker(lambda: images.build_image(*_build_args(commit, arch, layout), run))
         if result.returncode != 0:
             raise BuildError(
                 f"docker build failed for commit {commit!r} (exit {result.returncode}): "
