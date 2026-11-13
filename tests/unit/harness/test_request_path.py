@@ -21,8 +21,8 @@ def test_request_path_rejects_unknown_harness() -> None:
 def test_opencode_request_path_matches_both_rendered_provider_eras() -> None:
     proxy_url = "http://host.docker.internal:8766/trial/trial-a/v1"
     eras = [
-        HarnessFacts(version="1.0.19", help_text="", era=LEGACY_V1_0),
-        HarnessFacts(version="2.0.32", help_text="", era=V2),
+        HarnessFacts(version="1.0.19", help_text="", era=LEGACY_V1_0, global_help_text=""),
+        HarnessFacts(version="2.0.32", help_text="", era=V2, global_help_text=""),
     ]
 
     assert request_path("opencode") == "/v1/chat/completions"

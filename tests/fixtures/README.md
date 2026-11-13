@@ -12,6 +12,10 @@ Every file in this folder has one line here saying where it came from. No file o
 | `opencode_eras/modern-1.19.3.cmd` | Ported from OLD `tests/fixtures/opencode_eras/modern-1.19.3.cmd`. |
 | `opencode_eras/2x.json` | Ported from OLD `tests/fixtures/opencode_eras/2x.json`; the proxy URL is trial-scoped and the `x-trial-id` header is removed. |
 | `opencode_eras/2x.cmd` | Ported from OLD `tests/fixtures/opencode_eras/2x.cmd`. |
+| `opencode_eras/opencode-1.19.5-global-help.txt` | Captured 13 Nov 2026 from the hrr-built arm64 image of upstream commit `810c0eba1a7348036f8bdf61e6632d0c36c6876c` (v1.19.5), running `/usr/local/bin/opencode --help` with stderr merged. |
+| `opencode_eras/opencode-1.19.5-run-help.txt` | Captured 13 Nov 2026 from the hrr-built arm64 image of upstream commit `810c0eba1a7348036f8bdf61e6632d0c36c6876c` (v1.19.5), running `/usr/local/bin/opencode run --help` with stderr merged. |
+| `opencode_eras/opencode-2.2.7-global-help.txt` | Captured 13 Nov 2026 from the hrr-built arm64 image of upstream commit `fedc6f208aa2bd54c1019227214568083f6380ad` (v2.2.7), running `/usr/local/bin/opencode --help` with stderr merged. |
+| `opencode_eras/opencode-2.2.7-run-help.txt` | Captured 13 Nov 2026 from the hrr-built arm64 image of upstream commit `fedc6f208aa2bd54c1019227214568083f6380ad` (v2.2.7), running `/usr/local/bin/opencode run --help` with stderr merged. |
 | `opencode_build/opencode-1.19.5-listing.txt` | `tar -tzf` archive entries for the public upstream commit `810c0eba1a7348036f8bdf61e6632d0c36c6876c` (v1.19.5) of `https://github.com/anomalyco/opencode`. |
 | `harbor_job/README.md` | Provenance and redaction notes for approved Harbor 0.23.0 samples from the two source runs listed in the file. |
 | `harbor_job/config.json` | Trimmed Harbor job config from the approved 12 Nov 2026 sample; product agent settings substituted as documented in `harbor_job/README.md`. |

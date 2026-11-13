@@ -100,7 +100,12 @@ _GOLDEN_IDS = ["legacy-v1.0", "modern", "modern-1.19.3", "2x"]
 def test_era_config_and_command_match_examples(
     stem: str, version: str, help_text: str, era: str
 ) -> None:
-    facts = HarnessFacts(version=version, help_text=help_text, era=era_for(version))
+    facts = HarnessFacts(
+        version=version,
+        help_text=help_text,
+        era=era_for(version),
+        global_help_text=help_text.split("\n\nopencode run --help", 1)[0],
+    )
 
     assert facts.era == era
     assert config_files(facts, _MODEL, _PROXY_BASE_URL, None) == {
@@ -109,6 +114,50 @@ def test_era_config_and_command_match_examples(
     assert run_command(facts, _MODEL, _INSTRUCTION, None) == (_FIXTURES / f"{stem}.cmd").read_text(
         encoding="utf-8"
     )
+
+
+def test_opencode_227_model_flag_follows_run() -> None:
+    global_help = (_FIXTURES / "opencode-2.2.7-global-help.txt").read_text(encoding="utf-8")
+    run_help = (_FIXTURES / "opencode-2.2.7-run-help.txt").read_text(encoding="utf-8")
+    facts = HarnessFacts(
+        version="2.2.7",
+        help_text=global_help + run_help,
+        era=era_for("2.2.7"),
+        global_help_text=global_help,
+    )
+
+    command = run_command(facts, _MODEL, _INSTRUCTION, None)
+
+    assert "opencode run --model=" in command
+    assert "opencode --model=" not in command
+
+
+def test_opencode_1195_model_flag_precedes_run() -> None:
+    global_help = (_FIXTURES / "opencode-1.19.5-global-help.txt").read_text(encoding="utf-8")
+    run_help = (_FIXTURES / "opencode-1.19.5-run-help.txt").read_text(encoding="utf-8")
+    facts = HarnessFacts(
+        version="1.19.5",
+        help_text=global_help + run_help,
+        era=era_for("1.19.5"),
+        global_help_text=global_help,
+    )
+
+    command = run_command(facts, _MODEL, _INSTRUCTION, None)
+
+    assert "opencode --model=" in command
+    assert " --model=ahe/mimo-v2.5 run " in command
+
+
+def test_old_harness_facts_without_global_help_text_load_with_empty_default(tmp_path: Path) -> None:
+    facts_path = tmp_path / "harness-facts.json"
+    facts_path.write_text(
+        json.dumps({"version": "2.2.7", "help_text": "run help", "era": "v2"}),
+        encoding="utf-8",
+    )
+
+    facts = HarnessFacts(**json.loads(facts_path.read_text(encoding="utf-8")))
+
+    assert facts.global_help_text == ""
 
 
 @pytest.mark.parametrize(
@@ -185,7 +234,12 @@ def test_config_has_no_trial_header() -> None:
 
 
 def test_global_model_flag_places_model_before_run() -> None:
-    facts = HarnessFacts(version="1.18.25", help_text=_HELP_1X, era="modern-v1")
+    facts = HarnessFacts(
+        version="1.18.25",
+        help_text=_HELP_1X,
+        era="modern-v1",
+        global_help_text="opencode --help\n-m, --model  model to use\n",
+    )
 
     command = run_command(facts, _MODEL, _INSTRUCTION, None)
 

@@ -107,7 +107,7 @@ class FakeHarnessAgent(PinnedHarness, BaseInstalledAgent):
         return shlex.join(arguments)
 
     async def probe(self, environment) -> HarnessFacts:
-        return HarnessFacts(version="fake", help_text="", era="fake")
+        return HarnessFacts(version="fake", help_text="", era="fake", global_help_text="")
 
     def process_pattern(self) -> str:
         return _PROCESS_PATTERN
