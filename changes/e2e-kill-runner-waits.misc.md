@@ -1,0 +1,1 @@
+The e2e harness's `kill_runner` now waits, bounded at 20 s, until no process names the run folder. Previously `clean-docker` could race a service watcher that was correctly exiting after its lifeline closed.
