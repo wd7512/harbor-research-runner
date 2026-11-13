@@ -1,0 +1,1 @@
+Model cards for OpenCode Go and OpenRouter list one key variable each (`OPENCODE_GO_API_KEY`, `OPENROUTER_API_KEY`); the second name was an alias in the old tool, but here every listed name is a required failover key, so runs refused unless both were set.
