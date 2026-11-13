@@ -121,7 +121,7 @@ def test_resume_does_not_refuse_itself(tmp_path: Path) -> None:
     assert last_event["tool_commit"] == "a" * 40
 
 
-def test_services_start_stop_and_restart_with_proxy_ledger(tmp_path: Path) -> None:
+def test_services_start_sample_and_stop(tmp_path: Path) -> None:
     upstream = FakeUpstream(["ok"])
     upstream_url = upstream.start()
     session = _session(tmp_path, upstream_url)
@@ -146,6 +146,18 @@ def test_services_start_stop_and_restart_with_proxy_ledger(tmp_path: Path) -> No
 
         assert proxy_process is not None and proxy_process.poll() is not None
         assert sampler_process is not None and sampler_process.poll() is not None
+    finally:
+        session.stop_services()
+        upstream.stop()
+
+
+def test_services_restart_records_both_proxy_starts_in_the_ledger(tmp_path: Path) -> None:
+    upstream = FakeUpstream(["ok"])
+    upstream_url = upstream.start()
+    session = _session(tmp_path, upstream_url)
+    try:
+        session.start_services(restart=False)
+        session.stop_services()
         session.start_services(restart=True)
         session.stop_services()
         ledger = [
