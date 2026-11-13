@@ -8,6 +8,7 @@ import subprocess
 import threading
 from pathlib import Path
 
+from harbor_research_runner.docker_host.lifeline import watch_lifeline
 from harbor_research_runner.records.jsonl import append_row, open_for_append
 
 DOCKER_EVENTS_COMMAND = [
@@ -29,17 +30,6 @@ def append_event_line(fd: int, line: str) -> None:
     append_row(fd, row)
 
 
-def _watch_lifeline(fd: int, stopped: threading.Event) -> None:
-    try:
-        while os.read(fd, 1):
-            pass
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
-        stopped.set()
-
-
 def _pump(stdout, fd: int, failed: threading.Event) -> None:
     try:
         for line in stdout:
@@ -54,7 +44,7 @@ def run_oom_watch(out: Path, lifeline_fd: int | None = None) -> int:
     failed = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopped.set())
     if lifeline_fd is not None:
-        threading.Thread(target=_watch_lifeline, args=(lifeline_fd, stopped), daemon=True).start()
+        threading.Thread(target=watch_lifeline, args=(lifeline_fd, stopped), daemon=True).start()
     out.parent.mkdir(parents=True, exist_ok=True)
     fd = open_for_append(out)
     process = subprocess.Popen(

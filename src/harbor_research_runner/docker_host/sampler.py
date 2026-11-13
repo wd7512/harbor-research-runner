@@ -8,6 +8,7 @@ import threading
 import time
 from pathlib import Path
 
+from harbor_research_runner.docker_host.lifeline import watch_lifeline
 from harbor_research_runner.docker_host.resources import measure
 from harbor_research_runner.records.jsonl import append_row, open_for_append
 from harbor_research_runner.records.resource_stats import Sample
@@ -15,22 +16,11 @@ from harbor_research_runner.records.resource_stats import Sample
 logger = logging.getLogger(__name__)
 
 
-def _watch_lifeline(fd: int, stopped: threading.Event) -> None:
-    try:
-        while os.read(fd, 1):
-            pass
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
-        stopped.set()
-
-
 def run_sampler(out: Path, interval: float, lifeline_fd: int | None = None) -> None:
     stopped = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopped.set())
     if lifeline_fd is not None:
-        threading.Thread(target=_watch_lifeline, args=(lifeline_fd, stopped), daemon=True).start()
+        threading.Thread(target=watch_lifeline, args=(lifeline_fd, stopped), daemon=True).start()
     out.parent.mkdir(parents=True, exist_ok=True)
     fd = open_for_append(out)
     last = Sample(0.0, 0, 0, 0.0, 0.0, 0, False)

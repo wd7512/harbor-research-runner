@@ -9,6 +9,7 @@ from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.run.canary import canary_memory_mb
 from harbor_research_runner.run.memory_watch import (
     kill_decision,
+    run_memory_watch,
     sample_once,
     trial_memory_limits,
 )
@@ -358,3 +359,19 @@ def test_sample_skips_container_when_kill_fails_without_marking_it_killed(tmp_pa
     rows = read_rows(tmp_path / "memory-watch.jsonl").rows
     assert [(row["trial"], row["type"]) for row in rows] == [("trial-healthy", "sample")]
     assert killed == set()
+
+
+def test_watcher_stops_when_the_runner_lifeline_closes(tmp_path: Path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "harbor_research_runner.run.memory_watch.sample_once",
+        lambda *args, **kwargs: calls.append(1),
+    )
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)
+
+    def wait(stopped, timeout):
+        assert stopped.wait(1.0), "watcher did not see the closed lifeline"
+
+    assert run_memory_watch(tmp_path, "kernel", read_fd, wait=wait) == 0
+    assert len(calls) <= 1

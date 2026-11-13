@@ -3,14 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import select
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 
 from harbor_research_runner.docker_host import container_memory
+from harbor_research_runner.docker_host.lifeline import start_lifeline_watch
 from harbor_research_runner.harbor_adapter import job_folder
 from harbor_research_runner.harbor_adapter.folders import HarborFolderError
 from harbor_research_runner.records.jsonl import append_row, open_for_append
@@ -129,24 +130,16 @@ def run_memory_watch(
     lifeline_fd: int | None = None,
     *,
     now: Callable[[], float] = time.time,
-    sleep: Callable[[float], None] = time.sleep,
+    wait: Callable[[threading.Event, float], object] = threading.Event.wait,
 ) -> int:
-    stopped = False
-
-    def stop(*_args) -> None:
-        nonlocal stopped
-        stopped = True
-
-    signal.signal(signal.SIGTERM, stop)
+    stopped = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stopped.set())
+    start_lifeline_watch(lifeline_fd, stopped)
     out_fd = open_for_append(run_dir / "memory-watch.jsonl")
     killed: set[str] = set()
     trial_cache: dict[str, TrialFacts] = {}
     try:
-        while not stopped:
-            if lifeline_fd is not None:
-                readable, _, _ = select.select([lifeline_fd], [], [], 0)
-                if readable and not os.read(lifeline_fd, 1):
-                    break
+        while not stopped.is_set():
             sample_once(
                 run_dir,
                 out_fd,
@@ -155,12 +148,10 @@ def run_memory_watch(
                 killed=killed,
                 trial_cache=trial_cache,
             )
-            sleep(2.0)
+            wait(stopped, 2.0)
         return 0
     finally:
         os.close(out_fd)
-        if lifeline_fd is not None:
-            os.close(lifeline_fd)
 
 
 def main(argv: list[str] | None = None) -> int:
