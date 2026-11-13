@@ -153,6 +153,48 @@ def test_run_folder_finish_clears_owner_write_bit(tmp_path: Path) -> None:
     assert stat.S_IMODE(file_path.stat().st_mode) & stat.S_IWUSR == 0
 
 
+def _chmod_refused_for(monkeypatch: pytest.MonkeyPatch, refused: Path) -> None:
+    real_chmod = Path.chmod
+
+    def chmod(self: Path, mode: int, *, follow_symlinks: bool = True) -> None:
+        if self == refused:
+            raise PermissionError(1, "Operation not permitted", str(self))
+        real_chmod(self, mode, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "chmod", chmod)
+
+
+def test_run_folder_finish_skips_a_file_written_by_a_container_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    run_dir = tmp_path / "run"
+    verifier = run_dir / "harbor-job" / "trial-a" / "verifier"
+    verifier.mkdir(parents=True)
+    foreign = verifier / "reward.txt"
+    foreign.write_text("1", encoding="utf-8")
+    own = run_dir / "run-events.jsonl"
+    own.write_text("{}", encoding="utf-8")
+    _chmod_refused_for(monkeypatch, foreign)
+    monkeypatch.setattr("os.getuid", lambda: foreign.stat().st_uid + 1)
+
+    make_read_only(run_dir)
+
+    assert "harbor-job/trial-a/verifier/reward.txt" in caplog.text
+
+
+def test_run_folder_finish_raises_when_an_owned_file_refuses_chmod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    own = run_dir / "run-events.jsonl"
+    own.write_text("{}", encoding="utf-8")
+    _chmod_refused_for(monkeypatch, own)
+
+    with pytest.raises(PermissionError):
+        make_read_only(run_dir)
+
+
 class Session:
     def __init__(self, run_dir: Path, *, set_aside_limit: int = 2) -> None:
         self.run_dir = run_dir
