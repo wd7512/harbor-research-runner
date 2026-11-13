@@ -369,6 +369,7 @@ class E2ERun:
         job_path: Path | None = None,
         runs_dir: Path | None = None,
         resume: bool = False,
+        stop_launching_at: str | None = None,
     ) -> subprocess.Popen[str]:
         if self.process is not None and self.process.poll() is None:
             raise AssertionError("a runner is already active")
@@ -388,6 +389,8 @@ class E2ERun:
                 str(self.manifest_path),
             ]
         )
+        if stop_launching_at is not None:
+            arguments.extend(["--stop-launching-at", stop_launching_at])
         self.process = subprocess.Popen(
             ["uv", "run", "hrr", *arguments],
             cwd=ROOT,

@@ -9,6 +9,7 @@ from harbor.trial.hooks import TrialEvent
 
 from harbor_research_runner.harbor_adapter.plugin import (
     RunPlugin,
+    StopLaunchingGate,
     spare_is_sufficient,
 )
 from harbor_research_runner.records.limits import Limits
@@ -175,3 +176,31 @@ def test_invalid_launch_min_interval_fails_closed(tmp_path: Path, value: float) 
 def test_run_plugin_rejects_unknown_task_order(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="task_order"):
         _plugin(tmp_path, "fastest_first")
+
+
+def test_stop_launching_gate_passes_before_deadline() -> None:
+    async def run() -> None:
+        async def must_not_sleep(_seconds: float) -> None:
+            raise AssertionError("gate blocked before the deadline")
+
+        gate = StopLaunchingGate(100.0, clock=lambda: 99.0, sleep=must_not_sleep)
+
+        await gate.wait_until_open(trial="trial", task="task")
+
+    asyncio.run(run())
+
+
+def test_stop_launching_gate_waits_after_deadline() -> None:
+    class Blocked(Exception):
+        pass
+
+    async def run() -> None:
+        async def signal_wait(_seconds: float) -> None:
+            raise Blocked
+
+        gate = StopLaunchingGate(100.0, clock=lambda: 100.0, sleep=signal_wait)
+
+        with pytest.raises(Blocked):
+            await gate.wait_until_open(trial="trial", task="task")
+
+    asyncio.run(run())

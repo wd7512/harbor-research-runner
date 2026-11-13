@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
@@ -36,6 +37,18 @@ def _absolute_path(value: str) -> Path:
     return Path(value).resolve()
 
 
+def _stop_launching_at(value: str) -> str:
+    try:
+        deadline = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an ISO-8601 timestamp") from exc
+    if deadline.tzinfo is None or deadline.utcoffset() is None:
+        raise argparse.ArgumentTypeError("must include a timezone")
+    if deadline < datetime.now(UTC):
+        raise argparse.ArgumentTypeError("must not be in the past")
+    return deadline.isoformat()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hrr")
     parser.add_argument("--version", action="version", version=version("harbor-research-runner"))
@@ -61,6 +74,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--evidence-dir", type=_absolute_path, default="evidence")
     run.add_argument("--manifest", type=_absolute_path, default="harness-manifest.toml")
     run.add_argument("--no-evidence", action="store_true")
+    run.add_argument("--stop-launching-at", type=_stop_launching_at)
 
     evidence = commands.add_parser("build-evidence")
     evidence.add_argument("run_id", type=_run_id)
@@ -162,6 +176,7 @@ def _run(args: argparse.Namespace, steps: Steps | None) -> int:
             args.manifest,
             environment,
             _step(steps, "run_deps", _run_deps)(),
+            args.stop_launching_at,
         )
     else:
         runner = _step(steps, "resume_run", loop.resume_run)
@@ -171,6 +186,7 @@ def _run(args: argparse.Namespace, steps: Steps | None) -> int:
             args.manifest,
             environment,
             _step(steps, "run_deps", _run_deps)(),
+            args.stop_launching_at,
         )
     if not args.no_evidence and outcome.exit_code in {0, 3} and outcome.run_dir is not None:
         try:

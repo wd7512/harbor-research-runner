@@ -64,7 +64,7 @@ Unit tests mirror the source path: `src/harbor_research_runner/records/jsonl.py`
 |---|---|---|
 | `hrr build-harness --harness opencode --commit SHA [--arch amd64|arm64]` | Builds the image for one commit and adds it to the commit manifest; `--arch` defaults to the Docker host architecture | 0 ok, 1 failed |
 | `hrr check-machine --job JOB.yaml --out FILE` | Runs the oracle check for the job's task set on this machine | 0 ok, 1 failed |
-| `hrr run JOB.yaml` / `hrr run --resume RUN_ID` | Launches or resumes a run | 0 complete, 1 refused to start or internal error, 2 halted and resumable, 3 finished incomplete |
+| `hrr run JOB.yaml [--stop-launching-at TIME]` / `hrr run --resume RUN_ID [--stop-launching-at TIME]` | Launches or resumes a run | 0 complete, 1 refused to start or internal error, 2 halted and resumable, 3 finished incomplete |
 | `hrr build-evidence RUN_ID` | Builds the evidence bundle from a run folder | 0 ok, 1 failed, 4 secret found (nothing written) |
 | `hrr explore [PATH ...]` | Starts the results explorer over evidence bundles | 0 |
 | `hrr clean-docker [--apply]` | Lists or removes leftover trial containers and networks | 0 clean, 1 residue found (without `--apply`) or refused because the host lock is held or a process names a live run folder (`--apply`) |
@@ -176,6 +176,7 @@ Each row has `t` and `type`:
 | `launch_check` | `name`, `ok`, `detail` |
 | `harbor_start` | `pass` (0 for `harbor run`, then 1, 2, ...), `command`, `job` (`canary` or `main`) |
 | `harbor_exit` | `pass`, `returncode`, `job` |
+| `stop_launching_at` | `pass`, `time` (timezone-aware ISO-8601 timestamp) |
 | `trial_verdict` | `trial`, `task`, `arm`, `valid` (bool), `reason`, `instrument`, `labels` (list), `measured` (bool), `unmeasured_reason` |
 | `set_aside` | `trial`, `task`, `arm`, `reason` |
 | `halt` | `reason`, `detail` |
@@ -320,6 +321,7 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 | `sampler_dead` | no resource sample for 40 seconds |
 | `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit; swap breaches only when pages were swapped out since the previous sample above `max_swapped_out_pages` |
 | `inactive` | no ledger row and no new `result.json` for longer than the largest task agent budget x Harbor's timeout multiplier + the largest verifier budget x `verifier_timeout_multiplier` + `inactivity_margin_s` |
+| `deadline` | the timezone-aware launch deadline plus two watch poll intervals has passed and no trial opened in this pass remains unjudged |
 
 Harbor's exception labels are never an input to a halt rule.
 
@@ -345,10 +347,11 @@ Harbor commands (`harbor_adapter.commands`):
 ```
 uv run harbor run --config <run>/harbor-job-config.yaml --jobs-dir <run> --job-name harbor-job \
    --plugin harbor_research_runner.harbor_adapter.plugin:RunPlugin --pk proxy_url=http://<host>:<port> \
-   --pk limits_file=<run>/proxy-config.json --pk task_order=<as_listed|slowest_first>
+   --pk limits_file=<run>/proxy-config.json --pk task_order=<as_listed|slowest_first> \
+   [--pk stop_launching_at=<timezone-aware ISO-8601 time>]
 uv run harbor jobs resume -p <run>/harbor-job -f hrr-erases-nothing \
    --plugin harbor_research_runner.harbor_adapter.plugin:RunPlugin --pk proxy_url=... --pk limits_file=... \
-   --pk task_order=<as_listed|slowest_first>
+   --pk task_order=<as_listed|slowest_first> [--pk stop_launching_at=<timezone-aware ISO-8601 time>]
 ```
 
 `-f hrr-erases-nothing` matches no real exception type; it disables Harbor's default of deleting `CancelledError` trials on resume. The generated job config and the proxy address never change between passes or across resumes.
@@ -358,7 +361,7 @@ Machine checks run `uv run harbor run --config <check-dir>/<config-name> --jobs-
 The Harbor plugin (`harbor_adapter/plugin.py`), on Harbor's trial events:
 
 - `START`: wait until spare memory is above the limit and `launch_min_interval_s` has passed since the last launch (ported from OLD's launch gate).
-- `AGENT_START`: `POST /control/open` with the trial name, task name and the arm label from the agent's settings.
+- `AGENT_START`: when `stop_launching_at` is set and its time has passed, wait indefinitely before opening the proxy trial; otherwise `POST /control/open` with the trial name, task name and the arm label from the agent's settings.
 - `AGENT_END`: `POST /control/close`. This fires when the agent phase ends for any reason, including Harbor's timeout, and before the verifier starts.
 - `on_job_start`: when `task_order` is `slowest_first`, stably sort Harbor's remaining trial configs by descending agent budget from each task's `task.toml`; ties keep Harbor's order.
 

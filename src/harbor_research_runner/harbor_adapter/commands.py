@@ -84,8 +84,14 @@ def write_job_config(path: Path, config: dict) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def run_command(run_dir: Path, job_name: str, proxy_url: str, task_order: str) -> list[str]:
-    return [
+def run_command(
+    run_dir: Path,
+    job_name: str,
+    proxy_url: str,
+    task_order: str,
+    stop_launching_at: str | None = None,
+) -> list[str]:
+    command = [
         "uv",
         "run",
         "harbor",
@@ -105,10 +111,19 @@ def run_command(run_dir: Path, job_name: str, proxy_url: str, task_order: str) -
         "--pk",
         f"task_order={task_order}",
     ]
+    if stop_launching_at is not None:
+        command.extend(["--pk", f"stop_launching_at={stop_launching_at}"])
+    return command
 
 
-def resume_command(run_dir: Path, job_name: str, proxy_url: str, task_order: str) -> list[str]:
-    return [
+def resume_command(
+    run_dir: Path,
+    job_name: str,
+    proxy_url: str,
+    task_order: str,
+    stop_launching_at: str | None = None,
+) -> list[str]:
+    command = [
         "uv",
         "run",
         "harbor",
@@ -127,3 +142,6 @@ def resume_command(run_dir: Path, job_name: str, proxy_url: str, task_order: str
         "--pk",
         f"task_order={task_order}",
     ]
+    if stop_launching_at is not None:
+        command.extend(["--pk", f"stop_launching_at={stop_launching_at}"])
+    return command

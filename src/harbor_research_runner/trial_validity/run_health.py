@@ -18,6 +18,8 @@ class RunSnapshot:
     longest_agent_budget_s: float
     longest_verifier_budget_s: float
     harbor_timeout_multiplier: float
+    stop_launching_at: float | None = None
+    in_flight_trials: int = 0
 
 
 def inactivity_limit_s(snapshot: RunSnapshot, limits: Limits) -> float:
@@ -70,7 +72,9 @@ def _breach_suffix_start(samples: list[dict], limits: Limits) -> float | None:
     return start
 
 
-def should_halt(snapshot: RunSnapshot, limits: Limits) -> tuple[str, str] | None:
+def should_halt(
+    snapshot: RunSnapshot, limits: Limits, poll_s: float = 5.0
+) -> tuple[str, str] | None:
     """Return the first halt reason and detail the snapshot supports, or None."""
     rows = snapshot.ledger_rows_since_pass_start
 
@@ -128,4 +132,13 @@ def should_halt(snapshot: RunSnapshot, limits: Limits) -> tuple[str, str] | None
     limit = inactivity_limit_s(snapshot, limits)
     if idle > limit:
         return ("inactive", f"no activity for {idle:.0f}s, limit {limit:.0f}s")
+    if (
+        snapshot.stop_launching_at is not None
+        and snapshot.now >= snapshot.stop_launching_at + 2 * poll_s
+        and snapshot.in_flight_trials == 0
+    ):
+        return (
+            "deadline",
+            f"launch deadline passed at {snapshot.stop_launching_at:.3f} with no in-flight trials",
+        )
     return None

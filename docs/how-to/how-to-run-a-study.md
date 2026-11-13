@@ -84,3 +84,25 @@ These steps assume you have a pinned task repository, Docker, and a host suitabl
    ```
 
    Add `--port PORT` to use a different port. Stop the server with Ctrl-C.
+
+## Run across scheduler jobs
+
+Set a timezone-aware stop time early enough that the longest agent budget, its verifier timeout, and teardown can finish before the scheduler's hard end time:
+
+```sh
+uv run hrr run study.yaml --stop-launching-at "$STOP_AT"
+```
+
+Exit code 2 means hrr stopped launching trials and the run is resumable. Reuse the run folder ID and provide that job's stop time on each resume:
+
+```sh
+while true; do
+  uv run hrr run --resume "$RUN_ID" --stop-launching-at "$STOP_AT"
+  status=$?
+  if [ "$status" -ne 2 ]; then
+    exit "$status"
+  fi
+done
+```
+
+For each scheduler job, start or resume with a stop time that leaves room for active trials and cleanup before its hard end.
