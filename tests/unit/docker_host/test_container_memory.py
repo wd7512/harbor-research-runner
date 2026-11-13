@@ -175,3 +175,14 @@ def test_proc_memory_skips_a_child_that_exits_after_its_tasks_were_listed():
 
     assert used_mb == pytest.approx(916 / 1024)
     assert reader == "proc_pss"
+
+
+def test_docker_stats_reader_matches_unfiltered_stats_rows_keyed_by_full_id():
+    stats = (FIXTURES / "docker-stats-all-containers.jsonl").read_text(encoding="utf-8")
+
+    def run(command):
+        return SimpleNamespace(stdout=stats)
+
+    containers = [{"ID": "2abc7dd4e196", "Names": "hrr-fixture-mem"}]
+
+    assert docker_stats_memory(run, containers) == {"2abc7dd4e196": pytest.approx(5.277)}

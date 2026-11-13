@@ -1,0 +1,1 @@
+The memory watchdog now matches `docker stats` rows by full ID, short ID or name. Without a container argument, Docker puts the full ID in `Container`, so on kernel-capped hosts the watcher recorded and enforced nothing.

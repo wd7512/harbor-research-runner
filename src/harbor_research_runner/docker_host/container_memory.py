@@ -114,8 +114,10 @@ def docker_stats_memory(
         if not line:
             continue
         row = json.loads(line)
-        container = row.get("Container") or row.get("Name") or row.get("ID")
-        values[str(container)] = parse_mem_usage(row["MemUsage"])
+        used_mb = parse_mem_usage(row["MemUsage"])
+        for key in ("Container", "ID", "Name"):
+            if row.get(key):
+                values[str(row[key])] = used_mb
     result = {}
     for row in containers:
         container_id = str(row.get("ID", ""))
