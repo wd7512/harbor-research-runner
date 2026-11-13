@@ -44,7 +44,7 @@ class CheckResult:
 @dataclass(frozen=True)
 class CheckDeps:
     select_adapter: Callable[[str, str], object]
-    measure: Callable[[], Sample]
+    measure: Callable[[], tuple[Sample, int]]
     inventory: Callable[[], Inventory]
     live_run: Callable[[Path], str | None]
     host_lock: HostLock
@@ -95,7 +95,7 @@ def single_run_check(runs_dir: Path, deps: CheckDeps) -> tuple[bool, str]:
 
 def host_resources_check(job: Job, deps: CheckDeps, multiplier: float) -> tuple[bool, str]:
     limits = Limits.from_dict(job.limit_overrides, job.repetitions, multiplier)
-    sample = deps.measure()
+    sample, _ = deps.measure()
     if host_breach(sample.to_row(), limits):
         return False, "host resource limits are breached"
     return True, "host resources meet the job limits"

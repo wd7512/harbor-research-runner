@@ -14,7 +14,7 @@ class Limits:
     halt_after_consecutive_invalid: int = 5
     zero_billed_window_s: float = 900
     min_spare_memory_mb: int = 2048
-    max_swap_used_mb: int = 512
+    max_swapped_out_pages: int = 0
     min_free_disk_gb: int = 20
     host_breach_halt_s: float = 120
     launch_min_interval_s: float = 0
@@ -45,6 +45,7 @@ class Limits:
     @classmethod
     def from_row(cls, row: dict) -> "Limits":
         names = {item.name for item in fields(cls)}
+        row = {key: value for key, value in row.items() if key != "max_swap_used_mb"}
         if set(row) != names:
             raise ValueError("limits fields do not match")
         return cls(**row)
@@ -59,7 +60,7 @@ class Limits:
 def host_breach(sample: dict, limits: Limits) -> bool:
     return (
         sample["mem_available_mb"] < limits.min_spare_memory_mb
-        or sample["swap_used_mb"] > limits.max_swap_used_mb
+        or sample.get("swapped_out_pages", 0) > limits.max_swapped_out_pages
         or sample["disk_free_gb"] < limits.min_free_disk_gb
         or not sample["docker_ok"]
     )

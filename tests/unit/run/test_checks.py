@@ -3,11 +3,13 @@ from __future__ import annotations
 import errno
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
+from harbor_research_runner.docker_host.resources import measure as measure_host
 from harbor_research_runner.harness.manifest import ImageEntry
 from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
 from harbor_research_runner.job_config.model_cards import ModelCard
@@ -92,14 +94,14 @@ def _machine_check(
 def _sample(
     *,
     mem_available_mb: int = 4096,
-    swap_used_mb: int = 0,
+    swapped_out_pages: int = 0,
     disk_free_gb: float = 100,
     docker_ok: bool = True,
 ) -> Sample:
     return Sample(
         t=1.0,
         mem_available_mb=mem_available_mb,
-        swap_used_mb=swap_used_mb,
+        swapped_out_pages=swapped_out_pages,
         disk_free_gb=disk_free_gb,
         load1=0.0,
         trial_containers=0,
@@ -110,7 +112,7 @@ def _sample(
 def _deps(
     tmp_path: Path,
     *,
-    measure=lambda: _sample(),
+    measure=lambda: (_sample(), 0),
     inventory=lambda: Inventory(True, "ok", (), (), (), ()),
     live_run=lambda _runs_dir: None,
     host_lock: HostLock | None = None,
@@ -522,7 +524,7 @@ def test_single_run_check_passes_and_keeps_lock_held(tmp_path: Path) -> None:
 
 
 def test_host_resources_check_fails_when_host_breaches_limits(tmp_path: Path) -> None:
-    deps = _deps(tmp_path, measure=lambda: _sample(mem_available_mb=1024))
+    deps = _deps(tmp_path, measure=lambda: (_sample(mem_available_mb=1024), 0))
     result = _by_name(_run(tmp_path, deps=deps), "host_resources")
 
     assert not result.ok
@@ -531,6 +533,32 @@ def test_host_resources_check_fails_when_host_breaches_limits(tmp_path: Path) ->
 
 def test_host_resources_check_passes_when_host_is_within_limits(tmp_path: Path) -> None:
     result = _by_name(_run(tmp_path), "host_resources")
+
+    assert result.ok
+
+
+def test_host_resources_check_ignores_swapouts_before_launch(tmp_path: Path) -> None:
+    vm_stat = (Path(__file__).parents[2] / "fixtures" / "vm_stat-macos.txt").read_text(
+        encoding="utf-8"
+    )
+
+    def run(argv, **kwargs):
+        if argv == ["vm_stat"]:
+            return SimpleNamespace(returncode=0, stdout=vm_stat, stderr="")
+        if argv[:2] == ["docker", "info"]:
+            return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        if argv[:2] == ["docker", "ps"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(argv)
+
+    def read_text(path: Path, **kwargs):
+        raise FileNotFoundError(path)
+
+    deps = _deps(
+        tmp_path,
+        measure=lambda: measure_host(run=run, read_text=read_text, disk_path=tmp_path),
+    )
+    result = _by_name(_run(tmp_path, deps=deps), "host_resources")
 
     assert result.ok
 

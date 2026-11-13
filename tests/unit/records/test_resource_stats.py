@@ -7,7 +7,7 @@ def _sample():
     return Sample(
         t=1.0,
         mem_available_mb=2,
-        swap_used_mb=3,
+        swapped_out_pages=3,
         disk_free_gb=4.0,
         load1=0.5,
         trial_containers=1,
@@ -21,7 +21,9 @@ def test_resource_sample_round_trips():
     assert Sample.from_row(sample.to_row()) == sample
 
 
-@pytest.mark.parametrize("field", list(_sample().to_row()))
+@pytest.mark.parametrize(
+    "field", [field for field in _sample().to_row() if field != "swapped_out_pages"]
+)
 def test_resource_sample_parser_rejects_missing_field(field):
     row = _sample().to_row()
     row.pop(field)
@@ -36,3 +38,11 @@ def test_resource_sample_parser_rejects_unknown_field():
 
     with pytest.raises(ValueError):
         Sample.from_row(row)
+
+
+def test_resource_sample_without_swapouts_defaults_to_zero():
+    row = _sample().to_row()
+    row.pop("swapped_out_pages")
+    row["swap_used_mb"] = 3802
+
+    assert Sample.from_row(row).swapped_out_pages == 0

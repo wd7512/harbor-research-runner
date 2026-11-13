@@ -185,7 +185,7 @@ A `trial_verdict` is written exactly once per trial, by `run`, when the trial ha
 
 ### 4.5 `resource-stats.jsonl`
 
-One row every 10 seconds, `type` = `sample`: `t`, `mem_available_mb`, `swap_used_mb`, `disk_free_gb`, `load1`, `trial_containers`, `docker_ok` (bool).
+One row every 10 seconds, `type` = `sample`: `t`, `mem_available_mb`, `swapped_out_pages`, `disk_free_gb`, `load1`, `trial_containers`, `docker_ok` (bool). `swapped_out_pages` is the increase in the cumulative swap-out counter since the previous sample; the first sample and a counter reset record 0.
 
 ### 4.5a Machine check file (`records/machine_check.py`)
 
@@ -197,7 +197,7 @@ One record, declared in the job file under `limits`, copied into `run-metadata.j
 
 Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_output_rate_min` [2.0 tokens/s], `first_chunk_max_s` [180], `inter_chunk_gap_max_s` [180], `request_latency_max_s` [1200], `halt_after_consecutive_invalid` [5], `zero_billed_window_s` [900].
 
-Host: `min_spare_memory_mb` [2048], `max_swap_used_mb` [512], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0].
+Host: `min_spare_memory_mb` [2048], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` field. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
 
 Run: `max_set_asides_per_slot` [2 x repetitions], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
 
@@ -316,7 +316,7 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 | `zero_billed_window` | at least one trial is open and no `ok` `request_end` row for `zero_billed_window_s` |
 | `proxy_dead` | the proxy process has exited |
 | `sampler_dead` | no resource sample for 40 seconds |
-| `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit |
+| `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit; swap breaches only when pages were swapped out since the previous sample above `max_swapped_out_pages` |
 | `inactive` | no ledger row and no new `result.json` for longer than the largest task agent budget x Harbor's timeout multiplier + the largest verifier budget x `verifier_timeout_multiplier` + `inactivity_margin_s` |
 
 Harbor's exception labels are never an input to a halt rule.

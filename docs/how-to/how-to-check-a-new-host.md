@@ -4,6 +4,8 @@ Run these stages on each host before its first paid study. They use `study.yaml`
 
 ## A. Build each harness image
 
+Require no swap for containers. In Docker Desktop, set Settings → Resources → Advanced → Swap to `0`; on Linux, run with swap off using `swapoff -a`. Record the machine's RAM against the Docker VM's memory. Swap occupied before a run does not matter; only swapping during a trial does.
+
 Run once for every OpenCode commit listed as an arm in `study.yaml`:
 
 ```sh

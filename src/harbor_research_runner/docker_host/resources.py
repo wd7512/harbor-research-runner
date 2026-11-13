@@ -47,14 +47,12 @@ def _parse_memavailable(text: str) -> int:
     raise ValueError("MemAvailable is missing from /proc/meminfo")
 
 
-def _parse_meminfo(text: str) -> tuple[int, int]:
-    values: dict[str, int] = {}
+def _parse_pswpout(text: str) -> int:
     for line in text.splitlines():
-        name, separator, rest = line.partition(":")
-        fields = rest.split()
-        if separator and fields and name in {"SwapTotal", "SwapFree"}:
-            values[name] = int(fields[0])
-    return _parse_memavailable(text), (values["SwapTotal"] - values["SwapFree"]) // 1024
+        name, _, value = line.partition(" ")
+        if name == "pswpout":
+            return int(value)
+    raise ValueError("pswpout is missing from /proc/vmstat")
 
 
 def _parse_vm_stat(text: str, page_size: int | None = None) -> int:
@@ -81,6 +79,20 @@ def _parse_vm_stat(text: str, page_size: int | None = None) -> int:
     if "Pages free" not in pages:
         raise ValueError("Pages free is missing from vm_stat")
     return sum(pages.values()) * page_size // (1024 * 1024)
+
+
+def _parse_swapouts(text: str) -> int:
+    for line in text.splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name.strip() == "Swapouts":
+            return int(value.strip().rstrip("."))
+    raise ValueError("Swapouts is missing from vm_stat")
+
+
+def _swapouts_since(previous: int | None, current: int) -> int:
+    if previous is None or current < previous:
+        return 0
+    return current - previous
 
 
 def spare_memory_mb(
@@ -110,29 +122,22 @@ def _read_host_memory(run: Callable, read_text: Callable) -> tuple[int, int]:
     except FileNotFoundError:
         text = None
     if text is not None:
-        return _parse_meminfo(text)
+        vmstat = read_text(Path("/proc/vmstat"), encoding="utf-8")
+        return _parse_memavailable(text), _parse_pswpout(vmstat)
 
     vm_stat = _run_result(run, ["vm_stat"])
     if vm_stat.returncode != 0:
         raise OSError(f"vm_stat exited {vm_stat.returncode}: {vm_stat.stderr.strip()}")
-    mem_available = _parse_vm_stat(vm_stat.stdout)
-    swap = _run_result(run, ["sysctl", "vm.swapusage"])
-    if swap.returncode != 0:
-        raise OSError(f"sysctl vm.swapusage exited {swap.returncode}: {swap.stderr.strip()}")
-    import re
-
-    match = re.search(r"\bused\s*=\s*([\d.]+)M\b", swap.stdout)
-    if match is None:
-        raise ValueError("sysctl vm.swapusage has no used value")
-    return mem_available, int(float(match.group(1)))
+    return _parse_vm_stat(vm_stat.stdout), _parse_swapouts(vm_stat.stdout)
 
 
 def measure(
+    previous_swapouts: int | None = None,
     run: Callable = subprocess.run,
     read_text: Callable = Path.read_text,
     disk_path: Path = Path("."),
-) -> Sample:
-    mem_available_mb, swap_used_mb = _read_host_memory(run, read_text)
+) -> tuple[Sample, int]:
+    mem_available_mb, current_swapouts = _read_host_memory(run, read_text)
     disk_free_gb = shutil.disk_usage(disk_path).free / (1024**3)
     load1 = os.getloadavg()[0]
     try:
@@ -154,14 +159,17 @@ def measure(
                 )
         except (OSError, subprocess.SubprocessError):
             docker_ok = False
-    return Sample(
-        t=time.time(),
-        mem_available_mb=mem_available_mb,
-        swap_used_mb=swap_used_mb,
-        disk_free_gb=disk_free_gb,
-        load1=load1,
-        trial_containers=trial_containers,
-        docker_ok=docker_ok,
+    return (
+        Sample(
+            t=time.time(),
+            mem_available_mb=mem_available_mb,
+            swapped_out_pages=_swapouts_since(previous_swapouts, current_swapouts),
+            disk_free_gb=disk_free_gb,
+            load1=load1,
+            trial_containers=trial_containers,
+            docker_ok=docker_ok,
+        ),
+        current_swapouts,
     )
 
 

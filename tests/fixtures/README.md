@@ -4,6 +4,8 @@ Every file in this folder has one line here saying where it came from. No file o
 
 | File | Source |
 |---|---|
+| `proc-vmstat-linux.txt` | Whole output of `docker run --rm alpine cat /proc/vmstat` from Docker Desktop's VM, Linux kernel `7.0.12-linuxkit`, captured 13 Nov 2026; `pswpout` is 0. |
+| `vm_stat-macos.txt` | Whole output of `vm_stat` captured on the Mac on 13 Nov 2026. |
 | `opencode_eras/legacy-v1.0.json` | Ported from OLD `tests/fixtures/opencode_eras/legacy-v1.0.json`; the proxy URL is trial-scoped and the `x-trial-id` header is removed. |
 | `opencode_eras/legacy-v1.0.cmd` | Ported from OLD `tests/fixtures/opencode_eras/legacy-v1.0.cmd`. |
 | `opencode_eras/modern.json` | Ported from OLD `tests/fixtures/opencode_eras/modern.json`; the proxy URL is trial-scoped and the `x-trial-id` header is removed. |

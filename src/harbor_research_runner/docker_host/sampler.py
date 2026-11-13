@@ -34,17 +34,18 @@ def run_sampler(out: Path, interval: float, lifeline_fd: int | None = None) -> N
     out.parent.mkdir(parents=True, exist_ok=True)
     fd = open_for_append(out)
     last = Sample(0.0, 0, 0, 0.0, 0.0, 0, False)
+    previous_swapouts = None
     try:
         while not stopped.is_set():
             try:
-                measured = measure()
+                measured, previous_swapouts = measure(previous_swapouts)
                 if measured.docker_ok:
                     last = measured
                 else:
                     last = Sample(
                         t=measured.t,
                         mem_available_mb=last.mem_available_mb,
-                        swap_used_mb=last.swap_used_mb,
+                        swapped_out_pages=measured.swapped_out_pages,
                         disk_free_gb=last.disk_free_gb,
                         load1=last.load1,
                         trial_containers=last.trial_containers,
@@ -55,7 +56,7 @@ def run_sampler(out: Path, interval: float, lifeline_fd: int | None = None) -> N
                 last = Sample(
                     t=time.time(),
                     mem_available_mb=last.mem_available_mb,
-                    swap_used_mb=last.swap_used_mb,
+                    swapped_out_pages=0,
                     disk_free_gb=last.disk_free_gb,
                     load1=last.load1,
                     trial_containers=last.trial_containers,

@@ -1,6 +1,7 @@
 import hashlib
 import os
 import platform
+import re
 import socket
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 from harbor_research_runner.docker_host.resources import (
+    _parse_pswpout,
+    _parse_swapouts,
     host_description,
     host_fingerprint,
     measure,
@@ -154,7 +157,9 @@ def test_measure_reads_linux_meminfo_and_host_metrics(tmp_path: Path) -> None:
 
     def read_text(path: Path, **kwargs) -> str:
         if str(path) == "/proc/meminfo":
-            return "MemAvailable: 8388608 kB\nSwapTotal: 2097152 kB\nSwapFree: 1048576 kB\n"
+            return "MemAvailable: 8388608 kB\n"
+        if str(path) == "/proc/vmstat":
+            return "pswpin 2\npswpout 17\n"
         raise FileNotFoundError(path)
 
     def run(argv, **kwargs):
@@ -169,17 +174,18 @@ def test_measure_reads_linux_meminfo_and_host_metrics(tmp_path: Path) -> None:
             )
         raise AssertionError(argv)
 
-    sample = measure(run=run, read_text=read_text, disk_path=tmp_path)
+    sample, swapouts = measure(run=run, read_text=read_text, disk_path=tmp_path)
 
     assert sample.mem_available_mb == 8192
-    assert sample.swap_used_mb == 1024
+    assert sample.swapped_out_pages == 0
+    assert swapouts == 17
     assert sample.disk_free_gb > 0
     assert sample.trial_containers == 1
     assert sample.docker_ok
     assert all(kwargs["timeout"] == 5 for _, kwargs in calls if _[:2] == ["docker", "info"])
 
 
-def test_measure_uses_macos_vm_stat_and_sysctl_when_proc_is_absent(tmp_path: Path) -> None:
+def test_measure_uses_macos_vm_stat_swapouts_when_proc_is_absent(tmp_path: Path) -> None:
     def read_text(path: Path, **kwargs) -> str:
         raise FileNotFoundError(path)
 
@@ -191,12 +197,9 @@ def test_measure_uses_macos_vm_stat_and_sysctl_when_proc_is_absent(tmp_path: Pat
                     "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n"
                     "Pages free: 1000.\nPages inactive: 2000.\n"
                     "Pages speculative: 500.\nPages purgeable: 250.\n"
+                    "Swapouts: 128.\n"
                 ),
                 stderr="",
-            )
-        if argv == ["sysctl", "vm.swapusage"]:
-            return SimpleNamespace(
-                returncode=0, stdout="total = 1024.00M used = 128.00M free = 896.00M\n", stderr=""
             )
         if argv[:2] == ["docker", "info"]:
             return SimpleNamespace(returncode=0, stdout="ok", stderr="")
@@ -204,23 +207,66 @@ def test_measure_uses_macos_vm_stat_and_sysctl_when_proc_is_absent(tmp_path: Pat
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         raise AssertionError(argv)
 
-    sample = measure(run=run, read_text=read_text, disk_path=tmp_path)
+    sample, swapouts = measure(run=run, read_text=read_text, disk_path=tmp_path)
 
     assert sample.mem_available_mb == ((1000 + 2000 + 500 + 250) * 4096) // (1024 * 1024)
-    assert sample.swap_used_mb == 128
+    assert sample.swapped_out_pages == 0
+    assert swapouts == 128
     assert sample.docker_ok
+
+
+def test_swapout_parsers_read_real_fixtures() -> None:
+    fixtures = Path(__file__).parents[2] / "fixtures"
+    vm_stat = (fixtures / "vm_stat-macos.txt").read_text(encoding="utf-8")
+    vmstat = (fixtures / "proc-vmstat-linux.txt").read_text(encoding="utf-8")
+
+    assert _parse_swapouts(vm_stat) == int(
+        re.search(r"^Swapouts:\s*(\d+)", vm_stat, re.MULTILINE)[1]
+    )
+    assert _parse_pswpout(vmstat) == int(re.search(r"^pswpout\s+(\d+)", vmstat, re.MULTILINE)[1])
+
+
+def test_measure_first_sample_and_interval_swapouts(tmp_path: Path) -> None:
+    counter = 12
+
+    def read_text(path: Path, **kwargs) -> str:
+        if str(path) == "/proc/meminfo":
+            return "MemAvailable: 8388608 kB\n"
+        if str(path) == "/proc/vmstat":
+            return f"pswpout {counter}\n"
+        raise FileNotFoundError(path)
+
+    def run(argv, **kwargs):
+        if argv[:2] == ["docker", "info"]:
+            return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        if argv[:2] == ["docker", "ps"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(argv)
+
+    first, first_counter = measure(None, run, read_text, tmp_path)
+    counter = 15
+    second, second_counter = measure(first_counter, run, read_text, tmp_path)
+    counter = 2
+    reset, reset_counter = measure(second_counter, run, read_text, tmp_path)
+
+    assert first.swapped_out_pages == 0
+    assert second.swapped_out_pages == 3
+    assert reset.swapped_out_pages == 0
+    assert reset_counter == 2
 
 
 def test_docker_down_marks_measurement_unhealthy(tmp_path: Path) -> None:
     def read_text(path: Path, **kwargs) -> str:
         if str(path) == "/proc/meminfo":
             return "MemAvailable: 1024 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n"
+        if str(path) == "/proc/vmstat":
+            return "pswpout 0\n"
         raise FileNotFoundError(path)
 
     def run(argv, **kwargs):
         raise FileNotFoundError("docker")
 
-    sample = measure(run=run, read_text=read_text, disk_path=tmp_path)
+    sample, _ = measure(run=run, read_text=read_text, disk_path=tmp_path)
 
     assert not sample.docker_ok
 
