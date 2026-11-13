@@ -41,6 +41,10 @@ from harbor_research_runner.run.tool_identity import ToolIdentity
 from harbor_research_runner.run.watch import WatchResult
 
 
+def _bind_port(_host: str, _port: int) -> None:
+    return None
+
+
 def verdict(
     trial: str,
     task: str,
@@ -207,6 +211,7 @@ def dependencies(
             read_machine_check=lambda _path: None,
             host_fingerprint=lambda: "fingerprint",
             harbor_version=lambda: "0.23.0",
+            bind_port=_bind_port,
             processes=lambda _run_dir: [],
         ),
         tool=ToolIdentity("0.1.0", "a" * 40),
@@ -239,6 +244,7 @@ def _resume_dependencies(
             read_machine_check=lambda _path: machine_check,
             host_fingerprint=lambda: "fingerprint",
             harbor_version=lambda: "0.23.0",
+            bind_port=_bind_port,
             processes=lambda _run_dir: [],
         ),
         tool=ToolIdentity("0.1.0", "a" * 40),
@@ -410,6 +416,7 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
         read_machine_check=lambda _path: machine_check,
         host_fingerprint=lambda: "fingerprint",
         harbor_version=lambda: "0.23.0",
+        bind_port=_bind_port,
         processes=lambda _run_dir: [],
     )
     deps = RunDeps(

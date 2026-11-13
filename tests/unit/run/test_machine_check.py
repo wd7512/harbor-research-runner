@@ -54,6 +54,7 @@ def _checks(tmp_path: Path) -> CheckDeps:
         read_machine_check=lambda _path: None,
         host_fingerprint=lambda: "fingerprint",
         harbor_version=lambda: "0.23.0",
+        bind_port=lambda _host, _port: None,
     )
 
 
