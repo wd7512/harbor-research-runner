@@ -92,6 +92,7 @@ def _snapshot(**overrides):
         "verdicts": [],
         "open_trials": 0,
         "proxy_alive": True,
+        "oom_watch_alive": True,
         "resource_rows": [_sample(NOW)],
         "last_activity_t": NOW,
         "longest_agent_budget_s": 3600.0,
@@ -112,6 +113,13 @@ def test_healthy_snapshot_does_not_halt():
     rows = [_open(1, NOW - 120), _request_end(2, NOW - 10)]
 
     assert should_halt(_snapshot(ledger_rows_since_pass_start=rows), DEFAULT_LIMITS) is None
+
+
+def test_dead_oom_watcher_halts():
+    assert should_halt(_snapshot(oom_watch_alive=False), DEFAULT_LIMITS) == (
+        "oom_watch_dead",
+        "OOM watcher process exited",
+    )
 
 
 def test_upstream_invalid_streak_halts():

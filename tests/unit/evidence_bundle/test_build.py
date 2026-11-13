@@ -40,6 +40,16 @@ def test_build_is_byte_deterministic_for_both_run_shapes(tmp_path: Path) -> None
         assert (first / "manifest.json").is_file()
 
 
+def test_build_copies_docker_oom_events(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    events = b'{"Type":"container","Action":"oom"}\n'
+    (run_dir / "docker-oom-events.jsonl").write_bytes(events)
+    output = tmp_path / "bundle"
+
+    assert build(run_dir, output, {}) == 0
+    assert (output / "docker-oom-events.jsonl").read_bytes() == events
+
+
 def test_merged_requests_keeps_a_start_without_an_end() -> None:
     rows = merged_requests(
         [

@@ -40,6 +40,9 @@ Every file in this folder has one line here saying where it came from. No file o
 | `harbor_job/task-tomls/break-filter-js-from-html.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/break-filter-js-from-html`. |
 | `harbor_job/task-tomls/git-multibranch.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/git-multibranch`. |
 | `harbor_job/task-tomls/pytorch-model-cli.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/pytorch-model-cli`. |
+| `oom/docker-oom-events.jsonl` | Two real Docker Desktop OOM events from Harbor 0.23.0 oracle trials on 13 Nov 2026; `config_files` and host paths redacted. |
+| `oom/agent-result.json` | Real Harbor 0.23.0 agent-phase OOM trial result from 13 Nov 2026; host paths redacted. |
+| `oom/verifier-result.json` | Real Harbor 0.23.0 verifier-phase OOM trial result from 13 Nov 2026; host paths redacted. |
 
 - `run_folders/`: hand-made compact run-folder samples for `evidence_bundle.trials`, covering a clean two-task/two-arm run and a set-aside, unmeasured, unfinished, and canary trial.
 - `run_folders/{clean,retries}/machine-check.json` and `expected-report.md`: hand-made five-task machine-check records and the resulting evidence report goldens; each includes three tasks and excludes two.

@@ -85,6 +85,7 @@ runs/<run-id>/                         evidence/<run-id>/
   set-aside-trials/<trial>/              report.md
   proxy-config.json
   proxy-ledger.jsonl
+  docker-oom-events.jsonl
   proxy.log
   resource-stats.jsonl
   request-bodies/<trial>.jsonl[.gz]
@@ -315,6 +316,7 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 | `upstream_invalid_streak` | the last `halt_after_consecutive_invalid` trial verdicts all have instrument `proxy` and `valid` false |
 | `zero_billed_window` | at least one trial is open and no `ok` `request_end` row for `zero_billed_window_s` |
 | `proxy_dead` | the proxy process has exited |
+| `oom_watch_dead` | the Docker OOM watcher process has exited |
 | `sampler_dead` | no resource sample for 40 seconds |
 | `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit; swap breaches only when pages were swapped out since the previous sample above `max_swapped_out_pages` |
 | `inactive` | no ledger row and no new `result.json` for longer than the largest task agent budget x Harbor's timeout multiplier + the largest verifier budget x `verifier_timeout_multiplier` + `inactivity_margin_s` |
@@ -324,7 +326,7 @@ Harbor's exception labels are never an input to a halt rule.
 ## 7. The run loop
 
 1. Launch checks (`run/checks.py`): each writes a `launch_check` event; any failure exits 1 before anything is spent. Checks: the job file parses; every arm's commit is in the manifest, is not withdrawn, and its image digest matches the local image; the model card exists and is not withdrawn; every key variable is set; Docker has no residue; host resources are above the limits; concurrent task memory plus `memory_reserve_mb` fits Docker's total memory (`memory_fits`); the machine check file exists and matches (task set, Harbor version, machine fingerprint, concurrency not above the checked value); every requested task is in the machine check's included list; nothing listens on the proxy port (`proxy_port_free`, bound with `SO_REUSEADDR` as the proxy binds); on resume, no process names the run folder (`run_folder_not_live`, with matching pids in the detail); this process holds the host lock (D22). A fresh run has no existing run folder. A refused launch still gets a run folder holding its `launch` and `launch_check` events.
-2. Copy the job's machine-check file to `machine-check.json` (write-once, from the bytes whose sha256 goes into the metadata), then write `run-metadata.json`. Start the resource sampler. Write `proxy-config.json`, start the proxy, wait for `/control/health`. The sampler, proxy and every Harbor guard get the read end of a lifeline pipe whose write end only the runner holds. On EOF (the runner died, including SIGKILL), the services stop through their own SIGTERM path and each guard sends SIGTERM to Harbor, waits the Harbor stop grace, then SIGKILLs its process group if needed. Each guard starts Harbor in its own process group, so the runner's existing group signals still reach Harbor.
+2. Copy the job's machine-check file to `machine-check.json` (write-once, from the bytes whose sha256 goes into the metadata), then write `run-metadata.json`. Start the resource sampler and Docker OOM watcher. Write `proxy-config.json`, start the proxy, wait for `/control/health`. The sampler, OOM watcher, proxy and every Harbor guard get the read end of a lifeline pipe whose write end only the runner holds. On EOF (the runner died, including SIGKILL), the services stop through their own SIGTERM path and each guard sends SIGTERM to Harbor, waits the Harbor stop grace, then SIGKILLs its process group if needed. Each guard starts Harbor in its own process group, so the runner's existing group signals still reach Harbor.
 3. Canary: one Harbor job in `canary-job/` running the bundled task `say-hello` (Harbor selects a local task by its folder name; it records the trial under `[task].name`, `canary/say-hello`) once per arm against the real model. The task lives at `run/canary_task/say-hello/`: its instruction creates `/app/hello.txt` containing `hello`, its environment is `python:3.12-slim` pinned by digest, its agent timeout is 120 s and its verifier timeout is 60 s, and its verifier accepts exactly `hello` or `hello\n`. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
 4. Pass 0: `harbor run` with the generated `harbor-job-config.yaml`.
 5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules.
@@ -418,7 +420,7 @@ built_at = "2026-12-01"
 
 - `trials.jsonl`: section 4.7.
 - `proxy-requests.jsonl.gz`: one row per request, `request_start` and `request_end` merged on `request_id`, sorted by `seq` of the start row; gzip with `mtime=0`.
-- `resource-stats.jsonl.gz`, `run-events.jsonl`, `run-metadata.json`: copied.
+- `resource-stats.jsonl.gz`, `docker-oom-events.jsonl`, `run-events.jsonl`, `run-metadata.json`: copied.
 - `report.md`: generated from `statistics`; `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, and the loaded `MachineCheck` record.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
