@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from harbor_research_runner.docker_host import images
+
 
 class ManifestError(ValueError):
     pass
@@ -126,12 +128,7 @@ def local_image_digest(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> str | None:
     try:
-        result = run(
-            ["docker", "image", "inspect", "--format", "{{.Id}}", ref],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = images.image_digest(ref, run)
     except (OSError, subprocess.SubprocessError):
         return None
     digest = result.stdout.strip()
@@ -248,12 +245,7 @@ def host_arch(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> str:
     try:
-        result = run(
-            ["docker", "info", "--format", "{{.Architecture}}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = images.host_architecture(run)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ManifestError(f"could not determine Docker host architecture: {exc}") from exc
     if result.returncode != 0:
@@ -270,12 +262,7 @@ def local_image_arch(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> str:
     try:
-        result = run(
-            ["docker", "image", "inspect", "--format", "{{.Architecture}}", ref],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = images.image_architecture(ref, run)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ManifestError(f"could not inspect local image {ref!r}: {exc}") from exc
     if result.returncode != 0:

@@ -28,6 +28,12 @@ def test_checker_allows_run_to_import_harness() -> None:
     assert not _violations("run/checks.py", "from harbor_research_runner.harness import manifest")
 
 
+def test_checker_allows_harness_to_import_docker_host() -> None:
+    assert not _violations(
+        "harness/build.py", "from harbor_research_runner.docker_host import images"
+    )
+
+
 def test_checker_allows_harbor_adapter_to_import_trial_validity() -> None:
     assert not _violations(
         "harbor_adapter/job_folder.py",
