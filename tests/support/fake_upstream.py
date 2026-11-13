@@ -37,13 +37,19 @@ class RawResponse:
 
 
 class FakeUpstream:
-    def __init__(self, script: list[str | RawResponse], model: str = "fake-model") -> None:
+    def __init__(
+        self,
+        script: list[str | RawResponse],
+        model: str = "fake-model",
+        required_header: str | None = None,
+    ) -> None:
         if not script:
             raise ValueError("empty script")
         for entry in script:
             self._validate_entry(entry)
         self.script = script
         self.model = model
+        self.required_header = required_header
         self.requests: list[dict[str, Any]] = []
         self._server: _FakeUpstreamServer | None = None
         self._thread: Thread | None = None
@@ -141,6 +147,21 @@ class FakeUpstream:
     ) -> None:
         if handler.path not in ("/v1/chat/completions", "/v1/responses"):
             self._send_json(handler, 404, {"error": {"message": "not found"}})
+            return
+        if self.required_header is not None and self.required_header.lower() not in {
+            name.lower() for name in handler.headers
+        }:
+            self._send_json(
+                handler,
+                400,
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "MissingSessionID",
+                        "message": "Request is missing x-opencode-session and cannot be routed efficiently. Please see https://opencode.ai/v2/docs/console/go/#where-can-i-use ...",
+                    },
+                },
+            )
             return
         if isinstance(entry, RawResponse):
             self._respond_raw(handler, entry)

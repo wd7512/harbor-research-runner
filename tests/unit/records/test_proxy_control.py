@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from harbor_research_runner.records.proxy_control import (
@@ -6,6 +8,7 @@ from harbor_research_runner.records.proxy_control import (
     OpenMessage,
     ProxyConfig,
     read,
+    session_id_for_run,
     trial_base_url,
     trial_from_path,
     write,
@@ -92,3 +95,26 @@ def test_proxy_config_write_and_read(tmp_path):
 
     write(path, config)
     assert read(path) == config
+
+
+def test_proxy_session_id_is_stable_for_a_run_folder():
+    run_folder_name = "rehearsal-pilot-20261113T142740931165Z"
+    first = session_id_for_run(run_folder_name)
+    second = session_id_for_run(run_folder_name)
+
+    assert first == second
+    assert first == uuid.uuid5(uuid.NAMESPACE_URL, "hrr-run:" + run_folder_name).hex
+
+
+def test_proxy_config_rejects_missing_required_session_id():
+    with pytest.raises(ValueError, match="session_id"):
+        ProxyConfig(
+            host="localhost",
+            port=8766,
+            ledger_path="ledger",
+            bodies_dir=None,
+            model={"request": {"session_header": "x-opencode-session"}},
+            limits={},
+            restart_cooldown_s=0.0,
+            session_id="",
+        )

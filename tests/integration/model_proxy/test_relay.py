@@ -206,6 +206,51 @@ def test_relay_without_request_shaping_preserves_outbound_bytes(tmp_path):
     }
 
 
+def test_opencode_go_session_header_reaches_upstream(tmp_path):
+    card = {
+        **_CARD,
+        "request": {
+            "headers": {"User-Agent": "OpenAI/Python 1.x"},
+            "session_header": "x-opencode-session",
+        },
+    }
+    upstream = FakeUpstream(["ok"], model="served-model", required_header="x-opencode-session")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(tmp_path, base_url, card=card)
+    deps.session_id = "run-session-id"
+    try:
+        response = relay(_request_body(True), {}, "trial-go", deps, ChatAdapter())
+        assert response.http_status == 200
+        b"".join(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    assert upstream.requests[0]["headers"]["x-opencode-session"] == "run-session-id"
+    assert upstream.requests[0]["headers"]["user-agent"] == "OpenAI/Python 1.x"
+
+
+def test_card_without_session_header_does_not_leak_a_session_id(tmp_path):
+    upstream = FakeUpstream(["ok"], model="served-model")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(
+        tmp_path,
+        base_url,
+        card={**_CARD, "request": {"headers": {"X-Title": "example"}}},
+    )
+    deps.session_id = "run-session-id"
+    try:
+        response = relay(_request_body(True), {}, "trial", deps, ChatAdapter())
+        b"".join(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    assert "x-opencode-session" not in upstream.requests[0]["headers"]
+
+
 def test_relay_pacing_estimate_uses_card_cap_without_payload_limit(tmp_path):
     class Clock:
         value = 0.0

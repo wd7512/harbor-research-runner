@@ -17,5 +17,11 @@
   "variants": {},
   "default_variant": null,
   "withdrawn": false,
-  "reason": null
+  "reason": null,
+  "request": {
+    "headers": {
+      "HTTP-Referer": "https://github.com/wd7512/harbor-research-runner",
+      "X-Title": "harbor-research-runner"
+    }
+  }
 }

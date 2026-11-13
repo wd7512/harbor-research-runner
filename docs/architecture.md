@@ -155,7 +155,7 @@ The harness reaches the model at `http://<host>:<port>/trial/<trial>/v1/...`. `<
 
 A request for a trial that is not open gets HTTP 410 with body `{"error": {"message": "trial closed", "type": "trial_closed"}}`. The words `rate limit`, `too many requests`, `quota`, `usage limit` and `credits` must not appear in any proxy-generated error body (Harbor matches those in agent output).
 
-`proxy-config.json` fields: `host`, `port`, `ledger_path`, `bodies_dir` (or null), `model` (the model card, embedded), `limits` (section 4.6), `restart_cooldown_s`.
+`proxy-config.json` fields: `host`, `port`, `ledger_path`, `bodies_dir` (or null), `model` (the model card, embedded), `limits` (section 4.6), `restart_cooldown_s`, `session_id`. The runner derives `session_id` as `uuid.uuid5(uuid.NAMESPACE_URL, "hrr-run:" + run_folder_name).hex`, so it is stable across resume and proxy restart.
 
 ### 4.3 `run-metadata.json`
 
@@ -249,7 +249,7 @@ An arm with `harness: fake` may carry one opaque `fake` mapping. The fake harnes
 
 A slot is a (task, arm) pair. Each slot needs `repetitions` valid, measured trials.
 
-A model card (`job_config/model_cards/<provider>/<model>.json`) has: `id`, `upstream_model` (the exact identifier sent upstream and expected back), `api` (`chat` or `responses`), `endpoints` (list of base URLs), `key_env` (list of environment variable names), `tokens_per_minute`, `pricing` (`input`, `output`, `cached_read` per million tokens), `variants` (nonempty string ids mapped to nonempty settings dictionaries), `default_variant` (optional, null by default; when set, a string naming a declared variant), `withdrawn` (bool, with `reason`), and an optional `request` object with `drop_message_fields` (list of non-empty strings) and `max_tokens_cap` (positive integer or null). The proxy applies request shaping once, after `build_request` and before pacing. Secrets are read from the environment only and are never written to any file.
+A model card (`job_config/model_cards/<provider>/<model>.json`) has: `id`, `upstream_model` (the exact identifier sent upstream and expected back), `api` (`chat` or `responses`), `endpoints` (list of base URLs), `key_env` (list of environment variable names), `tokens_per_minute`, `pricing` (`input`, `output`, `cached_read` per million tokens), `variants` (nonempty string ids mapped to nonempty settings dictionaries), `default_variant` (optional, null by default; when set, a string naming a declared variant), `withdrawn` (bool, with `reason`), and an optional `request` object with `drop_message_fields` (list of non-empty strings), `max_tokens_cap` (positive integer or null), `headers` (header names mapped to fixed non-empty string values), and `session_header` (a non-empty header name or null). `headers` cannot set `authorization`, `content-type`, or the declared session header, case-insensitively. The proxy applies request shaping once, after `build_request` and before pacing; upstream headers are assembled from the card and route key. A session header uses the stable per-run `session_id` from the proxy config, and the proxy refuses to start if it is absent. Secrets are read from the environment only and are never written to any file.
 
 ## 6. Trial validity
 

@@ -56,6 +56,7 @@ class RelayDeps:
     now: Callable[[], float] = time.monotonic
     pacer: Pacer | None = None
     bodies: BodyStore | None = None
+    session_id: str = ""
 
 
 @dataclass
@@ -99,6 +100,18 @@ class _Cut(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+def _upstream_headers(model: dict, route: Route, session_id: str) -> dict[str, str]:
+    request = model.get("request") or {}
+    headers = {"content-type": "application/json"}
+    headers.update(request.get("headers") or {})
+    session_header = request.get("session_header")
+    if session_header:
+        headers[session_header] = session_id
+    if route.key is not None:
+        headers["authorization"] = f"Bearer {route.key}"
+    return headers
 
 
 class _Transport(Exception):
@@ -430,9 +443,7 @@ def relay(
             _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
         )
     for failovers, route in enumerate(routes):
-        upstream_headers = {"content-type": "application/json"}
-        if route.key is not None:
-            upstream_headers["authorization"] = f"Bearer {route.key}"
+        upstream_headers = _upstream_headers(deps.model, route, deps.session_id)
         request = deps.client.build_request(
             "POST",
             route.endpoint,

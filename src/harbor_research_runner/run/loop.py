@@ -22,7 +22,7 @@ from harbor_research_runner.job_config.model_cards import ModelCard, load_card
 from harbor_research_runner.records import jsonl, run_metadata
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.machine_check import MachineCheck
-from harbor_research_runner.records.proxy_control import ProxyConfig
+from harbor_research_runner.records.proxy_control import ProxyConfig, session_id_for_run
 from harbor_research_runner.records.proxy_control import write as write_proxy_config
 from harbor_research_runner.records.run_events import (
     Finish,
@@ -184,6 +184,7 @@ class RunSession:
             model=_card_to_row(self.card),
             limits=self.limits.to_row(),
             restart_cooldown_s=60.0 if restart else 0.0,
+            session_id=session_id_for_run(self.run_dir.name),
         )
         config_path = self.run_dir / "proxy-config.json"
         write_proxy_config(config_path, config)

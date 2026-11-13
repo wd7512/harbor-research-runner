@@ -350,6 +350,7 @@ def serve(
         time.monotonic,
         pacer,
         bodies,
+        session_id=config.session_id,
     )
     state = _ProxyState(ledger, registry, relay_deps, bodies)
     server = ProxyHTTPServer((config.host, config.port), state)

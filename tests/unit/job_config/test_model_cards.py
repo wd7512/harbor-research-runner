@@ -159,3 +159,20 @@ def test_invalid_request_shaping_value_is_rejected(tmp_path: Path, shaping: dict
     _write_card(tmp_path, request=shaping)
     with pytest.raises(ModelCardError):
         load_card("provider/model", tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("request_data", "message"),
+    [
+        ({"headers": {"Authorization": "Bearer secret"}}, "header"),
+        ({"headers": {"X-Test": 1}}, "header"),
+    ],
+)
+def test_invalid_upstream_request_headers_are_rejected(
+    tmp_path: Path, request_data: dict, message: str
+) -> None:
+    _write_card(tmp_path, request=request_data)
+    with pytest.raises(ModelCardError) as error:
+        load_card("provider/model", tmp_path)
+    assert message in str(error.value)
+    assert "unknown request key" not in str(error.value)

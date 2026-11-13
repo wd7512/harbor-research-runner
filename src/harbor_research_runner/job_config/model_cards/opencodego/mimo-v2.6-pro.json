@@ -33,5 +33,11 @@
   },
   "default_variant": null,
   "withdrawn": false,
-  "reason": null
+  "reason": null,
+  "request": {
+    "session_header": "x-opencode-session",
+    "headers": {
+      "User-Agent": "OpenAI/Python 1.x"
+    }
+  }
 }
