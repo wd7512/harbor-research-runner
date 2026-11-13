@@ -10,6 +10,8 @@ These steps assume you have a pinned task repository, Docker, and a host suitabl
 
    The default manifest is `harness-manifest.toml` in the current directory. The command supports `--manifest PATH` when the study uses a different location. The `fake` harness is a test fixture and has no image to build.
 
+   On an arm64 host running amd64 task images (Terminal-Bench 2.x), build with `--arch amd64`.
+
 2. **Write the job file.** `check-machine` reads this file, so create it before running the machine check. Save this example as `study.yaml`:
 
    ```yaml

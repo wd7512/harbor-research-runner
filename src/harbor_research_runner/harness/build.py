@@ -122,7 +122,11 @@ def _run(args: list[str], run: ExternalRunner) -> subprocess.CompletedProcess[st
         raise BuildError(f"could not run {args[0]!r}: {exc}") from exc
 
 
-def _docker_arch(run: ExternalRunner) -> str:
+def resolve_arch(arch: str | None, run: ExternalRunner = subprocess.run) -> str:
+    if arch is not None:
+        if arch not in _NODE_BASES:
+            raise BuildError(f"unsupported architecture {arch!r}; expected 'amd64' or 'arm64'")
+        return arch
     try:
         return host_arch(run=run)
     except ManifestError as exc:
@@ -198,13 +202,12 @@ def build(
     harness: str,
     commit: str,
     manifest_path: Path,
+    arch: str,
     run: ExternalRunner = subprocess.run,
 ) -> ImageEntry:
     """Build one harness image from source and add it to the commit manifest."""
     _require_harness(harness)
     _require_commit(commit)
-    arch = _docker_arch(run)
-
     with tempfile.TemporaryDirectory(prefix="hrr-opencode-source-") as directory:
         archive = Path(directory) / "source.tar.gz"
         url = _SOURCE_URL.format(commit=commit)

@@ -45,6 +45,7 @@ def _parser() -> argparse.ArgumentParser:
     build_harness.add_argument("--harness", required=True)
     build_harness.add_argument("--commit", required=True)
     build_harness.add_argument("--manifest", type=_absolute_path, default="harness-manifest.toml")
+    build_harness.add_argument("--arch", choices=("amd64", "arm64"))
 
     check = commands.add_parser("check-machine")
     check.add_argument("--job", type=_absolute_path, required=True)
@@ -229,8 +230,9 @@ def main(argv: list[str] | None = None, steps: Steps | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "build-harness":
         try:
+            arch = _step(steps, "resolve_arch", harness_build.resolve_arch)(args.arch)
             _step(steps, "build_harness", harness_build.build)(
-                args.harness, args.commit, args.manifest
+                args.harness, args.commit, args.manifest, arch
             )
         except Exception as exc:
             logger.error("harness build failed: %s", exc)
