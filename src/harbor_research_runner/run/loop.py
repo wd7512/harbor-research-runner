@@ -32,6 +32,7 @@ from harbor_research_runner.records.run_events import (
     Launch,
     LaunchCheck,
     Resume,
+    StopLaunchingAt,
 )
 from harbor_research_runner.run import canary, process_group, watch
 from harbor_research_runner.run.checks import CheckDeps, CheckResult, resolve_tasks, run_checks
@@ -49,6 +50,10 @@ HOST_FIELDS = {
     "memory_mb",
     "docker_version",
 }
+
+
+def _deadline_timestamp(value: str | None) -> float | None:
+    return None if value is None else datetime.fromisoformat(value).timestamp()
 
 
 @dataclass(frozen=True)
@@ -103,6 +108,8 @@ class RunSession:
         self.environment = dict(environment)
         self.tool = tool
         self.manifest_path = manifest_path
+        self.stop_launching_at: str | None = None
+        self.stop_launching_at_epoch: float | None = None
         self._sampler: subprocess.Popen | None = None
         self._oom_watch: subprocess.Popen | None = None
         self._proxy: subprocess.Popen | None = None
@@ -358,6 +365,7 @@ def run_job(
     manifest_path: Path,
     environment: Mapping[str, str],
     deps: RunDeps,
+    stop_launching_at: str | None = None,
 ) -> RunOutcome:
     host_lock = deps.checks.host_lock
     session = None
@@ -394,6 +402,8 @@ def run_job(
             tool=deps.tool,
             host=host,
         )
+        session.stop_launching_at = stop_launching_at
+        session.stop_launching_at_epoch = _deadline_timestamp(stop_launching_at)
         log_handler = _attach_run_log(session.run_dir)
         deps.start_services(session, False)
         services_started = True
@@ -455,6 +465,7 @@ def resume_run(
     manifest_path: Path,
     environment: Mapping[str, str],
     deps: RunDeps,
+    stop_launching_at: str | None = None,
 ) -> RunOutcome:
     host_lock = deps.checks.host_lock
     try:
@@ -468,6 +479,8 @@ def resume_run(
     try:
         run_dir = runs_dir / run_id
         session = RunSession.load(run_dir, environment)
+        session.stop_launching_at = stop_launching_at
+        session.stop_launching_at_epoch = _deadline_timestamp(stop_launching_at)
         log_handler = _attach_run_log(run_dir)
         events = jsonl.read_rows(run_dir / "run-events.jsonl").rows
         if events and events[-1].get("type") == "finish":
@@ -557,17 +570,29 @@ def _pass_loop(
 ) -> int:
     while True:
         proxy_url = _proxy_url(session.job)
+        stop_launching_at = getattr(session, "stop_launching_at", None)
         if pass_number == 0:
             argv = commands.run_command(
-                session.run_dir, "harbor-job", proxy_url, session.job.task_order
+                session.run_dir,
+                "harbor-job",
+                proxy_url,
+                session.job.task_order,
+                stop_launching_at,
             )
         else:
             argv = commands.resume_command(
-                session.run_dir, "harbor-job", proxy_url, session.job.task_order
+                session.run_dir,
+                "harbor-job",
+                proxy_url,
+                session.job.task_order,
+                stop_launching_at,
             )
+        if stop_launching_at is not None:
+            session.event(StopLaunchingAt(deps.now(), pass_number, stop_launching_at))
+        pass_started_t = deps.now()
         process = deps.start_harbor(argv, session.run_dir, session.lifeline_read_fd)
         session.event(HarborStart(deps.now(), pass_number, shlex.join(argv), "main"))
-        result = deps.watch(session, process, session.run_dir / "harbor-job", deps.now())
+        result = deps.watch(session, process, session.run_dir / "harbor-job", pass_started_t)
         returncode = result.returncode if result.returncode is not None else process.wait()
         session.event(HarborExit(deps.now(), pass_number, returncode, "main"))
         if result.kind == "halted":

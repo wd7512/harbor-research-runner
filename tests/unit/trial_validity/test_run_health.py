@@ -98,6 +98,8 @@ def _snapshot(**overrides):
         "longest_agent_budget_s": 3600.0,
         "longest_verifier_budget_s": 900.0,
         "harbor_timeout_multiplier": 1.0,
+        "stop_launching_at": None,
+        "in_flight_trials": 0,
     }
     values.update(overrides)
     return RunSnapshot(**values)
@@ -294,3 +296,24 @@ def test_inactivity_beyond_the_limit_halts_run():
 
     assert result is not None
     assert result[0] == "inactive"
+
+
+def test_deadline_waits_for_in_flight_trials():
+    result = should_halt(_snapshot(stop_launching_at=NOW - 10, in_flight_trials=1), DEFAULT_LIMITS)
+
+    assert result is None
+
+
+def test_deadline_halts_after_two_poll_intervals_without_in_flight_trials():
+    result = should_halt(_snapshot(stop_launching_at=NOW - 10, in_flight_trials=0), DEFAULT_LIMITS)
+
+    assert result is not None
+    assert result[0] == "deadline"
+
+
+def test_deadline_waits_until_two_poll_intervals_have_elapsed():
+    result = should_halt(
+        _snapshot(now=NOW, stop_launching_at=NOW - 9.9, in_flight_trials=0), DEFAULT_LIMITS
+    )
+
+    assert result is None

@@ -9,6 +9,7 @@ from harbor_research_runner.records.run_events import (
     LaunchCheck,
     Resume,
     SetAside,
+    StopLaunchingAt,
     TrialVerdict,
     parse_event,
 )
@@ -18,6 +19,7 @@ EVENTS = [
     LaunchCheck(1.0, "docker", True, "ok"),
     HarborStart(1.0, 0, "harbor run", "main"),
     HarborExit(1.0, 0, 0, "main"),
+    StopLaunchingAt(1.0, 0, "2030-01-01T00:00:00+00:00"),
     TrialVerdict(1.0, "tr", "task", "arm", True, None, None, [], True, None),
     SetAside(1.0, "tr", "task", "arm", "bad"),
     Halt(1.0, "inactive", "detail"),

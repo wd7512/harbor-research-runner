@@ -198,6 +198,26 @@ def test_run_command_matches_harbor_command_vector(tmp_path: Path):
     ]
 
 
+def test_run_command_passes_stop_launching_at_to_the_plugin(tmp_path: Path):
+    deadline = "2030-01-01T00:00:00+00:00"
+
+    command = run_command(
+        tmp_path / "study", "harbor-job", "http://127.0.0.1:8766", "as_listed", deadline
+    )
+
+    assert command[-2:] == ["--pk", f"stop_launching_at={deadline}"]
+
+
+def test_resume_command_passes_stop_launching_at_to_the_plugin(tmp_path: Path):
+    deadline = "2030-01-01T00:00:00+00:00"
+
+    command = resume_command(
+        tmp_path / "study", "harbor-job", "http://127.0.0.1:8766", "as_listed", deadline
+    )
+
+    assert command[-2:] == ["--pk", f"stop_launching_at={deadline}"]
+
+
 def test_run_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Path):
     run_dir = tmp_path / "run with spaces" / "study"
 

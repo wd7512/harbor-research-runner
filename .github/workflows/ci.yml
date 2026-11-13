@@ -53,6 +53,8 @@ jobs:
             files: [tests/e2e/test_lifecycle.py]
           - name: lifecycle_resume
             files: [tests/e2e/test_lifecycle_resume.py]
+          - name: stop_launching_at
+            files: [tests/e2e/test_stop_launching_at.py]
           - name: harbor_contract
             files:
               - tests/e2e/test_harbor_contract.py
