@@ -4,17 +4,16 @@ import csv
 import io
 import json
 from dataclasses import fields
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from importlib.resources import files
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from harbor_research_runner.local_http import LocalHTTPServer
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.results_explorer.loader import EvidenceStore
 
 
-class _Server(ThreadingHTTPServer):
-    request_queue_size = 128
-
+class _Server(LocalHTTPServer):
     def __init__(self, address, store: EvidenceStore):
         self.store = store
         super().__init__(address, _Handler)
@@ -123,5 +122,5 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
 
-def build_server(store: EvidenceStore, port: int = 8765) -> ThreadingHTTPServer:
+def build_server(store: EvidenceStore, port: int = 8765) -> LocalHTTPServer:
     return _Server(("127.0.0.1", port), store)

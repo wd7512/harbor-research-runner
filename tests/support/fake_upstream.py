@@ -8,13 +8,15 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from functools import partial
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from threading import Event, Lock, Thread
 from typing import Any
 
+from harbor_research_runner.local_http import LocalHTTPServer
 
-class _FakeUpstreamServer(ThreadingHTTPServer):
-    request_queue_size = 128
+
+class _FakeUpstreamServer(LocalHTTPServer):
+    pass
 
 
 @dataclass
@@ -43,7 +45,7 @@ class FakeUpstream:
         self.script = script
         self.model = model
         self.requests: list[dict[str, Any]] = []
-        self._server: ThreadingHTTPServer | None = None
+        self._server: _FakeUpstreamServer | None = None
         self._thread: Thread | None = None
         self._request_index = 0
         self._lock = Lock()

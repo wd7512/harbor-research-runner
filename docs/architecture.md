@@ -6,11 +6,12 @@ Names used throughout: the package is `harbor_research_runner`, the command is `
 
 ## 1. Modules
 
-A study flows top to bottom through six steps. Five helper modules are shared.
+A study flows top to bottom through six steps. Six helper modules are shared.
 
 | Kind | Module | Owns | May import (ours) |
 |---|---|---|---|
 | helper | `records` | The format of every file we write, the proxy control messages, the limits record | nothing |
+| helper | `local_http` | Loopback HTTP server base: backlog, no reverse DNS lookup on bind | nothing |
 | helper | `job_config` | The job file and model cards | nothing |
 | helper | `trial_validity` | The verdict for one trial; the halt rules for a run | `records` |
 | helper | `statistics` | Pass rates, intervals, paired comparison, completeness table | `records` |
@@ -18,9 +19,9 @@ A study flows top to bottom through six steps. Five helper modules are shared.
 | helper | `docker_host` | Host lock, Docker cleanup, resource check, resource sampler | `records` |
 | step | `harness` | Commit manifest, image build, extraction, `PinnedHarness`, `OpenCodeAgent`, the fake harness | `records` |
 | step | `run` | Launch checks, canary, machine check, the run loop | `job_config`, `records`, `trial_validity`, `harbor_adapter`, `docker_host`, `harness` |
-| step | `model_proxy` | The relay between harness and model; writes the proxy ledger | `records` |
+| step | `model_proxy` | The relay between harness and model; writes the proxy ledger | `records`, `local_http` |
 | step | `evidence_bundle` | Run folder to evidence bundle, secret scan, report | `records`, `statistics`, `harbor_adapter` |
-| step | `results_explorer` | Read-only comparison server and page | `records`, `statistics` |
+| step | `results_explorer` | Read-only comparison server and page | `records`, `statistics`, `local_http` |
 | wiring | `cli` | Commands | any module |
 
 Rules, enforced by `tests/unit/test_import_rule.py`:
@@ -36,6 +37,7 @@ Source layout:
 ```
 src/harbor_research_runner/
   cli.py
+  local_http.py
   records/          jsonl.py  proxy_ledger.py  proxy_control.py  run_metadata.py
                     run_events.py  resource_stats.py  trials.py  limits.py  machine_check.py
   job_config/       job_file.py  model_cards.py  model_cards/<provider>/<model>.json
