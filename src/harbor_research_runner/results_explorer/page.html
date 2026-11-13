@@ -200,8 +200,9 @@ if(event.target.id==="run-a"){state.compareA=event.target.value;render();}
 if(event.target.id==="run-b"){state.compareB=event.target.value;render();}
 if(event.target.id==="run-folder"){const path=event.target.value.trim();
 const target=document.querySelector("#harbor-view");
-target.innerHTML=path&&state.trial?`<p>Open this trial trajectory:</p><pre>harbor view ${shellQuote(
-`${path.replace(/\/$/,"")}/${state.trial.location}/${state.trial.trial}`)}</pre>`:"";}});
+target.innerHTML=path&&state.trial?`<p>Open this trial trajectory:</p><pre>harbor view ${escapeHtml(shellQuote(
+path.replace(/\/+$/, "")))}</pre><p>Job: ${escapeHtml(state.trial.location)} · Trial:
+${escapeHtml(state.trial.trial)}</p>`:"";}});
 async function start(){try{state.bundles=await get("api/evidence");
 status.textContent=`${state.bundles.length} evidence bundles`;render();}
 catch(error){status.textContent=error.message;
