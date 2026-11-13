@@ -160,6 +160,7 @@ def test_open_trial_remains_in_flight_until_verdict_after_close(tmp_path: Path) 
     )
     (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
     session = SimpleNamespace(
+        oom_watch_alive=lambda: True,
         run_dir=run_dir,
         job=SimpleNamespace(machine_check=machine_check),
         metadata=SimpleNamespace(task_set={"tasks": [{"name": "task-a"}]}),
