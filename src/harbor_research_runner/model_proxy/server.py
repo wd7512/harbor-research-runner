@@ -5,18 +5,18 @@ import json
 import logging
 import os
 import signal
-import socket
 import threading
 import time
 from collections.abc import Mapping
 from contextlib import suppress
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, cast
 
 import httpx
 
+from harbor_research_runner.local_http import LocalHTTPServer
 from harbor_research_runner.model_proxy.adapters import UnsupportedAdapterPair, select_adapter
 from harbor_research_runner.model_proxy.bodies import BodyStore
 from harbor_research_runner.model_proxy.control import TrialRegistry
@@ -71,10 +71,9 @@ class _ProxyState:
                 self.server.stop_accepting()
 
 
-class ProxyHTTPServer(ThreadingHTTPServer):
+class ProxyHTTPServer(LocalHTTPServer):
     daemon_threads = True
     block_on_close = False
-    request_queue_size = 128
 
     def __init__(self, address: tuple[str, int], state: _ProxyState) -> None:
         self.state = state
@@ -119,12 +118,6 @@ class ProxyHTTPServer(ThreadingHTTPServer):
             return
         self._shutdown_started.set()
         threading.Thread(target=self.shutdown, daemon=True).start()
-
-    def server_bind(self) -> None:
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind(self.server_address)
-        self.server_address = self.socket.getsockname()
-        self.server_name, self.server_port = self.server_address[0], self.server_address[1]
 
 
 def _watch_lifeline(fd: int, server: ProxyHTTPServer) -> None:

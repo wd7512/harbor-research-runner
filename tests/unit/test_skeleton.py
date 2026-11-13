@@ -9,6 +9,7 @@ import harbor_research_runner
 
 MODULES = (
     "records",
+    "local_http",
     "job_config",
     "trial_validity",
     "statistics",

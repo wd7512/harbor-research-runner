@@ -7,6 +7,7 @@ SOURCE_ROOT = Path(__file__).parents[2] / "src" / PACKAGE
 
 MAY_IMPORT = {
     "records": set(),
+    "local_http": set(),
     "job_config": set(),
     "trial_validity": {"records"},
     "statistics": {"records"},
@@ -21,9 +22,9 @@ MAY_IMPORT = {
         "docker_host",
         "harness",
     },
-    "model_proxy": {"records"},
+    "model_proxy": {"records", "local_http"},
     "evidence_bundle": {"records", "statistics", "harbor_adapter"},
-    "results_explorer": {"records", "statistics"},
+    "results_explorer": {"records", "statistics", "local_http"},
     "cli": {
         "records",
         "job_config",
