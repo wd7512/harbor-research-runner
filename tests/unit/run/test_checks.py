@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,7 @@ def _machine_check(
     fingerprint: str = "fingerprint",
     concurrency: int = 4,
     included: list[str] | None = None,
+    tasks: list[dict] | None = None,
 ) -> MachineCheck:
     return MachineCheck(
         created_t=1.0,
@@ -81,7 +83,7 @@ def _machine_check(
         host_fingerprint=fingerprint,
         task_source=_TASK_SOURCE if task_source is None else task_source,
         concurrency=concurrency,
-        tasks=[],
+        tasks=[] if tasks is None else tasks,
         included=["task-a", "task-b"] if included is None else included,
         verifier_timeout_multiplier=1.0,
     )
@@ -117,6 +119,7 @@ def _deps(
     harbor_version: str = "0.23.0",
     bind_port=lambda _host, _port: None,
     processes=lambda _run_dir: [],
+    digest_of=lambda _ref: _DIGEST,
 ) -> CheckDeps:
     return CheckDeps(
         select_adapter=select_adapter,
@@ -129,6 +132,7 @@ def _deps(
         harbor_version=lambda: harbor_version,
         bind_port=bind_port,
         processes=processes,
+        digest_of=digest_of,
     )
 
 
@@ -142,13 +146,14 @@ def _run(
     environment: dict[str, str] | None = None,
     run_dir: Path | None = None,
     keep_lock: bool = False,
+    arch: str = "amd64",
 ) -> list[CheckResult]:
     selected_deps = deps or _deps(tmp_path)
     results = run_checks(
         job or _job(),
         card or _card(),
         {} if manifest is None else manifest,
-        "amd64",
+        arch,
         tmp_path / "runs",
         {"MODEL_KEY": "configured"} if environment is None else environment,
         selected_deps,
@@ -277,6 +282,141 @@ def test_arms_pinned_check_passes_for_manifest_free_fake_harness(tmp_path: Path)
     result = _by_name(_run(tmp_path), "arms_pinned")
 
     assert result.ok
+
+
+def test_arms_pinned_check_refuses_task_architecture_missing_from_manifest(
+    tmp_path: Path,
+) -> None:
+    task = {"name": "task-a", "digest": "task-digest", "arch": "amd64"}
+    machine_check = _machine_check(tasks=[task])
+    deps = _deps(tmp_path, read_machine_check=lambda _path: machine_check)
+    arm = _job(harness="opencode")
+    arm64_entry = ImageEntry(
+        harness="opencode",
+        commit=_COMMIT,
+        version="1.19.3",
+        arch="arm64",
+        ref="hrr/opencode:test-arm64",
+        digest=_DIGEST,
+        build_method="source",
+        built_at="2026-11-11",
+        withdrawn=False,
+        withdrawn_reason="",
+    )
+
+    result = _by_name(
+        _run(
+            tmp_path,
+            job=arm,
+            manifest={("opencode", _COMMIT, "arm64"): arm64_entry},
+            deps=deps,
+            arch="arm64",
+        ),
+        "arms_pinned",
+    )
+
+    assert not result.ok
+    assert "amd64" in result.detail
+
+
+def test_arms_pinned_check_accepts_all_task_architectures(tmp_path: Path) -> None:
+    machine_check = _machine_check(
+        tasks=[{"name": "task-a", "digest": "task-digest", "arch": "amd64"}]
+    )
+    deps = _deps(tmp_path, read_machine_check=lambda _path: machine_check)
+    second_commit = "c" * 40
+    arm = _job(harness="opencode")
+    arm = replace(arm, arms=(arm.arms[0], Arm("arm-b", "opencode", second_commit)))
+    manifest = {
+        ("opencode", commit, architecture): ImageEntry(
+            harness="opencode",
+            commit=commit,
+            version="1.19.3",
+            arch=architecture,
+            ref=f"hrr/opencode:test-{commit[:1]}-{architecture}",
+            digest=_DIGEST,
+            build_method="source",
+            built_at="2026-11-11",
+            withdrawn=False,
+            withdrawn_reason="",
+        )
+        for commit in (_COMMIT, second_commit)
+        for architecture in ("amd64", "arm64")
+    }
+
+    result = _by_name(
+        _run(tmp_path, job=arm, manifest=manifest, deps=deps, arch="arm64"),
+        "arms_pinned",
+    )
+
+    assert result.ok
+
+
+def test_arms_pinned_check_uses_host_architecture_for_old_machine_check(
+    tmp_path: Path,
+) -> None:
+    machine_check = _machine_check(tasks=[{"name": "task-a", "digest": "task-digest"}])
+    deps = _deps(tmp_path, read_machine_check=lambda _path: machine_check)
+    arm = _job(harness="opencode")
+    entry = ImageEntry(
+        harness="opencode",
+        commit=_COMMIT,
+        version="1.19.3",
+        arch="arm64",
+        ref="hrr/opencode:test-arm64",
+        digest=_DIGEST,
+        build_method="source",
+        built_at="2026-11-11",
+        withdrawn=False,
+        withdrawn_reason="",
+    )
+
+    result = _by_name(
+        _run(
+            tmp_path,
+            job=arm,
+            manifest={("opencode", _COMMIT, "arm64"): entry},
+            deps=deps,
+            arch="arm64",
+        ),
+        "arms_pinned",
+    )
+
+    assert result.ok
+
+
+def test_arms_pinned_check_includes_canary_host_architecture(tmp_path: Path) -> None:
+    machine_check = _machine_check(
+        tasks=[{"name": "task-a", "digest": "task-digest", "arch": "amd64"}]
+    )
+    deps = _deps(tmp_path, read_machine_check=lambda _path: machine_check)
+    arm = _job(harness="opencode")
+    entry = ImageEntry(
+        harness="opencode",
+        commit=_COMMIT,
+        version="1.19.3",
+        arch="amd64",
+        ref="hrr/opencode:test-amd64",
+        digest=_DIGEST,
+        build_method="source",
+        built_at="2026-11-11",
+        withdrawn=False,
+        withdrawn_reason="",
+    )
+
+    result = _by_name(
+        _run(
+            tmp_path,
+            job=arm,
+            manifest={("opencode", _COMMIT, "amd64"): entry},
+            deps=deps,
+            arch="arm64",
+        ),
+        "arms_pinned",
+    )
+
+    assert not result.ok
+    assert "arm64" in result.detail
 
 
 def test_arms_pinned_check_accepts_responses_model_card_with_chat_harness(

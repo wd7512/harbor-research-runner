@@ -1,0 +1,1 @@
+Machine checks record each task image's architecture, and launch checks verify arm images for every task architecture used by the run and the canary. Older machine checks continue to fall back to the Docker host architecture.

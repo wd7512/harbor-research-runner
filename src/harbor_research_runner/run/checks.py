@@ -14,7 +14,12 @@ from harbor_research_runner.docker_host.host_lock import (
     HostLockUnsupported,
 )
 from harbor_research_runner.docker_host.processes import pids_naming_run
-from harbor_research_runner.harness.manifest import ImageEntry, ManifestError, verify_arm
+from harbor_research_runner.harness.manifest import (
+    ImageEntry,
+    ManifestError,
+    local_image_digest,
+    verify_arm,
+)
 from harbor_research_runner.harness.request_path import request_path
 from harbor_research_runner.job_config.job_file import Job
 from harbor_research_runner.job_config.model_cards import ModelCard
@@ -48,6 +53,7 @@ class CheckDeps:
     harbor_version: Callable[[], str]
     bind_port: Callable[[str, int], None] = _bind_port
     processes: Callable[[Path], list[int]] = pids_naming_run
+    digest_of: Callable[[str], str | None] = local_image_digest
 
 
 def _evaluate(name: str, check: Callable[[], tuple[bool, str]]) -> CheckResult:
@@ -151,12 +157,21 @@ def run_checks(
 
     def arms_pinned_check() -> tuple[bool, str]:
         problems: list[str] = []
+        arches = {arch}
+        if machine_check is not None:
+            task_arches = {task["name"]: task.get("arch", arch) for task in machine_check.tasks}
+            arches.update(
+                task_arches[name]
+                for name in resolve_tasks(job, machine_check)
+                if name in task_arches
+            )
         for arm in job.arms:
             if arm.harness != "fake":
-                try:
-                    verify_arm(manifest, arm.harness, arm.commit, arch)
-                except ManifestError as exc:
-                    problems.append(str(exc) or exc.__class__.__name__)
+                for required_arch in sorted(arches):
+                    try:
+                        verify_arm(manifest, arm.harness, arm.commit, required_arch, deps.digest_of)
+                    except ManifestError as exc:
+                        problems.append(str(exc) or exc.__class__.__name__)
             try:
                 deps.select_adapter(card.api, request_path(arm.harness))
             except ValueError as exc:
