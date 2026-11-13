@@ -96,13 +96,31 @@ def _run_deps() -> loop.RunDeps:
         checks=_check_deps(),
         tool=tool_identity(),
         host=resources.host_description,
-        start_harbor=lambda argv, cwd: process_group.spawn_group(
-            argv, env=os.environ.copy(), cwd=cwd
-        ),
+        start_harbor=_start_harbor,
         watch=watch.watch,
         start_services=lambda session, restart: session.start_services(restart),
         stop_services=lambda session: session.stop_services(),
         now=time.time,
+    )
+
+
+def _start_harbor(argv: list[str], cwd: Path, lifeline_fd: int):
+    command = [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "harbor_research_runner.run.harbor_guard",
+        "--lifeline-fd",
+        str(lifeline_fd),
+        "--",
+        *argv,
+    ]
+    return process_group.spawn_group(
+        command,
+        env=os.environ.copy(),
+        cwd=cwd,
+        pass_fds=(lifeline_fd,),
     )
 
 

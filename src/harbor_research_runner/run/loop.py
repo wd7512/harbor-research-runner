@@ -61,7 +61,7 @@ class RunDeps:
     checks: CheckDeps
     tool: ToolIdentity
     host: Callable[[], dict]
-    start_harbor: Callable[[list[str], Path], Any]
+    start_harbor: Callable[[list[str], Path, int], Any]
     watch: Callable[[RunSession, Any, Path, float], WatchResult]
     start_services: Callable[[RunSession, bool], None]
     stop_services: Callable[[RunSession], None]
@@ -96,6 +96,7 @@ class RunSession:
         self.manifest_path = manifest_path
         self._sampler: subprocess.Popen | None = None
         self._proxy: subprocess.Popen | None = None
+        self._lifeline_read_fd: int | None = None
         self._lifeline_write_fd: int | None = None
 
     @classmethod
@@ -192,45 +193,43 @@ class RunSession:
         )
         read_fd, write_fd = os.pipe()
         os.set_inheritable(write_fd, False)
+        self._lifeline_read_fd = read_fd
         self._lifeline_write_fd = write_fd
         try:
-            try:
-                self._sampler = process_group.spawn_group(
-                    [
-                        "uv",
-                        "run",
-                        "python",
-                        "-m",
-                        "harbor_research_runner.docker_host.sampler",
-                        "--out",
-                        str(self.run_dir / "resource-stats.jsonl"),
-                        "--lifeline-fd",
-                        str(read_fd),
-                    ],
-                    env=environment,
-                    pass_fds=(read_fd,),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.STDOUT,
-                )
-                self._proxy = process_group.spawn_group(
-                    [
-                        "uv",
-                        "run",
-                        "python",
-                        "-m",
-                        "harbor_research_runner.model_proxy",
-                        "--config",
-                        str(config_path),
-                        "--lifeline-fd",
-                        str(read_fd),
-                    ],
-                    env=environment,
-                    pass_fds=(read_fd,),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.STDOUT,
-                )
-            finally:
-                os.close(read_fd)
+            self._sampler = process_group.spawn_group(
+                [
+                    "uv",
+                    "run",
+                    "python",
+                    "-m",
+                    "harbor_research_runner.docker_host.sampler",
+                    "--out",
+                    str(self.run_dir / "resource-stats.jsonl"),
+                    "--lifeline-fd",
+                    str(read_fd),
+                ],
+                env=environment,
+                pass_fds=(read_fd,),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+            )
+            self._proxy = process_group.spawn_group(
+                [
+                    "uv",
+                    "run",
+                    "python",
+                    "-m",
+                    "harbor_research_runner.model_proxy",
+                    "--config",
+                    str(config_path),
+                    "--lifeline-fd",
+                    str(read_fd),
+                ],
+                env=environment,
+                pass_fds=(read_fd,),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+            )
         except BaseException:
             self.stop_services()
             raise
@@ -263,6 +262,15 @@ class RunSession:
             if self._lifeline_write_fd is not None:
                 os.close(self._lifeline_write_fd)
                 self._lifeline_write_fd = None
+            if self._lifeline_read_fd is not None:
+                os.close(self._lifeline_read_fd)
+                self._lifeline_read_fd = None
+
+    @property
+    def lifeline_read_fd(self) -> int:
+        if self._lifeline_read_fd is None:
+            raise RuntimeError("lifeline is not started")
+        return self._lifeline_read_fd
 
     def proxy_alive(self) -> bool:
         return self._proxy is not None and self._proxy.poll() is None
@@ -366,7 +374,7 @@ def run_job(
         canary_argv = commands.run_command(
             session.run_dir, "canary-job", _proxy_url(job), job.task_order
         )
-        canary_process = deps.start_harbor(canary_argv, session.run_dir)
+        canary_process = deps.start_harbor(canary_argv, session.run_dir, session.lifeline_read_fd)
         session.event(HarborStart(deps.now(), 0, shlex.join(canary_argv), "canary"))
         canary_returncode = canary_process.wait()
         session.event(HarborExit(deps.now(), 0, canary_returncode, "canary"))
@@ -444,6 +452,7 @@ def resume_run(
             runs_dir,
             environment,
             deps.checks,
+            run_dir=run_dir,
         )
         failed = [f"{result.name}: {result.detail}" for result in checks if not result.ok]
         if failed:
@@ -516,7 +525,7 @@ def _pass_loop(
             argv = commands.resume_command(
                 session.run_dir, "harbor-job", proxy_url, session.job.task_order
             )
-        process = deps.start_harbor(argv, session.run_dir)
+        process = deps.start_harbor(argv, session.run_dir, session.lifeline_read_fd)
         session.event(HarborStart(deps.now(), pass_number, shlex.join(argv), "main"))
         result = deps.watch(session, process, session.run_dir / "harbor-job", deps.now())
         returncode = result.returncode if result.returncode is not None else process.wait()

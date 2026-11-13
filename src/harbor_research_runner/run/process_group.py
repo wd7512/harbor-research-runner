@@ -21,6 +21,7 @@ from contextlib import suppress
 
 logger = logging.getLogger(__name__)
 
+HARBOR_STOP_GRACE_S = 30
 _VERIFY_LOOP_S = 2.0
 _VERIFY_POLL_S = 0.05
 _STEP_POLL_S = 0.05

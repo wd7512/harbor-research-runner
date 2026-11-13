@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from harbor_research_runner.docker_host.processes import pids_naming_run
 from harbor_research_runner.docker_host.resources import host_fingerprint
 from harbor_research_runner.harbor_adapter.commands import (
     job_config as harbor_job_config,
@@ -515,6 +516,34 @@ class E2ERun:
             self.process.kill()
             with suppress(subprocess.TimeoutExpired):
                 self.process.wait(timeout=10)
+
+    def kill_runner_only(self, stop_within_s: float) -> float:
+        runner_pids = [
+            row["pid"]
+            for row in self.events
+            if row.get("type") in {"launch", "resume"} and isinstance(row.get("pid"), int)
+        ]
+        if not runner_pids:
+            raise AssertionError("no runner pid was recorded")
+        killed = time.monotonic()
+        os.kill(runner_pids[-1], signal.SIGKILL)
+        deadline = killed + stop_within_s
+        while (live := pids_naming_run(self.run_dir)) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        if live:
+            raise AssertionError(
+                f"processes still name the run folder {stop_within_s}s after the runner died: {live}"
+            )
+        stopped_after = time.monotonic() - killed
+        if self.process is not None:
+            try:
+                output, _ = self.process.communicate(timeout=10)
+            except subprocess.TimeoutExpired as exc:
+                raise AssertionError("the hrr launcher did not exit after its runner died") from exc
+            self.last_result = subprocess.CompletedProcess(
+                self.process.args, self.process.returncode, output, ""
+            )
+        return stopped_after
 
     def kill_proxy(self) -> None:
         groups = self._process_groups()

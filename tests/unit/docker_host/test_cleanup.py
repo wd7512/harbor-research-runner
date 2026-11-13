@@ -250,19 +250,32 @@ def _write_events(run_dir, events):
 
 def test_live_launch_with_live_pid_names_run(tmp_path):
     _write_events(tmp_path / "runs" / "study-1", [{"type": "launch", "pid": 321}])
-    assert live_run(tmp_path / "runs", pid_alive=lambda pid: pid == 321) == "study-1"
+    assert (
+        live_run(
+            tmp_path / "runs",
+            pid_alive=lambda pid: pid == 321,
+            processes=lambda _run_dir: [],
+        )
+        == "study-1"
+    )
 
 
 def test_live_launch_after_finish_does_not_name_run(tmp_path):
     _write_events(
         tmp_path / "runs" / "study-1", [{"type": "launch", "pid": 321}, {"type": "finish"}]
     )
-    assert live_run(tmp_path / "runs", pid_alive=lambda pid: True) is None
+    assert (
+        live_run(tmp_path / "runs", pid_alive=lambda pid: True, processes=lambda _run_dir: [])
+        is None
+    )
 
 
 def test_live_launch_with_dead_pid_does_not_name_run(tmp_path):
     _write_events(tmp_path / "runs" / "study-1", [{"type": "launch", "pid": 321}])
-    assert live_run(tmp_path / "runs", pid_alive=lambda pid: False) is None
+    assert (
+        live_run(tmp_path / "runs", pid_alive=lambda pid: False, processes=lambda _run_dir: [])
+        is None
+    )
 
 
 def test_live_launch_with_dead_resume_event_still_names_the_live_run(tmp_path):
@@ -270,14 +283,21 @@ def test_live_launch_with_dead_resume_event_still_names_the_live_run(tmp_path):
         tmp_path / "runs" / "study-1",
         [{"type": "launch", "pid": 111}, {"type": "resume", "pid": 222}],
     )
-    assert live_run(tmp_path / "runs", pid_alive=lambda pid: pid == 111) == "study-1"
+    assert (
+        live_run(
+            tmp_path / "runs",
+            pid_alive=lambda pid: pid == 111,
+            processes=lambda _run_dir: [],
+        )
+        == "study-1"
+    )
 
 
 def test_unreadable_events_name_an_unknown_holder(tmp_path):
     run_dir = tmp_path / "runs" / "study-1"
     _write_events(run_dir, [{"type": "launch", "pid": 321}])
     (run_dir / "run-events.jsonl").write_text("{broken", encoding="utf-8")
-    assert live_run(tmp_path / "runs") == "unknown"
+    assert live_run(tmp_path / "runs", processes=lambda _run_dir: []) == "unknown"
 
 
 def test_pid_permission_error_names_an_unknown_holder(tmp_path):
@@ -286,7 +306,24 @@ def test_pid_permission_error_names_an_unknown_holder(tmp_path):
     def inaccessible(pid):
         raise PermissionError(pid)
 
-    assert live_run(tmp_path / "runs", pid_alive=inaccessible) == "unknown"
+    assert (
+        live_run(tmp_path / "runs", pid_alive=inaccessible, processes=lambda _run_dir: [])
+        == "unknown"
+    )
+
+
+def test_live_command_names_run_even_when_runner_pid_is_dead(tmp_path):
+    run_dir = tmp_path / "runs" / "study-1"
+    _write_events(run_dir, [{"type": "launch", "pid": 321}, {"type": "finish"}])
+
+    assert (
+        live_run(
+            tmp_path / "runs",
+            pid_alive=lambda _pid: False,
+            processes=lambda path: [654] if path == run_dir else [],
+        )
+        == "study-1"
+    )
 
 
 def test_clean_apply_refuses_while_a_session_holds_the_host_lock(tmp_path):
@@ -317,9 +354,29 @@ def test_clean_apply_refusal_names_live_run_from_events(tmp_path):
                 lock=HostLock(tmp_path / "host.lock"),
                 run=docker_run()[0],
                 runs_dir=runs,
+                processes=lambda _run_dir: [],
             )
     finally:
         holder.release()
+
+
+def test_clean_apply_leaves_resources_when_process_names_run_folder(tmp_path):
+    runs = tmp_path / "runs"
+    run_dir = runs / "study-1"
+    _write_events(run_dir, [{"type": "launch", "pid": 321}, {"type": "finish"}])
+    calls = []
+    run, _ = docker_run(calls=calls)
+
+    with pytest.raises(RunActive, match="study-1"):
+        clean(
+            apply=True,
+            lock=HostLock(tmp_path / "host.lock"),
+            run=run,
+            runs_dir=runs,
+            processes=lambda path: [654] if path == run_dir else [],
+        )
+
+    assert not any(call[1:2] in (["stop"], ["rm"]) for call in calls)
 
 
 def test_clean_apply_plans_under_the_lock(tmp_path):
