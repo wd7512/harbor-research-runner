@@ -627,11 +627,23 @@ def _finish(session, status: SlotsStatus, deps: RunDeps) -> int:
 
 
 def make_read_only(run_dir: Path) -> None:
+    foreign: list[str] = []
     for path in sorted(run_dir.rglob("*"), key=lambda item: len(item.parts), reverse=True):
         if path.is_symlink():
             continue
-        mode = path.stat().st_mode
-        path.chmod(mode & ~0o222)
+        info = path.stat()
+        try:
+            path.chmod(info.st_mode & ~0o222)
+        except PermissionError:
+            if info.st_uid == os.getuid():
+                raise
+            foreign.append(str(path.relative_to(run_dir)))
+    if foreign:
+        logger.warning(
+            "left %d file(s) owned by another user writable, as found: %s",
+            len(foreign),
+            ", ".join(foreign),
+        )
     mode = run_dir.stat().st_mode
     run_dir.chmod(mode & ~0o222)
 
