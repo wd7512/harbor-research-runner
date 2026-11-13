@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from harbor_research_runner.docker_host.cleanup import DOCKER_TIMEOUT_S
 
+
 def host_profile(run: Callable = subprocess.run) -> dict:
     result = run(
         ["docker", "info", "--format", "{{json .}}"],

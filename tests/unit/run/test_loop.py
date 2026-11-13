@@ -805,3 +805,19 @@ def test_mark_resumed_appends_resume_event(tmp_path: Path) -> None:
         "tool_commit": "a" * 40,
         "pid": __import__("os").getpid(),
     }
+
+
+def test_resume_refuses_a_run_that_predates_host_profile_recording(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    metadata_path = run_dir / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    del metadata["host"]["host_profile"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    deps = _resume_dependencies(tmp_path, machine_check, lambda *_args: None, [], [])
+    before = (run_dir / "run-events.jsonl").read_bytes()
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    assert result == RunOutcome(1, run_dir)
+    assert (run_dir / "run-events.jsonl").read_bytes() == before
+    assert "predates host profile recording" in (run_dir / "runner.log").read_text(encoding="utf-8")
