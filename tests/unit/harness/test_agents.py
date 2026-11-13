@@ -188,7 +188,12 @@ def make_agent(tmp_path: Path, manifest_path: Path):
 
 
 def _facts() -> HarnessFacts:
-    return HarnessFacts(version="1.18.25", help_text=_HELP_GLOBAL + _HELP_RUN, era="modern-v1")
+    return HarnessFacts(
+        version="1.18.25",
+        help_text=_HELP_GLOBAL + _HELP_RUN,
+        era="modern-v1",
+        global_help_text=_HELP_GLOBAL,
+    )
 
 
 def _settings(manifest_path: Path) -> dict:
@@ -546,6 +551,7 @@ def test_install_writes_harness_facts_json(make_agent, tmp_path: Path) -> None:
     assert facts["version"] == "1.18.25"
     assert facts["era"] == "modern-v1"
     assert "--thinking" in facts["help_text"]
+    assert facts["global_help_text"] == _HELP_GLOBAL
 
 
 def test_install_version_exit_126_raises_install_corruption(make_agent) -> None:
@@ -650,6 +656,7 @@ def test_probe_records_version_help_and_era(make_agent) -> None:
     assert facts.era == "modern-v1"
     assert _HELP_GLOBAL in facts.help_text
     assert _HELP_RUN in facts.help_text
+    assert facts.global_help_text == _HELP_GLOBAL
 
 
 def test_run_writes_the_rendered_config_and_the_run_command(make_agent) -> None:

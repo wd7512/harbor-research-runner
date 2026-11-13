@@ -77,7 +77,7 @@ def make_agent(tmp_path: Path):
 
 
 def _facts() -> HarnessFacts:
-    return HarnessFacts(version="fake", help_text="", era="fake")
+    return HarnessFacts(version="fake", help_text="", era="fake", global_help_text="")
 
 
 def _arguments(agent: FakeHarnessAgent) -> list[str]:
@@ -133,7 +133,7 @@ def test_install_uploads_the_script_folder_without_a_manifest(make_agent) -> Non
 def test_probe_returns_fixed_facts(make_agent) -> None:
     facts = asyncio.run(make_agent().probe(_FakeEnvironment()))
 
-    assert facts == HarnessFacts(version="fake", help_text="", era="fake")
+    assert facts == HarnessFacts(version="fake", help_text="", era="fake", global_help_text="")
 
 
 def test_config_files_are_empty(make_agent) -> None:

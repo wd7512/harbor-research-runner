@@ -40,6 +40,7 @@ class HarnessFacts:
     version: str
     help_text: str
     era: str
+    global_help_text: str = ""
 
 
 def era_for(version: str) -> str:
@@ -105,7 +106,7 @@ def run_command(facts: HarnessFacts, model: str, instruction: str, variant: str 
         if supports_flag(facts.help_text, "--dangerously-skip-permissions")
         else ""
     )
-    if supports_flag(facts.help_text, "--model"):
+    if supports_flag(facts.global_help_text, "--model"):
         invocation = f"{_OPENCODE_BIN} {model_arg} run --format=json "
     else:
         invocation = f"{_OPENCODE_BIN} run {model_arg} --format=json "

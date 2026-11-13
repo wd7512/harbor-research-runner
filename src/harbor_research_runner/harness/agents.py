@@ -399,6 +399,7 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
             version=version,
             help_text=global_help + run_help,
             era=opencode_eras.era_for(version),
+            global_help_text=global_help,
         )
 
     def process_pattern(self) -> str:
