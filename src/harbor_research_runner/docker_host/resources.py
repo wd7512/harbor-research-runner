@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from harbor_research_runner.docker_host.cleanup import is_residue_container
-from harbor_research_runner.docker_host.profile import host_profile
+from harbor_research_runner.docker_host.profile import canonical_profile, host_profile
 from harbor_research_runner.records.resource_stats import Sample
 
 LINUX_MEMINFO = Path("/proc/meminfo")
@@ -176,7 +176,7 @@ def measure(
 
 def host_fingerprint(run: Callable = subprocess.run, *, profile: dict | None = None) -> str:
     selected = host_profile(run) if profile is None else profile
-    canonical = {key: value for key, value in selected.items() if key != "hostname"}
+    canonical = canonical_profile(selected)
     return hashlib.sha256(
         json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:12]

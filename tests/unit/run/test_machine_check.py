@@ -55,6 +55,11 @@ def _checks(tmp_path: Path) -> CheckDeps:
         read_machine_check=lambda _path: None,
         host_fingerprint=lambda: "fingerprint",
         harbor_version=lambda: "0.23.0",
+        host_profile=lambda: {
+            "arch": "arm64",
+            "memory_cap": "kernel",
+            "container_network": "bridge",
+        },
         docker_memory_mb=lambda: 32768,
         bind_port=lambda _host, _port: None,
     )
@@ -147,6 +152,22 @@ def test_task_arches_uses_host_architecture_for_dockerfile_tasks() -> None:
     assert arches == {"local-task": "arm64"}
 
 
+def test_task_arches_build_mode_uses_host_architecture_for_prebuilt_image() -> None:
+    task_tomls = {
+        "local-task": '[task]\nname = "local-task"\n[environment]\ndocker_image = "amd64/image"\n'
+    }
+
+    arches = task_arches(
+        task_tomls,
+        {"local-task": "sha256:task"},
+        "arm64",
+        images="build",
+        image_arch=lambda _image: pytest.fail("build mode uses the host architecture"),
+    )
+
+    assert arches == {"local-task": "arm64"}
+
+
 def test_task_arches_names_task_when_declared_image_is_unavailable() -> None:
     task_tomls = {
         "task-a": '[task]\nname = "task-a"\n[environment]\ndocker_image = "missing/image"\n'
@@ -188,14 +209,21 @@ def test_run_machine_check_writes_results_and_keeps_the_host_lock(
     assert result.tasks[0]["agent_budget_s"] == 3600.0
     assert result.tasks[0]["nothing_reward"] == 0.0
     assert result.host_fingerprint == "fingerprint"
-    assert result.host_profile == {}
+    assert result.host_profile == {
+        "arch": "arm64",
+        "memory_cap": "kernel",
+        "container_network": "bridge",
+    }
     assert checks.host_lock.held
     checks.host_lock.release()
 
 
-def test_run_machine_check_uses_local_task_id_for_all_task_rows(
+def _run_local_task_machine_check(
     tmp_path: Path,
-) -> None:
+    *,
+    oracle_reward: float = 1.0,
+    image_arch: str = "arm64",
+):
     task_dir = tmp_path / "say-hello"
     task_dir.mkdir()
     (task_dir / "task.toml").write_text(
@@ -222,6 +250,8 @@ def test_run_machine_check_uses_local_task_id_for_all_task_rows(
         result["task_name"] = "org/say-hello"
         if job_name == "nop-job":
             result["verifier_result"]["rewards"]["reward"] = 0.0
+        else:
+            result["verifier_result"]["rewards"]["reward"] = oracle_reward
         result_path.write_text(json.dumps(result), encoding="utf-8")
         return 0
 
@@ -231,7 +261,7 @@ def test_run_machine_check_uses_local_task_id_for_all_task_rows(
         local_harbor,
         lambda: 1_800_000_000.0,
         host_arch=lambda: "arm64",
-        image_arch=lambda image: "amd64" if image == "example/task:latest" else "arm64",
+        image_arch=lambda _image: image_arch,
     )
     job = replace(
         _job(),
@@ -241,12 +271,18 @@ def test_run_machine_check_uses_local_task_id_for_all_task_rows(
     result = run_machine_check(
         job, tmp_path / "checks" / "local.json", True, tmp_path / "runs", deps
     )
+    checks.host_lock.release()
+    return result, digest
+
+
+def test_run_machine_check_uses_local_task_id_for_all_task_rows(tmp_path: Path) -> None:
+    result, digest = _run_local_task_machine_check(tmp_path)
 
     assert result.included == ["say-hello"]
     task = result.tasks[0]
     assert task["name"] == "say-hello"
     assert task["digest"] == digest
-    assert task["arch"] == "amd64"
+    assert task["arch"] == "arm64"
     assert task["memory_mb"] == 2048
     assert task["oracle_reward"] == 1.0
     assert task["agent_budget_s"] == 12.0
@@ -254,4 +290,30 @@ def test_run_machine_check_uses_local_task_id_for_all_task_rows(
     assert task["nothing_reward"] == 0.0
     assert task["agent_s"] > 0
     assert task["verifier_s"] > 0
-    checks.host_lock.release()
+
+
+@pytest.mark.parametrize(
+    ("oracle_reward", "expected_included", "warns"),
+    [(0.0, False, True), (1.0, True, False)],
+)
+def test_machine_check_warns_only_for_excluded_prebuilt_arch_mismatches(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    oracle_reward: float,
+    expected_included: bool,
+    warns: bool,
+) -> None:
+    result, _digest = _run_local_task_machine_check(
+        tmp_path,
+        oracle_reward=oracle_reward,
+        image_arch="amd64",
+    )
+
+    assert ("say-hello" in result.included) is expected_included
+    warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert len(warnings) == int(warns)
+    if warns:
+        assert "say-hello" in warnings[0]
+        assert "amd64" in warnings[0]
+        assert "arm64" in warnings[0]
+        assert "set tasks.images: build" in warnings[0]

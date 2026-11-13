@@ -49,6 +49,7 @@ _PROFILE = {
     "rootless": False,
     "cgroup_version": "2",
     "docker_memory_mb": 32768,
+    "container_network": "bridge",
 }
 
 

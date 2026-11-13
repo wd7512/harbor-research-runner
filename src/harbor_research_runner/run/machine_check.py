@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import tomllib
 from collections.abc import Callable, Mapping
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from harbor_research_runner.harbor_adapter import job_folder
 from harbor_research_runner.harbor_adapter.commands import (
+    apply_host_policy,
     machine_check_command,
     oracle_job_config,
     write_job_config,
@@ -18,7 +20,13 @@ from harbor_research_runner.harbor_adapter.task_files import task_tomls
 from harbor_research_runner.harness.manifest import host_arch, local_image_arch
 from harbor_research_runner.job_config.job_file import Job
 from harbor_research_runner.records.machine_check import MachineCheck, write
-from harbor_research_runner.run.checks import CheckDeps, machine_check_launch_checks
+from harbor_research_runner.run.checks import (
+    CheckDeps,
+    machine_check_launch_checks,
+    task_source_record,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,7 @@ def task_arches(
     digests: Mapping[str, str],
     docker_host_arch: str,
     image_arch: Callable[[str], str] = local_image_arch,
+    images: str = "prebuilt",
 ) -> dict[str, str]:
     arches: dict[str, str] = {}
     for name in digests:
@@ -68,7 +77,7 @@ def task_arches(
         if not isinstance(environment, dict):
             raise ValueError(f"task {name!r} has invalid [environment] in task.toml")
         image = environment.get("docker_image")
-        if image is None:
+        if image is None or images == "build":
             arches[name] = docker_host_arch
             continue
         if not isinstance(image, str) or not image:
@@ -121,10 +130,15 @@ def run_machine_check(
     task_names = list(job.tasks.include)
     oracle_name = "harbor-job"
     oracle_config_name = "oracle-job-config.yaml"
-    write_job_config(
-        check_dir / oracle_config_name,
-        oracle_job_config(job, task_names, "oracle", oracle_name),
+    profile = deps.checks.host_profile()
+    oracle_config = oracle_job_config(job, task_names, "oracle", oracle_name)
+    apply_host_policy(
+        oracle_config,
+        profile,
+        job.tasks.images,
+        check_dir / "compose-host-network.yaml",
     )
+    write_job_config(check_dir / oracle_config_name, oracle_config)
     command = machine_check_command(check_dir, oracle_name, oracle_config_name)
     if deps.run_harbor(command, check_dir) != 0:
         raise RuntimeError("Harbor oracle machine-check job failed")
@@ -144,17 +158,24 @@ def run_machine_check(
         name: verifier_budget for name, (_, verifier_budget) in task_budgets.items()
     }
     digests = job_folder.task_digests(oracle_dir)
-    arches = task_arches(task_toml_texts, digests, deps.host_arch(), deps.image_arch)
+    docker_host_arch = deps.host_arch()
+    arches = task_arches(
+        task_toml_texts, digests, docker_host_arch, deps.image_arch, job.tasks.images
+    )
     memories = task_memories(task_toml_texts, digests)
 
     nothing_rewards: dict[str, float | None] = {name: None for name in oracle_trials}
     if with_do_nothing:
         nop_name = "nop-job"
         nop_config_name = "nop-job-config.yaml"
-        write_job_config(
-            check_dir / nop_config_name,
-            oracle_job_config(job, task_names, "nop", nop_name),
+        config = oracle_job_config(job, task_names, "nop", nop_name)
+        apply_host_policy(
+            config,
+            profile,
+            job.tasks.images,
+            check_dir / "compose-host-network.yaml",
         )
+        write_job_config(check_dir / nop_config_name, config)
         command = machine_check_command(check_dir, nop_name, nop_config_name)
         if deps.run_harbor(command, check_dir) != 0:
             raise RuntimeError("Harbor do-nothing machine-check job failed")
@@ -200,7 +221,20 @@ def run_machine_check(
             }
         )
 
-    task_source = _task_source(job)
+    if job.tasks.images == "prebuilt":
+        included = set(included_tasks(tasks))
+        for task in tasks:
+            if task["name"] not in included and task["arch"] != docker_host_arch:
+                logger.warning(
+                    "task %s was excluded: image architecture %s differs from Docker host "
+                    "architecture %s; set tasks.images: build if this host cannot emulate %s",
+                    task["name"],
+                    task["arch"],
+                    docker_host_arch,
+                    task["arch"],
+                )
+
+    task_source = task_source_record(job)
     check = MachineCheck(
         created_t=created_t,
         tool_version=version("harbor-research-runner"),
@@ -216,14 +250,3 @@ def run_machine_check(
     out.parent.mkdir(parents=True, exist_ok=True)
     write(out, check)
     return check
-
-
-def _task_source(job: Job) -> dict:
-    tasks = job.tasks
-    if tasks.kind == "dataset":
-        return {"dataset": tasks.dataset}
-    if tasks.kind == "path":
-        return {"path": tasks.path}
-    if tasks.kind == "git":
-        return {"git": {"url": tasks.git_url, "commit": tasks.git_commit}}
-    raise ValueError(f"unknown task source kind {tasks.kind!r}")

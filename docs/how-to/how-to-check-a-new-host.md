@@ -26,7 +26,9 @@ Confirm `checks/machine-check.json` exists and inspect `task_source`, `concurren
 
 The job file's `limits.memory_reserve_mb` can be raised or lowered for each host to reflect memory that must remain available outside task containers.
 
-The job file's `limits.memory_reserve_mb` can be raised or lowered for each host to reflect memory that must remain available outside task containers.
+## Hosts without a bridge network, or on another architecture
+
+When Docker has no bridge network, hrr uses host networking for Harbor's task containers. Set `proxy.container_host` in the job file to the reachable IP address; on Isambard's RootlessKit setup this is `10.0.2.2`. Hosts that cannot emulate a task image architecture (no binfmt or QEMU, such as Isambard) exclude those tasks at machine check with a warning; set `tasks.images: build` to build them natively. Docker Desktop emulates amd64 on Apple silicon, so `prebuilt` works there. Tasks whose own Compose files add sidecar services need Compose's default bridge network; their oracle fails on a host without a bridge and the machine check excludes them.
 
 ## C. Run a free-model pilot
 

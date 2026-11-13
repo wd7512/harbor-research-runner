@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import socket
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -130,6 +131,19 @@ def machine_check_launch_checks(job: Job, runs_dir: Path, deps: CheckDeps) -> li
     ]
 
 
+def proxy_host_reachable_check(job: Job, deps: CheckDeps) -> tuple[bool, str]:
+    if deps.host_profile().get("container_network") != "host":
+        return True, "container proxy host is reachable on the bridge network"
+    try:
+        ipaddress.ip_address(job.container_host)
+    except ValueError:
+        return False, (
+            "proxy.container_host must be an IP address on a host network; "
+            "RootlessKit host-loopback address is 10.0.2.2"
+        )
+    return True, f"proxy.container_host {job.container_host} is an IP address"
+
+
 def run_checks(
     job: Job,
     card: ModelCard,
@@ -193,7 +207,7 @@ def run_checks(
         if machine_check is None:
             return False, "machine check is unavailable"
         mismatches: list[str] = []
-        if machine_check.task_source != _task_source(job):
+        if machine_check.task_source != task_source_record(job):
             mismatches.append("task source differs")
         if machine_check.harbor_version != deps.harbor_version():
             mismatches.append("Harbor version differs")
@@ -297,6 +311,7 @@ def run_checks(
         _evaluate("machine_check_matches", machine_check_matches_check),
         _evaluate("tasks_included", tasks_included_check),
         _evaluate("memory_fits", memory_fits_check),
+        _evaluate("proxy_host_reachable", lambda: proxy_host_reachable_check(job, deps)),
     ]
 
 
@@ -310,12 +325,13 @@ def resolve_tasks(job: Job, machine_check: MachineCheck) -> list[str]:
     ]
 
 
-def _task_source(job: Job) -> dict:
+def task_source_record(job: Job) -> dict:
     tasks = job.tasks
+    images = {"images": tasks.images} if tasks.images == "build" else {}
     if tasks.kind == "dataset":
-        return {"dataset": tasks.dataset}
+        return {"dataset": tasks.dataset, **images}
     if tasks.kind == "path":
-        return {"path": tasks.path}
+        return {"path": tasks.path, **images}
     if tasks.kind == "git":
-        return {"git": {"url": tasks.git_url, "commit": tasks.git_commit}}
+        return {"git": {"url": tasks.git_url, "commit": tasks.git_commit}, **images}
     raise ValueError(f"unknown task source kind {tasks.kind!r}")
