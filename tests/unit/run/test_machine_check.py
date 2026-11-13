@@ -55,6 +55,7 @@ def _checks(tmp_path: Path) -> CheckDeps:
         read_machine_check=lambda _path: None,
         host_fingerprint=lambda: "fingerprint",
         harbor_version=lambda: "0.23.0",
+        docker_memory_mb=lambda: 32768,
         bind_port=lambda _host, _port: None,
     )
 
@@ -183,6 +184,7 @@ def test_run_machine_check_writes_results_and_keeps_the_host_lock(
     assert result.included == [TASK]
     assert result.tasks[0]["oracle_reward"] == 1.0
     assert result.tasks[0]["arch"] == "arm64"
+    assert result.tasks[0]["memory_mb"] is None
     assert result.tasks[0]["agent_budget_s"] == 3600.0
     assert result.tasks[0]["nothing_reward"] == 0.0
     assert result.host_fingerprint == "fingerprint"
@@ -198,7 +200,7 @@ def test_run_machine_check_uses_local_task_id_for_all_task_rows(
     (task_dir / "task.toml").write_text(
         '[task]\nname = "org/say-hello"\n[agent]\ntimeout_sec = 12\n'
         "[verifier]\ntimeout_sec = 3\n[environment]\n"
-        'docker_image = "example/task:latest"\n',
+        'docker_image = "example/task:latest"\nmemory_mb = 2048\n',
         encoding="utf-8",
     )
     digest = "sha256:" + "a" * 64
@@ -244,6 +246,7 @@ def test_run_machine_check_uses_local_task_id_for_all_task_rows(
     assert task["name"] == "say-hello"
     assert task["digest"] == digest
     assert task["arch"] == "amd64"
+    assert task["memory_mb"] == 2048
     assert task["oracle_reward"] == 1.0
     assert task["agent_budget_s"] == 12.0
     assert task["verifier_budget_s"] == 3.0
