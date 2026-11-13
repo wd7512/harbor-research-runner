@@ -159,7 +159,12 @@ def _task_budgets(session) -> tuple[float, float]:
 
 
 def build_snapshot(
-    session, job_dir: Path, pass_started_t: float, now: float, proxy_alive: bool
+    session,
+    job_dir: Path,
+    pass_started_t: float,
+    now: float,
+    proxy_alive: bool,
+    stop_launching_at: float | None = None,
 ) -> run_health.RunSnapshot:
     return _build_snapshot(
         session,
@@ -169,6 +174,7 @@ def build_snapshot(
         proxy_alive,
         JsonlTail(session.run_dir / "proxy-ledger.jsonl"),
         JsonlTail(session.run_dir / "resource-stats.jsonl"),
+        stop_launching_at,
     )
 
 
@@ -180,6 +186,7 @@ def _build_snapshot(
     proxy_alive: bool,
     ledger_tail: JsonlTail,
     resource_tail: JsonlTail,
+    stop_launching_at: float | None = None,
 ) -> run_health.RunSnapshot:
     ledger = ledger_tail.read()
     resources = resource_tail.read()
@@ -190,6 +197,7 @@ def _build_snapshot(
     ]
     events = _read_events(session.run_dir)
     verdicts = [row for row in events if row.get("type") == "trial_verdict"]
+    judged = {row["trial"] for row in verdicts if isinstance(row.get("trial"), str)}
     opens: set[str] = set()
     closed: set[str] = set()
     for row in rows:
@@ -232,6 +240,8 @@ def _build_snapshot(
         longest_agent_budget_s=longest_agent,
         longest_verifier_budget_s=longest_verifier,
         harbor_timeout_multiplier=timeout_multiplier,
+        stop_launching_at=stop_launching_at,
+        in_flight_trials=len(opens - judged),
     )
 
 
@@ -251,7 +261,10 @@ def watch(
     poll_s: float = 5.0,
     now=time.time,
     sleep=time.sleep,
+    stop_launching_at: float | None = None,
 ) -> WatchResult:
+    if stop_launching_at is None:
+        stop_launching_at = getattr(session, "stop_launching_at_epoch", None)
     judged = judged_trials(session.run_dir)
     ledger_tail = JsonlTail(session.run_dir / "proxy-ledger.jsonl")
     resource_tail = JsonlTail(session.run_dir / "resource-stats.jsonl")
@@ -267,8 +280,9 @@ def watch(
             session.proxy_alive(),
             ledger_tail,
             resource_tail,
+            stop_launching_at,
         )
-        halt = run_health.should_halt(snapshot, session.limits)
+        halt = run_health.should_halt(snapshot, session.limits, poll_s)
         if halt is not None:
             reason, detail = halt
             process_group.stop_group(harbor_process, grace_s=process_group.HARBOR_STOP_GRACE_S)

@@ -143,6 +143,44 @@ def test_rebuilt_judged_set_prevents_rejudging(tmp_path: Path) -> None:
     assert len(_events(run_dir)) == 1
 
 
+def test_open_trial_remains_in_flight_until_verdict_after_close(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    machine_check = run_dir / "machine-check.json"
+    _write_machine_check(
+        machine_check, [{"name": "task-a", "agent_budget_s": 60, "verifier_budget_s": 10}]
+    )
+    (run_dir / "proxy-ledger.jsonl").write_text(
+        json.dumps({"type": "open", "seq": 1, "t": 90, "trial": "trial-a"})
+        + "\n"
+        + json.dumps({"type": "close", "seq": 2, "t": 95, "trial": "trial-a"})
+        + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+    session = SimpleNamespace(
+        oom_watch_alive=lambda: True,
+        run_dir=run_dir,
+        job=SimpleNamespace(machine_check=machine_check),
+        metadata=SimpleNamespace(task_set={"tasks": [{"name": "task-a"}]}),
+    )
+
+    snapshot = build_snapshot(session, job_dir, 1, 101, True, 100)
+
+    assert snapshot.open_trials == 0
+    assert snapshot.in_flight_trials == 1
+
+    _append_event(
+        run_dir,
+        SimpleNamespace(to_row=lambda: {"type": "trial_verdict", "trial": "trial-a"}),
+    )
+    judged_snapshot = build_snapshot(session, job_dir, 1, 102, True, 100)
+
+    assert judged_snapshot.in_flight_trials == 0
+
+
 def test_repeated_agent_setup_failure_is_valid_after_set_aside(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()

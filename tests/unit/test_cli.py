@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -168,8 +169,8 @@ def test_run_builds_evidence_for_complete_outcome(tmp_path: Path) -> None:
     run_dir = tmp_path / "runs" / "r1"
     calls = []
 
-    def run_job(job, runs, manifest, environment, deps):
-        calls.append(("run", job, runs, manifest, environment, deps))
+    def run_job(job, runs, manifest, environment, deps, stop_launching_at):
+        calls.append(("run", job, runs, manifest, environment, deps, stop_launching_at))
         return RunOutcome(0, run_dir)
 
     def build_evidence(actual_run_dir, evidence_dir, environment):
@@ -203,8 +204,34 @@ def test_run_builds_evidence_for_complete_outcome(tmp_path: Path) -> None:
     assert calls[0][:4] == ("run", job, runs, manifest)
     assert calls[0][4] == os.environ.copy()
     assert calls[0][5] == "deps"
+    assert calls[0][6] is None
     assert calls[1][:3] == ("evidence", run_dir, evidence / "r1")
     assert calls[1][3] == calls[0][4]
+
+
+def test_run_accepts_timezone_aware_future_stop_launching_at(tmp_path: Path) -> None:
+    deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    calls = []
+
+    def run_job(*args):
+        calls.append(args)
+        return RunOutcome(2, None)
+
+    result = cli.main(
+        ["run", str(tmp_path / "study.yaml"), "--stop-launching-at", deadline, "--no-evidence"],
+        steps={"run_job": run_job, "run_deps": lambda: "deps"},
+    )
+
+    assert result == 2
+    assert calls[0][-1] == deadline
+
+
+@pytest.mark.parametrize("value", ["2030-01-01T00:00:00", "2000-01-01T00:00:00Z"])
+def test_run_rejects_naive_or_past_stop_launching_at(value: str, tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        cli._parser().parse_args(
+            ["run", str(tmp_path / "study.yaml"), "--stop-launching-at", value]
+        )
 
 
 def test_run_does_not_build_evidence_for_halted_outcome(tmp_path: Path) -> None:
@@ -229,8 +256,9 @@ def test_run_resume_routes_run_id_to_resume_function(tmp_path: Path) -> None:
         cli.main(
             ["run", "--resume", "run-1", "--no-evidence"],
             steps={
-                "resume_run": lambda run_id, runs, manifest, environment, deps: (
-                    calls.append((run_id, runs, manifest, deps)) or RunOutcome(2, None)
+                "resume_run": lambda run_id, runs, manifest, environment, deps, stop_launching_at: (
+                    calls.append((run_id, runs, manifest, deps, stop_launching_at))
+                    or RunOutcome(2, None)
                 ),
                 "run_deps": lambda: "deps",
             },
@@ -238,7 +266,13 @@ def test_run_resume_routes_run_id_to_resume_function(tmp_path: Path) -> None:
         == 2
     )
     assert calls == [
-        ("run-1", Path("runs").resolve(), Path("harness-manifest.toml").resolve(), "deps")
+        (
+            "run-1",
+            Path("runs").resolve(),
+            Path("harness-manifest.toml").resolve(),
+            "deps",
+            None,
+        )
     ]
 
 

@@ -5,6 +5,7 @@ import logging
 import math
 import time
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
@@ -112,6 +113,35 @@ class RamSpareGate:
             backoff = min(self._max_backoff_s, backoff * 2)
 
 
+class StopLaunchingGate:
+    def __init__(
+        self,
+        stop_launching_at: float | None,
+        *,
+        sleep: Callable[[float], Any] = asyncio.sleep,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self.stop_launching_at = stop_launching_at
+        self._sleep = sleep
+        self._clock = clock
+
+    async def wait_until_open(self, *, trial: str, task: str) -> None:
+        if self.stop_launching_at is None:
+            return
+        backoff = _INITIAL_BACKOFF_S
+        attempts = 0
+        while self._clock() >= self.stop_launching_at:
+            attempts += 1
+            if attempts == 1:
+                logger.warning(
+                    "launch deadline: deferring %s (task %s) until the next run pass",
+                    trial,
+                    task,
+                )
+            await self._sleep(backoff)
+            backoff = min(_MAX_BACKOFF_S, backoff * 2)
+
+
 def _post(url: str, body: bytes) -> int:
     request = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     with urlopen(request, timeout=10) as response:
@@ -125,8 +155,19 @@ def sort_slowest_first(
 
 
 class RunPlugin(BaseJobPlugin):
-    def __init__(self, proxy_url: str, limits_file: str | Path, task_order: str) -> None:
-        super().__init__(proxy_url=proxy_url, limits_file=limits_file, task_order=task_order)
+    def __init__(
+        self,
+        proxy_url: str,
+        limits_file: str | Path,
+        task_order: str,
+        stop_launching_at: str | None = None,
+    ) -> None:
+        super().__init__(
+            proxy_url=proxy_url,
+            limits_file=limits_file,
+            task_order=task_order,
+            stop_launching_at=stop_launching_at,
+        )
         if task_order not in {"as_listed", "slowest_first"}:
             raise ValueError(f"task_order must be as_listed or slowest_first; got {task_order!r}")
         proxy_config = read_proxy_config(Path(limits_file))
@@ -137,6 +178,13 @@ class RunPlugin(BaseJobPlugin):
             min_spare_memory_mb=limits.min_spare_memory_mb,
             launch_min_interval_s=limits.launch_min_interval_s,
         )
+        deadline = None
+        if stop_launching_at is not None:
+            parsed_deadline = datetime.fromisoformat(stop_launching_at)
+            if parsed_deadline.tzinfo is None or parsed_deadline.utcoffset() is None:
+                raise ValueError("stop_launching_at must include a timezone")
+            deadline = parsed_deadline.timestamp()
+        self._stop_launching_gate = StopLaunchingGate(deadline)
 
     @staticmethod
     def _task_label(config: TrialConfig) -> str:
@@ -179,6 +227,9 @@ class RunPlugin(BaseJobPlugin):
         await self._gate.wait_for_headroom(trial=event.trial_name, task=event.task_name)
 
     async def _on_agent_start(self, event: TrialHookEvent) -> None:
+        await self._stop_launching_gate.wait_until_open(
+            trial=event.trial_name, task=event.task_name
+        )
         kwargs = event.config.agent.kwargs
         arm = kwargs.get("arm_label") if isinstance(kwargs, dict) else None
         if not isinstance(arm, str) or not arm:

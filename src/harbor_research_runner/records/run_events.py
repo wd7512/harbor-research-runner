@@ -51,6 +51,14 @@ class HarborExit(_Event):
 
 
 @dataclass(frozen=True)
+class StopLaunchingAt(_Event):
+    t: float
+    pass_number: int
+    time: str
+    type: str = "stop_launching_at"
+
+
+@dataclass(frozen=True)
 class TrialVerdict(_Event):
     t: float
     trial: str
@@ -109,6 +117,7 @@ _EVENT_TYPES = {
         LaunchCheck,
         HarborStart,
         HarborExit,
+        StopLaunchingAt,
         TrialVerdict,
         SetAside,
         Halt,
