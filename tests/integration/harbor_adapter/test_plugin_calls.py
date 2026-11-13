@@ -6,7 +6,7 @@ import threading
 import urllib.error
 from collections.abc import Iterator
 from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import cast
 
@@ -15,6 +15,7 @@ from harbor.models.trial.config import AgentConfig, TaskConfig, TrialConfig
 from harbor.trial.hooks import TrialEvent, TrialHookEvent
 
 from harbor_research_runner.harbor_adapter.plugin import RamSpareGate, RunPlugin
+from harbor_research_runner.local_http import LocalHTTPServer
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.proxy_control import ProxyConfig
 
@@ -22,7 +23,7 @@ TASK = "terminal-bench/bn-fit-modify"
 TRIAL = "bn-fit-modify__xzmPm77"
 
 
-class _ProxyServer(ThreadingHTTPServer):
+class _ProxyServer(LocalHTTPServer):
     def __init__(self, handler):
         super().__init__(("127.0.0.1", 0), handler)
         self.requests: list[tuple[str, dict]] = []
