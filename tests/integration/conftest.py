@@ -50,7 +50,7 @@ class ProxyProcess:
             text=True,
             preexec_fn=preexec_fn,
         )
-        deadline = time.monotonic() + 2
+        deadline = time.monotonic() + 10
         last_error: Exception | None = None
         while time.monotonic() < deadline:
             assert self.process is not None
