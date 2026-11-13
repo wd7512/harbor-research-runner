@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import select
 import signal
 import subprocess
 import threading
@@ -41,8 +40,18 @@ def _watch_lifeline(fd: int, stopped: threading.Event) -> None:
         stopped.set()
 
 
+def _pump(stdout, fd: int, failed: threading.Event) -> None:
+    try:
+        for line in stdout:
+            append_event_line(fd, line)
+    except BaseException:
+        failed.set()
+        raise
+
+
 def run_oom_watch(out: Path, lifeline_fd: int | None = None) -> int:
     stopped = threading.Event()
+    failed = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopped.set())
     if lifeline_fd is not None:
         threading.Thread(target=_watch_lifeline, args=(lifeline_fd, stopped), daemon=True).start()
@@ -55,33 +64,21 @@ def run_oom_watch(out: Path, lifeline_fd: int | None = None) -> int:
         text=True,
         encoding="utf-8",
     )
+    reader = threading.Thread(target=_pump, args=(process.stdout, fd, failed), daemon=True)
+    reader.start()
     try:
-        if process.stdout is None:
-            raise RuntimeError("Docker event stream has no stdout")
-        while not stopped.is_set():
-            ready, _, _ = select.select([process.stdout], [], [], 0.2)
-            if ready:
-                line = process.stdout.readline()
-                if not line:
-                    returncode = process.poll()
-                    if returncode is not None:
-                        return returncode if returncode != 0 else 1
-                    continue
-                append_event_line(fd, line)
-                continue
-            returncode = process.poll()
-            if returncode is not None:
-                return returncode if returncode != 0 else 1
-        process.terminate()
-        process.wait()
+        while not stopped.wait(0.2):
+            if failed.is_set():
+                return 1
+            if process.poll() is not None:
+                reader.join(timeout=1)
+                return process.returncode or 1
         return 0
-    except BaseException:
-        process.terminate()
-        process.wait()
-        raise
     finally:
-        if process.stdout is not None:
-            process.stdout.close()
+        if process.poll() is None:
+            process.terminate()
+            process.wait()
+        reader.join(timeout=1)
         os.close(fd)
 
 
