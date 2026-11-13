@@ -12,6 +12,7 @@ from harbor_research_runner.harness.manifest import (
     add_entry,
     host_arch,
     load_manifest,
+    local_image_arch,
     local_image_digest,
     verify_arm,
 )
@@ -295,6 +296,17 @@ def test_local_image_digest_returns_image_id() -> None:
         return subprocess.CompletedProcess(args, 0, stdout=DIGEST + "\n", stderr="")
 
     assert local_image_digest("some-image", run=present) == DIGEST
+
+
+@pytest.mark.parametrize(("reported", "expected"), [("x86_64", "amd64"), ("aarch64", "arm64")])
+def test_local_image_arch_inspects_and_normalizes_architecture(
+    reported: str, expected: str
+) -> None:
+    def inspect(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert args == ["docker", "image", "inspect", "--format", "{{.Architecture}}", "some-image"]
+        return subprocess.CompletedProcess(args, 0, stdout=reported + "\n", stderr="")
+
+    assert local_image_arch("some-image", run=inspect) == expected
 
 
 @pytest.mark.parametrize(("reported", "expected"), [("x86_64", "amd64"), ("aarch64", "arm64")])

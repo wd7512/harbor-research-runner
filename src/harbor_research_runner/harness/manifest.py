@@ -259,8 +259,37 @@ def host_arch(
     if result.returncode != 0:
         raise ManifestError("could not determine Docker host architecture")
     architecture = result.stdout.strip().lower()
+    normalized = _normalize_architecture(architecture)
+    if normalized is None:
+        raise ManifestError(f"unsupported Docker host architecture {architecture!r}")
+    return normalized
+
+
+def local_image_arch(
+    ref: str,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str:
+    try:
+        result = run(
+            ["docker", "image", "inspect", "--format", "{{.Architecture}}", ref],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ManifestError(f"could not inspect local image {ref!r}: {exc}") from exc
+    if result.returncode != 0:
+        raise ManifestError(f"could not inspect local image {ref!r}")
+    architecture = result.stdout.strip().lower()
+    normalized = _normalize_architecture(architecture)
+    if normalized is None:
+        raise ManifestError(f"unsupported architecture {architecture!r} for local image {ref!r}")
+    return normalized
+
+
+def _normalize_architecture(architecture: str) -> str | None:
     if architecture in {"amd64", "x86_64", "x86-64"}:
         return "amd64"
     if architecture in {"arm64", "aarch64"}:
         return "arm64"
-    raise ManifestError(f"unsupported Docker host architecture {architecture!r}")
+    return None

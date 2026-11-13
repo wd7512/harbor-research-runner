@@ -16,6 +16,7 @@ from harbor_research_runner.run.machine_check import (
     MachineCheckDeps,
     included_tasks,
     run_machine_check,
+    task_arches,
     verifier_multiplier,
 )
 
@@ -112,6 +113,53 @@ def test_included_tasks_require_oracle_pass_and_do_nothing_failure() -> None:
     assert included_tasks(tasks) == ["included", "no-nop-check"]
 
 
+def test_task_arches_inspects_declared_local_docker_image() -> None:
+    task_tomls = {
+        "terminal-bench/fix-git": (
+            '[task]\nname = "terminal-bench/fix-git"\n'
+            '[environment]\ndocker_image = "alexgshaw/fix-git:20260403"\n'
+        )
+    }
+    digests = {"terminal-bench/fix-git": "16948b98"}
+
+    arches = task_arches(
+        task_tomls,
+        digests,
+        "arm64",
+        image_arch=lambda image: "amd64" if image == "alexgshaw/fix-git:20260403" else "arm64",
+    )
+
+    assert arches == {"terminal-bench/fix-git": "amd64"}
+
+
+def test_task_arches_uses_host_architecture_for_dockerfile_tasks() -> None:
+    task_tomls = {"local-task": '[task]\nname = "local-task"\n[environment]\n'}
+    digests = {"local-task": "sha256:task"}
+
+    arches = task_arches(
+        task_tomls,
+        digests,
+        "arm64",
+        image_arch=lambda _image: pytest.fail("Dockerfile tasks use the host architecture"),
+    )
+
+    assert arches == {"local-task": "arm64"}
+
+
+def test_task_arches_names_task_when_declared_image_is_unavailable() -> None:
+    task_tomls = {
+        "task-a": '[task]\nname = "task-a"\n[environment]\ndocker_image = "missing/image"\n'
+    }
+
+    with pytest.raises(ValueError, match=r"task-a.*missing/image"):
+        task_arches(
+            task_tomls,
+            {"task-a": "sha256:task"},
+            "arm64",
+            image_arch=lambda _image: (_ for _ in ()).throw(ValueError("not local")),
+        )
+
+
 def test_run_machine_check_writes_results_and_keeps_the_host_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -122,7 +170,10 @@ def test_run_machine_check_writes_results_and_keeps_the_host_lock(
     monkeypatch.setattr(harbor_task_id, "PACKAGE_CACHE_DIR", package_cache)
     checks = _checks(tmp_path)
     deps = MachineCheckDeps(
-        checks, _fake_harbor(tmp_path, checks.host_lock), lambda: 1_800_000_000.0
+        checks,
+        _fake_harbor(tmp_path, checks.host_lock),
+        lambda: 1_800_000_000.0,
+        host_arch=lambda: "arm64",
     )
     out = tmp_path / "checks" / "machine-check.json"
 
@@ -131,6 +182,7 @@ def test_run_machine_check_writes_results_and_keeps_the_host_lock(
     assert read(out) == result
     assert result.included == [TASK]
     assert result.tasks[0]["oracle_reward"] == 1.0
+    assert result.tasks[0]["arch"] == "arm64"
     assert result.tasks[0]["agent_budget_s"] == 3600.0
     assert result.tasks[0]["nothing_reward"] == 0.0
     assert result.host_fingerprint == "fingerprint"
@@ -144,7 +196,9 @@ def test_run_machine_check_uses_local_task_id_for_all_task_rows(
     task_dir = tmp_path / "say-hello"
     task_dir.mkdir()
     (task_dir / "task.toml").write_text(
-        '[task]\nname = "org/say-hello"\n[agent]\ntimeout_sec = 12\n[verifier]\ntimeout_sec = 3\n',
+        '[task]\nname = "org/say-hello"\n[agent]\ntimeout_sec = 12\n'
+        "[verifier]\ntimeout_sec = 3\n[environment]\n"
+        'docker_image = "example/task:latest"\n',
         encoding="utf-8",
     )
     digest = "sha256:" + "a" * 64
@@ -169,7 +223,13 @@ def test_run_machine_check_uses_local_task_id_for_all_task_rows(
         return 0
 
     checks = _checks(tmp_path)
-    deps = MachineCheckDeps(checks, local_harbor, lambda: 1_800_000_000.0)
+    deps = MachineCheckDeps(
+        checks,
+        local_harbor,
+        lambda: 1_800_000_000.0,
+        host_arch=lambda: "arm64",
+        image_arch=lambda image: "amd64" if image == "example/task:latest" else "arm64",
+    )
     job = replace(
         _job(),
         tasks=TaskSource("path", None, str(task_dir), None, None, ("say-hello",), ()),
@@ -183,6 +243,7 @@ def test_run_machine_check_uses_local_task_id_for_all_task_rows(
     task = result.tasks[0]
     assert task["name"] == "say-hello"
     assert task["digest"] == digest
+    assert task["arch"] == "amd64"
     assert task["oracle_reward"] == 1.0
     assert task["agent_budget_s"] == 12.0
     assert task["verifier_budget_s"] == 3.0

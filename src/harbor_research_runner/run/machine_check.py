@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+import tomllib
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import version
@@ -14,6 +15,7 @@ from harbor_research_runner.harbor_adapter.commands import (
     write_job_config,
 )
 from harbor_research_runner.harbor_adapter.task_files import task_tomls
+from harbor_research_runner.harness.manifest import host_arch, local_image_arch
 from harbor_research_runner.job_config.job_file import Job
 from harbor_research_runner.records.machine_check import MachineCheck, write
 from harbor_research_runner.run.checks import CheckDeps, machine_check_launch_checks
@@ -24,6 +26,8 @@ class MachineCheckDeps:
     checks: CheckDeps
     run_harbor: Callable[[list[str], Path], int]
     now: Callable[[], float]
+    host_arch: Callable[[], str] = host_arch
+    image_arch: Callable[[str], str] = local_image_arch
 
 
 def verifier_multiplier(tasks: list[dict]) -> float:
@@ -42,6 +46,40 @@ def included_tasks(tasks: list[dict]) -> list[str]:
         if task["oracle_reward"] == 1.0
         and (task["nothing_reward"] is None or task["nothing_reward"] == 0.0)
     ]
+
+
+def task_arches(
+    task_toml_texts: Mapping[str, str],
+    digests: Mapping[str, str],
+    docker_host_arch: str,
+    image_arch: Callable[[str], str] = local_image_arch,
+) -> dict[str, str]:
+    arches: dict[str, str] = {}
+    for name in digests:
+        try:
+            task_toml = task_toml_texts[name]
+        except KeyError as exc:
+            raise ValueError(f"task {name!r} has no task.toml") from exc
+        try:
+            task_data = tomllib.loads(task_toml)
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError(f"task {name!r} has invalid task.toml: {exc}") from exc
+        environment = task_data.get("environment", {})
+        if not isinstance(environment, dict):
+            raise ValueError(f"task {name!r} has invalid [environment] in task.toml")
+        image = environment.get("docker_image")
+        if image is None:
+            arches[name] = docker_host_arch
+            continue
+        if not isinstance(image, str) or not image:
+            raise ValueError(f"task {name!r} has invalid environment.docker_image {image!r}")
+        try:
+            arches[name] = image_arch(image)
+        except Exception as exc:
+            raise ValueError(
+                f"could not determine architecture for task {name!r} image {image!r}: {exc}"
+            ) from exc
+    return arches
 
 
 def run_machine_check(
@@ -83,6 +121,7 @@ def run_machine_check(
         name: verifier_budget for name, (_, verifier_budget) in task_budgets.items()
     }
     digests = job_folder.task_digests(oracle_dir)
+    arches = task_arches(task_toml_texts, digests, deps.host_arch(), deps.image_arch)
 
     nothing_rewards: dict[str, float | None] = {name: None for name in oracle_trials}
     if with_do_nothing:
@@ -126,6 +165,7 @@ def run_machine_check(
             {
                 "name": name,
                 "digest": digests[name],
+                "arch": arches[name],
                 "oracle_reward": facts.reward,
                 "agent_s": agent_finish - agent_start,
                 "agent_budget_s": agent_budgets[name],

@@ -48,6 +48,18 @@ def test_machine_check_parser_rejects_unknown_field():
         MachineCheck.from_row(row)
 
 
+def test_old_machine_check_task_without_arch_still_loads(tmp_path):
+    path = tmp_path / "machine-check.json"
+    check = _machine_check()
+    row = check.to_row()
+    row["tasks"] = [{"name": "task-a", "digest": "old-task-digest"}]
+    path.write_text(json.dumps(row), encoding="utf-8")
+
+    loaded = read(path)
+
+    assert loaded.tasks == [{"name": "task-a", "digest": "old-task-digest"}]
+
+
 def test_machine_check_write_overwrites_and_reads(tmp_path):
     path = tmp_path / "machine-check.json"
     first = _machine_check()
