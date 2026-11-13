@@ -16,6 +16,7 @@ class MachineCheck:
     tasks: list[dict]
     included: list[str]
     verifier_timeout_multiplier: float
+    host_profile: dict | None = None
 
     def excluded_tasks(self) -> list[str]:
         included = set(self.included)
@@ -29,7 +30,9 @@ class MachineCheck:
 
     @classmethod
     def from_row(cls, row: dict) -> "MachineCheck":
-        if set(row) != {item.name for item in fields(cls)}:
+        names = {item.name for item in fields(cls)}
+        row = {"host_profile": None, **row}
+        if set(row) != names:
             raise ValueError("machine check fields do not match")
         return cls(**row)
 

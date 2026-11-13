@@ -51,3 +51,25 @@ def test_report_lists_machine_check_exclusions():
     report = _render("clean")
 
     assert "2 excluded by the machine check (task/d, task/e)" in report
+
+
+def test_report_includes_host_memory_cap_and_rootless_status():
+    run_dir = FIXTURES / "clean"
+    rows = build_trial_rows(run_dir)
+    metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+    metadata["host"]["host_profile"] = {"memory_cap": "kernel", "rootless": False}
+    events = [
+        json.loads(line)
+        for line in (run_dir / "run-events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    tasks = sorted({row.task for row in rows if row.location != "canary-job"})
+    report = render_report(
+        rows,
+        metadata,
+        events,
+        list(product(tasks, [arm["label"] for arm in metadata["arms"]])),
+        metadata["job"]["repetitions"],
+        machine_check=read(run_dir / "machine-check.json"),
+    )
+
+    assert "Machine: fixture-host, memory_cap=kernel, rootless=false" in report

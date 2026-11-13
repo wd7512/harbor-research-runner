@@ -31,7 +31,9 @@ def test_machine_check_round_trips():
     assert MachineCheck.from_row(check.to_row()) == check
 
 
-@pytest.mark.parametrize("field", list(_machine_check().to_row()))
+@pytest.mark.parametrize(
+    "field", [field for field in _machine_check().to_row() if field != "host_profile"]
+)
 def test_machine_check_parser_rejects_missing_field(field):
     row = _machine_check().to_row()
     row.pop(field)
@@ -46,6 +48,15 @@ def test_machine_check_parser_rejects_unknown_field():
 
     with pytest.raises(ValueError):
         MachineCheck.from_row(row)
+
+
+def test_old_machine_check_without_host_profile_still_loads():
+    row = _machine_check().to_row()
+    row.pop("host_profile")
+
+    loaded = MachineCheck.from_row(row)
+
+    assert loaded.host_profile is None
 
 
 def test_old_machine_check_task_without_arch_still_loads(tmp_path):

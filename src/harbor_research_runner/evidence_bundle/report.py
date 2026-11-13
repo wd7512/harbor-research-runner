@@ -66,12 +66,19 @@ def render_report(
     task_names = sorted({task for task, _arm in planned_slots})
     excluded_tasks = machine_check.excluded_tasks()
     host = metadata.get("host", {})
+    host_profile = host.get("host_profile", {})
     machine = (
         ", ".join(
             value
             for value in (
                 host.get("fingerprint") or machine_check.host_fingerprint,
                 host.get("arch"),
+                f"memory_cap={host_profile['memory_cap']}"
+                if host_profile.get("memory_cap")
+                else None,
+                f"rootless={str(host_profile['rootless']).lower()}"
+                if "rootless" in host_profile
+                else None,
             )
             if value
         )

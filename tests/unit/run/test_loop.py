@@ -40,6 +40,17 @@ from harbor_research_runner.run.loop import (
 from harbor_research_runner.run.tool_identity import ToolIdentity
 from harbor_research_runner.run.watch import WatchResult
 
+_PROFILE = {
+    "arch": "arm64",
+    "cpus": 8,
+    "docker_version": "27.0.0",
+    "memory_cap": "kernel",
+    "swap_limit": True,
+    "rootless": False,
+    "cgroup_version": "2",
+    "docker_memory_mb": 32768,
+}
+
 
 def _bind_port(_host: str, _port: int) -> None:
     return None
@@ -216,7 +227,7 @@ def dependencies(
             processes=lambda _run_dir: [],
         ),
         tool=ToolIdentity("0.1.0", "a" * 40),
-        host=lambda: {},
+        host=lambda: _HOST,
         start_harbor=lambda argv, _cwd, _lifeline_fd: commands.append(argv) or Process(),
         watch=watch_fn,
         start_services=start_services,
@@ -231,6 +242,9 @@ def _resume_dependencies(
     watch_fn: Callable,
     commands: list[list[str]],
     stopped: list[bool],
+    *,
+    hostname: str = "node-a",
+    profile: dict = _PROFILE,
 ) -> RunDeps:
     def start_services(session, _restart) -> None:
         session._lifeline_read_fd = 0
@@ -244,6 +258,7 @@ def _resume_dependencies(
             host_lock=HostLock(tmp_path / "resume-host.lock"),
             read_machine_check=lambda _path: machine_check,
             host_fingerprint=lambda: "fingerprint",
+            host_profile=lambda: profile,
             harbor_version=lambda: "0.23.0",
             docker_memory_mb=lambda: 32768,
             bind_port=_bind_port,
@@ -252,10 +267,12 @@ def _resume_dependencies(
         tool=ToolIdentity("0.1.0", "a" * 40),
         host=lambda: {
             "fingerprint": "fingerprint",
+            "hostname": hostname,
             "arch": "arm64",
             "cpus": 8,
             "memory_mb": 32768,
             "docker_version": "27.0.0",
+            "host_profile": profile,
         },
         start_harbor=lambda argv, _cwd, _lifeline_fd: commands.append(argv) or Process(),
         watch=watch_fn,
@@ -402,6 +419,7 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
         tool_version="0.1.0",
         harbor_version="0.23.0",
         host_fingerprint="fingerprint",
+        host_profile=_PROFILE,
         task_source={"dataset": "bench/tasks"},
         concurrency=1,
         tasks=[{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}],
@@ -417,6 +435,7 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
         host_lock=HostLock(lock_path),
         read_machine_check=lambda _path: machine_check,
         host_fingerprint=lambda: "fingerprint",
+        host_profile=lambda: _PROFILE,
         harbor_version=lambda: "0.23.0",
         docker_memory_mb=lambda: 32768,
         bind_port=_bind_port,
@@ -427,10 +446,12 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
         tool=ToolIdentity("0.1.0", "a" * 40),
         host=lambda: {
             "fingerprint": "fingerprint",
+            "hostname": "node-a",
             "arch": "arm64",
             "cpus": 8,
             "memory_mb": 32768,
             "docker_version": "27.0.0",
+            "host_profile": _PROFILE,
         },
         start_harbor=lambda *_args: started.append(True),
         watch=lambda *_args: None,
@@ -501,6 +522,7 @@ def _finished_session(
         tool_version="0.1.0",
         harbor_version="0.23.0",
         host_fingerprint="fingerprint",
+        host_profile=_PROFILE,
         task_source={"dataset": "bench/tasks"},
         concurrency=1,
         tasks=[{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}],
@@ -528,13 +550,7 @@ def _finished_session(
         check,
         lambda: 1794480000.0,
         ToolIdentity("0.1.0", "a" * 40),
-        {
-            "fingerprint": "fingerprint",
-            "arch": "arm64",
-            "cpus": 8,
-            "memory_mb": 32768,
-            "docker_version": "27.0.0",
-        },
+        _HOST,
     )
     if finished:
         session.event(Finish(1.0, 3, 0, 1))
@@ -556,7 +572,7 @@ def test_resume_of_finished_run_returns_one_without_appending(tmp_path: Path) ->
     assert "already finished" in (run_dir / "runner.log").read_text(encoding="utf-8")
 
 
-def test_resume_restarts_harbor_when_a_slot_has_unplanned_trials(
+def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_trials(
     tmp_path: Path,
 ) -> None:
     run_dir, manifest_path, machine_check = _finished_session(
@@ -587,7 +603,9 @@ def test_resume_restarts_harbor_when_a_slot_has_unplanned_trials(
         current.event(_trial_verdict("trial-resumed", valid=True))
         return WatchResult("exited", 0, None, None)
 
-    deps = _resume_dependencies(tmp_path, machine_check, watch_fn, commands, stopped)
+    deps = _resume_dependencies(
+        tmp_path, machine_check, watch_fn, commands, stopped, hostname="node-b"
+    )
 
     result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
 
@@ -603,12 +621,34 @@ def test_resume_restarts_harbor_when_a_slot_has_unplanned_trials(
     assert start_index < finish_index
 
 
+def test_resume_refuses_when_host_profile_memory_cap_differs(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    changed_profile = {**_PROFILE, "memory_cap": "none"}
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: None,
+        [],
+        [],
+        profile=changed_profile,
+    )
+    before = (run_dir / "run-events.jsonl").read_bytes()
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    assert result == RunOutcome(1, run_dir)
+    assert (run_dir / "run-events.jsonl").read_bytes() == before
+    assert "memory_cap differs" in (run_dir / "runner.log").read_text(encoding="utf-8")
+
+
 _HOST = {
     "fingerprint": "fingerprint",
+    "hostname": "node-a",
     "arch": "arm64",
     "cpus": 8,
     "memory_mb": 32768,
     "docker_version": "27.0.0",
+    "host_profile": _PROFILE,
 }
 
 
@@ -660,6 +700,7 @@ def _inputs(tmp_path: Path):
         tool_version="0.1.0",
         harbor_version="0.23.0",
         host_fingerprint="fingerprint",
+        host_profile=_PROFILE,
         task_source={"dataset": "bench/tasks"},
         concurrency=1,
         tasks=[{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}],
@@ -764,3 +805,19 @@ def test_mark_resumed_appends_resume_event(tmp_path: Path) -> None:
         "tool_commit": "a" * 40,
         "pid": __import__("os").getpid(),
     }
+
+
+def test_resume_refuses_a_run_that_predates_host_profile_recording(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    metadata_path = run_dir / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    del metadata["host"]["host_profile"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    deps = _resume_dependencies(tmp_path, machine_check, lambda *_args: None, [], [])
+    before = (run_dir / "run-events.jsonl").read_bytes()
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    assert result == RunOutcome(1, run_dir)
+    assert (run_dir / "run-events.jsonl").read_bytes() == before
+    assert "predates host profile recording" in (run_dir / "runner.log").read_text(encoding="utf-8")
