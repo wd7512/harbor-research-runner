@@ -251,6 +251,11 @@ def run_checks(
             f"concurrency={concurrency}, max_task_memory_mb={max_task_memory}, "
             f"memory_reserve_mb={reserve}, docker_memory_mb={docker_memory}"
         )
+        if machine_check is not None and any("memory_mb" not in t for t in machine_check.tasks):
+            return (
+                False,
+                "the machine check predates task memory recording; rerun `hrr check-machine`",
+            )
         if missing:
             names = ", ".join(missing)
             return (

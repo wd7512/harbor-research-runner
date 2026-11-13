@@ -263,6 +263,19 @@ def test_memory_fits_fails_closed_for_task_without_memory_limit(tmp_path: Path) 
     assert "unbounded" in result.detail
 
 
+def test_memory_fits_asks_for_a_new_machine_check_when_the_file_predates_memory(
+    tmp_path: Path,
+) -> None:
+    machine_check = _machine_check(tasks=[{"name": "task-a"}], included=["task-a"])
+    deps = _deps(tmp_path, read_machine_check=lambda _path: machine_check)
+
+    result = _by_name(_run(tmp_path, deps=deps), "memory_fits")
+
+    assert not result.ok
+    assert "check-machine" in result.detail
+    assert "unbounded" not in result.detail
+
+
 def test_proxy_port_free_check_fails_when_bind_fails(tmp_path: Path) -> None:
     def fail_to_bind(_host: str, _port: int) -> None:
         raise OSError("Address already in use")
