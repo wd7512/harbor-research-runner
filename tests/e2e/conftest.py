@@ -43,6 +43,7 @@ from tests.support.processes import ps_command
 
 ROOT = Path(__file__).resolve().parents[2]
 TASK = ROOT / "src/harbor_research_runner/run/canary_task/say-hello"
+RUN_PROCESSES_STOP_WITHIN_S = 20
 
 
 @dataclass
@@ -515,11 +516,22 @@ class E2ERun:
                 for command in commands
             )
         }
+        killed = time.monotonic()
         self._signal_groups(groups_to_kill)
         if self.process is not None and self.process.poll() is None:
             self.process.kill()
             with suppress(subprocess.TimeoutExpired):
                 self.process.wait(timeout=10)
+        self._wait_for_run_processes(killed, RUN_PROCESSES_STOP_WITHIN_S)
+
+    def _wait_for_run_processes(self, killed: float, stop_within_s: float) -> None:
+        deadline = killed + stop_within_s
+        while (live := pids_naming_run(self.run_dir)) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        if live:
+            raise AssertionError(
+                f"processes still name the run folder {stop_within_s}s after the runner died: {live}"
+            )
 
     def kill_runner_only(self, stop_within_s: float) -> float:
         runner_pids = [
@@ -531,13 +543,7 @@ class E2ERun:
             raise AssertionError("no runner pid was recorded")
         killed = time.monotonic()
         os.kill(runner_pids[-1], signal.SIGKILL)
-        deadline = killed + stop_within_s
-        while (live := pids_naming_run(self.run_dir)) and time.monotonic() < deadline:
-            time.sleep(0.2)
-        if live:
-            raise AssertionError(
-                f"processes still name the run folder {stop_within_s}s after the runner died: {live}"
-            )
+        self._wait_for_run_processes(killed, stop_within_s)
         stopped_after = time.monotonic() - killed
         if self.process is not None:
             try:
