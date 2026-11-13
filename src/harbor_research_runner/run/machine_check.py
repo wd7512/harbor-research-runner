@@ -82,6 +82,29 @@ def task_arches(
     return arches
 
 
+def task_memories(
+    task_toml_texts: Mapping[str, str], digests: Mapping[str, str]
+) -> dict[str, int | None]:
+    memories: dict[str, int | None] = {}
+    for name in digests:
+        try:
+            task_toml = task_toml_texts[name]
+        except KeyError as exc:
+            raise ValueError(f"task {name!r} has no task.toml") from exc
+        try:
+            task_data = tomllib.loads(task_toml)
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError(f"task {name!r} has invalid task.toml: {exc}") from exc
+        environment = task_data.get("environment", {})
+        if not isinstance(environment, dict):
+            raise ValueError(f"task {name!r} has invalid [environment] in task.toml")
+        memory = environment.get("memory_mb")
+        if memory is not None and (isinstance(memory, bool) or not isinstance(memory, int)):
+            raise ValueError(f"task {name!r} has invalid environment.memory_mb {memory!r}")
+        memories[name] = memory
+    return memories
+
+
 def run_machine_check(
     job: Job, out: Path, with_do_nothing: bool, runs_dir: Path, deps: MachineCheckDeps
 ) -> MachineCheck:
@@ -122,6 +145,7 @@ def run_machine_check(
     }
     digests = job_folder.task_digests(oracle_dir)
     arches = task_arches(task_toml_texts, digests, deps.host_arch(), deps.image_arch)
+    memories = task_memories(task_toml_texts, digests)
 
     nothing_rewards: dict[str, float | None] = {name: None for name in oracle_trials}
     if with_do_nothing:
@@ -166,6 +190,7 @@ def run_machine_check(
                 "name": name,
                 "digest": digests[name],
                 "arch": arches[name],
+                "memory_mb": memories[name],
                 "oracle_reward": facts.reward,
                 "agent_s": agent_finish - agent_start,
                 "agent_budget_s": agent_budgets[name],

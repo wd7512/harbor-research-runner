@@ -17,3 +17,4 @@ timeout_sec = 120.0
 
 [environment]
 build_timeout_sec = 600.0
+memory_mb = 512

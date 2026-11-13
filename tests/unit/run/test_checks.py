@@ -85,7 +85,14 @@ def _machine_check(
         host_fingerprint=fingerprint,
         task_source=_TASK_SOURCE if task_source is None else task_source,
         concurrency=concurrency,
-        tasks=[] if tasks is None else tasks,
+        tasks=(
+            [
+                {"name": "task-a", "memory_mb": 512},
+                {"name": "task-b", "memory_mb": 512},
+            ]
+            if tasks is None
+            else tasks
+        ),
         included=["task-a", "task-b"] if included is None else included,
         verifier_timeout_multiplier=1.0,
     )
@@ -119,6 +126,7 @@ def _deps(
     read_machine_check=lambda _path: _machine_check(),
     fingerprint: str = "fingerprint",
     harbor_version: str = "0.23.0",
+    read_docker_memory=lambda: 8123,
     bind_port=lambda _host, _port: None,
     processes=lambda _run_dir: [],
     digest_of=lambda _ref: _DIGEST,
@@ -132,6 +140,7 @@ def _deps(
         read_machine_check=read_machine_check,
         host_fingerprint=lambda: fingerprint,
         harbor_version=lambda: harbor_version,
+        docker_memory_mb=read_docker_memory,
         bind_port=bind_port,
         processes=processes,
         digest_of=digest_of,
@@ -199,6 +208,59 @@ def test_keys_present_check_passes_when_all_variables_are_set(tmp_path: Path) ->
     result = _by_name(_run(tmp_path), "keys_present")
 
     assert result.ok
+
+
+def test_memory_fits_fails_when_concurrent_task_memory_exceeds_docker_memory(
+    tmp_path: Path,
+) -> None:
+    machine_check = _machine_check(
+        tasks=[{"name": "task-a", "memory_mb": 2048}],
+        included=["task-a"],
+    )
+    deps = _deps(
+        tmp_path,
+        read_machine_check=lambda _path: machine_check,
+    )
+
+    result = _by_name(_run(tmp_path, job=_job(concurrency=4), deps=deps), "memory_fits")
+
+    assert not result.ok
+    assert "4" in result.detail
+    assert "2048" in result.detail
+    assert "4096" in result.detail
+    assert "8123" in result.detail
+
+
+def test_memory_fits_passes_when_concurrent_task_memory_fits_docker_memory(
+    tmp_path: Path,
+) -> None:
+    machine_check = _machine_check(
+        tasks=[{"name": "task-a", "memory_mb": 2048}],
+        included=["task-a"],
+    )
+    deps = _deps(
+        tmp_path,
+        read_machine_check=lambda _path: machine_check,
+        read_docker_memory=lambda: 8192,
+    )
+
+    result = _by_name(_run(tmp_path, job=_job(concurrency=2), deps=deps), "memory_fits")
+
+    assert result.ok
+
+
+def test_memory_fits_fails_closed_for_task_without_memory_limit(tmp_path: Path) -> None:
+    machine_check = _machine_check(
+        tasks=[{"name": "task-a", "memory_mb": None}],
+        included=["task-a"],
+    )
+    deps = _deps(tmp_path, read_machine_check=lambda _path: machine_check)
+
+    result = _by_name(_run(tmp_path, deps=deps), "memory_fits")
+
+    assert not result.ok
+    assert "task-a" in result.detail
+    assert "unbounded" in result.detail
 
 
 def test_proxy_port_free_check_fails_when_bind_fails(tmp_path: Path) -> None:
@@ -663,6 +725,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
         "machine_check_present",
         "machine_check_matches",
         "tasks_included",
+        "memory_fits",
     ]
     assert not _by_name(results, "model_card").ok
     assert not _by_name(results, "docker_clean").ok

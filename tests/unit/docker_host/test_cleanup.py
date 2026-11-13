@@ -11,6 +11,7 @@ from harbor_research_runner.docker_host.cleanup import (
     clean,
     clean_trials,
     compose_project_name,
+    docker_memory_mb,
     inventory,
     is_leaked_network,
     is_pool_exhaustion_text,
@@ -71,6 +72,17 @@ def test_inventory_lists_exact_live_residue():
     assert result.daemon_ok
     assert result.residue_containers == CONTAINERS
     assert result.leaked_networks == NETWORKS
+
+
+def test_docker_memory_is_read_from_memtotal_in_mebibytes():
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout="8318844928\n", stderr="")
+
+    assert docker_memory_mb(run) == 7933
+    assert calls == [["docker", "info", "--format", "{{.MemTotal}}"]]
 
 
 def test_inventory_reports_daemon_failure():

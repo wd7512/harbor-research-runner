@@ -14,6 +14,7 @@ class Limits:
     halt_after_consecutive_invalid: int = 5
     zero_billed_window_s: float = 900
     min_spare_memory_mb: int = 2048
+    memory_reserve_mb: int = 4096
     max_swapped_out_pages: int = 0
     min_free_disk_gb: int = 20
     host_breach_halt_s: float = 120

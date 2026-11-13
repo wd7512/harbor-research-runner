@@ -211,6 +211,7 @@ def dependencies(
             read_machine_check=lambda _path: None,
             host_fingerprint=lambda: "fingerprint",
             harbor_version=lambda: "0.23.0",
+            docker_memory_mb=lambda: 32768,
             bind_port=_bind_port,
             processes=lambda _run_dir: [],
         ),
@@ -244,6 +245,7 @@ def _resume_dependencies(
             read_machine_check=lambda _path: machine_check,
             host_fingerprint=lambda: "fingerprint",
             harbor_version=lambda: "0.23.0",
+            docker_memory_mb=lambda: 32768,
             bind_port=_bind_port,
             processes=lambda _run_dir: [],
         ),
@@ -402,7 +404,7 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
         host_fingerprint="fingerprint",
         task_source={"dataset": "bench/tasks"},
         concurrency=1,
-        tasks=[{"name": "task-a", "digest": "sha256:task"}],
+        tasks=[{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}],
         included=["task-a"],
         verifier_timeout_multiplier=1.0,
     )
@@ -416,6 +418,7 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
         read_machine_check=lambda _path: machine_check,
         host_fingerprint=lambda: "fingerprint",
         harbor_version=lambda: "0.23.0",
+        docker_memory_mb=lambda: 32768,
         bind_port=_bind_port,
         processes=lambda _run_dir: [],
     )
@@ -500,7 +503,7 @@ def _finished_session(
         host_fingerprint="fingerprint",
         task_source={"dataset": "bench/tasks"},
         concurrency=1,
-        tasks=[{"name": "task-a", "digest": "sha256:task"}],
+        tasks=[{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}],
         included=["task-a"],
         verifier_timeout_multiplier=1.0,
     )
@@ -659,7 +662,7 @@ def _inputs(tmp_path: Path):
         host_fingerprint="fingerprint",
         task_source={"dataset": "bench/tasks"},
         concurrency=1,
-        tasks=[{"name": "task-a", "digest": "sha256:task"}],
+        tasks=[{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}],
         included=["task-a"],
         verifier_timeout_multiplier=1.0,
     )

@@ -14,6 +14,7 @@ def test_limits_defaults_include_repetition_derived_cap():
     assert limits.tolerated_errors == 1
     assert limits.trial_output_rate_min == 2.0
     assert limits.verifier_timeout_multiplier == 1.5
+    assert limits.memory_reserve_mb == 4096
 
 
 def test_limits_rejects_job_override_of_machine_value():
