@@ -39,6 +39,9 @@ wills-agentic-tools = { git = "https://github.com/wd7512/wills-agentic-tools", t
 [tool.hatch.build.targets.wheel]
 packages = ["src/harbor_research_runner"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/.agent"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -82,7 +85,7 @@ mirror_exceptions = [
 ]
 untracked_paths = ["runs/"]
 changelog_dir = "changes"
-changelog_exempt = ["docs/"]
+changelog_exempt = ["docs/", "changes/", "CHANGELOG.md"]
 base = "origin/dev"
 
 [tool.devtools.delegate]
