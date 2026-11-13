@@ -49,9 +49,10 @@ def apply_host_policy(
         raise ValueError(f"unsupported task image mode {images!r}")
     container_network = profile["container_network"]
     if container_network == "host":
-        compose_content = yaml.safe_dump(
-            {"services": {"main": {"network_mode": "host"}}}, sort_keys=True
-        )
+        main: dict = {"network_mode": "host"}
+        if images == "build":
+            main["build"] = {"network": "host"}
+        compose_content = yaml.safe_dump({"services": {"main": main}}, sort_keys=True)
         overlay_path.write_text(compose_content, encoding="utf-8")
         environment = config.setdefault("environment", {})
         environment["extra_docker_compose"] = [str(overlay_path.resolve())]

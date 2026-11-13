@@ -412,3 +412,27 @@ def test_resume_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Pa
         "--pk",
         "task_order=as_listed",
     ]
+
+
+@pytest.mark.parametrize(
+    ("images", "expected_main"),
+    [
+        ("build", {"network_mode": "host", "build": {"network": "host"}}),
+        ("prebuilt", {"network_mode": "host"}),
+    ],
+)
+def test_host_network_overlay_builds_on_the_host_network_only_when_building(
+    tmp_path: Path, images: str, expected_main: dict
+):
+    overlay = tmp_path / "compose-host-network.yaml"
+
+    apply_host_policy(
+        {"job_name": "harbor-job"},
+        {"memory_cap": "none", "container_network": "host"},
+        images,
+        overlay,
+    )
+
+    assert yaml.safe_load(overlay.read_text(encoding="utf-8")) == {
+        "services": {"main": expected_main}
+    }
