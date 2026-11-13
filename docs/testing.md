@@ -15,6 +15,8 @@ Contract tests are end-to-end tests marked `@pytest.mark.contract`. Each pins on
 
 The gate is `uv run gate` (format, lint, types, unit and integration tests, lock file). End-to-end is `uv run gate --only e2e`. Never pipe a gate through `tail` or `head`; quote its exit code.
 
+CI runs e2e in four file-list shards: lifecycle, lifecycle resume, Harbor contract with machine-check and service-lifetime, and upstream/refusals with how-to commands. E2e shards are skipped for pull requests that change only `docs/**`, `changes/**`, root `*.md` files, or `roadmap.*`; the gate matrix still runs.
+
 ## Rules for every test
 
 1. **Assert on outputs.** Call the public function, or run the command, and check the return value or the files on disk. Do not assert on which internal functions were called.
