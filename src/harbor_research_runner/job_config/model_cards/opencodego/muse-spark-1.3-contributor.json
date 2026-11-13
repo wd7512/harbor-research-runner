@@ -6,8 +6,7 @@
     "https://opencode.ai/zen/go/v1/responses"
   ],
   "key_env": [
-    "OPENCODE_GO_API_KEY",
-    "OPENCODE_GO_KEY"
+    "OPENCODE_GO_API_KEY"
   ],
   "tokens_per_minute": null,
   "pricing": {
