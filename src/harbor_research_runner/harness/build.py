@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
+from harbor_research_runner.docker_host import images
 from harbor_research_runner.harness.manifest import (
     ImageEntry,
     ManifestError,
@@ -97,22 +98,19 @@ def build_command(harness: str, commit: str, arch: str, layout: str) -> list[str
         raise BuildError(f"unsupported architecture {arch!r}; expected 'amd64' or 'arm64'")
     if layout not in _DOCKERFILES:
         raise BuildError(f"unsupported layout {layout!r}; expected 'v1' or 'v2'")
+    return images.build_argv(*_build_args(commit, arch, layout))
+
+
+def _build_args(commit: str, arch: str, layout: str) -> tuple[str, str, str, str, str, str]:
     build_dir = _build_dir()
-    return [
-        "docker",
-        "build",
-        "--platform",
-        f"linux/{arch}",
-        "--build-arg",
-        f"NODE_BASE={_NODE_BASES[arch]}",
-        "--build-arg",
-        f"OPENCODE_COMMIT={commit}",
-        "-t",
+    return (
+        arch,
+        _NODE_BASES[arch],
+        commit,
         _image_ref(commit, arch),
-        "-f",
         str(build_dir / _DOCKERFILES[layout]),
         str(build_dir),
-    ]
+    )
 
 
 def _run(args: list[str], run: ExternalRunner) -> subprocess.CompletedProcess[str]:
@@ -120,6 +118,15 @@ def _run(args: list[str], run: ExternalRunner) -> subprocess.CompletedProcess[st
         return run(args, capture_output=True, text=True, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise BuildError(f"could not run {args[0]!r}: {exc}") from exc
+
+
+def _run_docker(
+    action: Callable[[], subprocess.CompletedProcess[str]],
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return action()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BuildError(f"could not run 'docker': {exc}") from exc
 
 
 def resolve_arch(arch: str | None, run: ExternalRunner = subprocess.run) -> str:
@@ -144,7 +151,7 @@ def _archive_listing(archive: Path, run: ExternalRunner) -> list[str]:
 
 
 def _inspect(ref: str, template: str, run: ExternalRunner) -> str:
-    result = _run(["docker", "image", "inspect", "--format", template, ref], run)
+    result = _run_docker(lambda: images.inspect_image(ref, template, run))
     if result.returncode != 0:
         raise BuildError(
             f"could not inspect image {ref!r} (exit {result.returncode}): {result.stderr.strip()}"
@@ -173,10 +180,7 @@ def _prove_image(ref: str, commit: str, arch: str, run: ExternalRunner) -> str:
 
 
 def _version_from_image(ref: str, arch: str, run: ExternalRunner) -> str:
-    result = _run(
-        ["docker", "run", "--rm", "--platform", f"linux/{arch}", ref, "opencode", "--version"],
-        run,
-    )
+    result = _run_docker(lambda: images.run_version(ref, arch, run))
     output = result.stdout.strip()
     if result.returncode != 0:
         raise BuildError(
@@ -219,7 +223,7 @@ def build(
             )
         layout = layout_for(_archive_listing(archive, run))
 
-        result = _run(build_command(harness, commit, arch, layout), run)
+        result = _run_docker(lambda: images.build_image(*_build_args(commit, arch, layout), run))
         if result.returncode != 0:
             raise BuildError(
                 f"docker build failed for commit {commit!r} (exit {result.returncode}): "

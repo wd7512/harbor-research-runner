@@ -19,6 +19,7 @@ import pytest
 import yaml
 
 from harbor_research_runner.docker_host.processes import pids_naming_run
+from harbor_research_runner.docker_host.profile import host_profile
 from harbor_research_runner.docker_host.resources import host_fingerprint
 from harbor_research_runner.harbor_adapter.commands import (
     job_config as harbor_job_config,
@@ -767,6 +768,7 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
                 ],
                 included=[study_task.name],
                 verifier_timeout_multiplier=1.0,
+                host_profile=host_profile(),
             ),
         )
 

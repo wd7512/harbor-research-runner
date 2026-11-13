@@ -27,6 +27,16 @@ from harbor_research_runner.run.checks import (
 _COMMIT = "a" * 40
 _DIGEST = "sha256:" + "b" * 64
 _TASK_SOURCE = {"dataset": "bench/tasks"}
+_HOST_PROFILE = {
+    "arch": "arm64",
+    "cpus": 8,
+    "docker_version": "27.0.0",
+    "memory_cap": "kernel",
+    "swap_limit": True,
+    "rootless": False,
+    "cgroup_version": "2",
+    "docker_memory_mb": 32768,
+}
 
 
 def _job(
@@ -74,6 +84,7 @@ def _machine_check(
     task_source: dict | None = None,
     harbor_version: str = "0.23.0",
     fingerprint: str = "fingerprint",
+    host_profile: dict | None = _HOST_PROFILE,
     concurrency: int = 4,
     included: list[str] | None = None,
     tasks: list[dict] | None = None,
@@ -83,6 +94,7 @@ def _machine_check(
         tool_version="1.0.0",
         harbor_version=harbor_version,
         host_fingerprint=fingerprint,
+        host_profile=host_profile,
         task_source=_TASK_SOURCE if task_source is None else task_source,
         concurrency=concurrency,
         tasks=(
@@ -125,6 +137,7 @@ def _deps(
     host_lock: HostLock | None = None,
     read_machine_check=lambda _path: _machine_check(),
     fingerprint: str = "fingerprint",
+    profile: dict = _HOST_PROFILE,
     harbor_version: str = "0.23.0",
     read_docker_memory=lambda: 8123,
     bind_port=lambda _host, _port: None,
@@ -139,6 +152,7 @@ def _deps(
         host_lock=host_lock or HostLock(tmp_path / "host.lock"),
         read_machine_check=read_machine_check,
         host_fingerprint=lambda: fingerprint,
+        host_profile=lambda: profile,
         harbor_version=lambda: harbor_version,
         docker_memory_mb=read_docker_memory,
         bind_port=bind_port,
@@ -675,10 +689,10 @@ def test_machine_check_present_passes_when_file_parses(tmp_path: Path) -> None:
     [
         _machine_check(task_source={"dataset": "other/tasks"}),
         _machine_check(harbor_version="0.22.0"),
-        _machine_check(fingerprint="other-fingerprint"),
+        _machine_check(host_profile={**_HOST_PROFILE, "memory_cap": "none"}),
         _machine_check(concurrency=1),
     ],
-    ids=["task-source", "harbor-version", "fingerprint", "concurrency"],
+    ids=["task-source", "harbor-version", "host-profile", "concurrency"],
 )
 def test_machine_check_matches_fails_when_check_differs(
     tmp_path: Path, machine_check: MachineCheck
@@ -693,6 +707,31 @@ def test_machine_check_matches_passes_for_matching_check(tmp_path: Path) -> None
     result = _by_name(_run(tmp_path), "machine_check_matches")
 
     assert result.ok
+
+
+def test_machine_check_matches_refuses_check_without_host_profile(tmp_path: Path) -> None:
+    check = _machine_check(host_profile=None)
+    result = _by_name(
+        _run(tmp_path, deps=_deps(tmp_path, read_machine_check=lambda _path: check)),
+        "machine_check_matches",
+    )
+
+    assert not result.ok
+    assert "rerun `hrr check-machine`" in result.detail
+
+
+def test_machine_check_matches_names_each_different_profile_field(tmp_path: Path) -> None:
+    check = _machine_check(host_profile={**_HOST_PROFILE, "memory_cap": "kernel"})
+    deps = _deps(
+        tmp_path,
+        read_machine_check=lambda _path: check,
+        profile={**_HOST_PROFILE, "memory_cap": "none"},
+    )
+
+    result = _by_name(_run(tmp_path, deps=deps), "machine_check_matches")
+
+    assert not result.ok
+    assert "memory_cap differs: kernel -> none" in result.detail
 
 
 def test_job_checks_refuse_task_outside_machine_check(tmp_path: Path) -> None:

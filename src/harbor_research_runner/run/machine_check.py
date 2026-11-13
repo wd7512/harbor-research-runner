@@ -206,6 +206,7 @@ def run_machine_check(
         tool_version=version("harbor-research-runner"),
         harbor_version=deps.checks.harbor_version(),
         host_fingerprint=deps.checks.host_fingerprint(),
+        host_profile=deps.checks.host_profile(),
         task_source=task_source,
         concurrency=job.concurrency,
         tasks=tasks,

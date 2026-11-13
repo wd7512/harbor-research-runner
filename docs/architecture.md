@@ -16,8 +16,8 @@ A study flows top to bottom through six steps. Six helper modules are shared.
 | helper | `trial_validity` | The verdict for one trial; the halt rules for a run | `records` |
 | helper | `statistics` | Pass rates, intervals, paired comparison, completeness table | `records` |
 | helper | `harbor_adapter` | Harbor command lines, reading Harbor's job folder, the set-aside move, the Harbor plugin | `records`, `job_config`, `trial_validity`, `docker_host` |
-| helper | `docker_host` | Host lock, Docker cleanup, resource check, resource sampler | `records` |
-| step | `harness` | Commit manifest, image build, extraction, `PinnedHarness`, `OpenCodeAgent`, the fake harness | `records` |
+| helper | `docker_host` | Host lock, Docker image operations and cleanup, resource check, resource sampler | `records` |
+| step | `harness` | Commit manifest, image build, extraction, `PinnedHarness`, `OpenCodeAgent`, the fake harness | `records`, `docker_host` |
 | step | `run` | Launch checks, canary, machine check, the run loop | `job_config`, `records`, `trial_validity`, `harbor_adapter`, `docker_host`, `harness` |
 | step | `model_proxy` | The relay between harness and model; writes the proxy ledger | `records`, `local_http` |
 | step | `evidence_bundle` | Run folder to evidence bundle, secret scan, report | `records`, `statistics`, `harbor_adapter` |

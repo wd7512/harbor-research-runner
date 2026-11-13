@@ -13,7 +13,7 @@ MAY_IMPORT = {
     "statistics": {"records"},
     "harbor_adapter": {"records", "job_config", "trial_validity", "docker_host"},
     "docker_host": {"records"},
-    "harness": {"records"},
+    "harness": {"records", "docker_host"},
     "run": {
         "job_config",
         "records",

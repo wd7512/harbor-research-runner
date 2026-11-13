@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from harbor_research_runner.docker_host import images
 from harbor_research_runner.harness.manifest import ImageEntry
 
 logger = logging.getLogger(__name__)
@@ -52,16 +53,6 @@ try:
     import fcntl
 except ImportError:
     fcntl = None
-
-
-def _run(
-    cmd: list[str],
-    *,
-    run: DockerRunner = subprocess.run,
-    timeout: int = DEFAULT_DOCKER_TIMEOUT_S,
-) -> subprocess.CompletedProcess[str]:
-    logger.debug("running: %s", " ".join(cmd))
-    return run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
 
 
 def _entry_for(root: Path, digest: str) -> Path:
@@ -130,25 +121,29 @@ def _extract_into(entry: ImageEntry, entry_dir: Path, run: DockerRunner) -> None
     local_root.mkdir(parents=True, exist_ok=True)
     cid = f"harbor_research_runner-{uuid.uuid4().hex[:12]}"
 
-    create = _run(["docker", "create", "--name", cid, entry.ref], run=run)
+    create = images.create(entry.ref, cid, run, DEFAULT_DOCKER_TIMEOUT_S)
     if create.returncode != 0:
         msg = f"docker create {entry.ref!r} failed (exit {create.returncode}): {create.stderr.strip()}"
         raise ExtractError(msg)
 
     try:
-        cp = _run(["docker", "cp", f"{cid}:/usr/local/.", str(local_root) + "/."], run=run)
+        cp = images.copy(
+            f"{cid}:/usr/local/.", str(local_root) + "/.", run, DEFAULT_DOCKER_TIMEOUT_S
+        )
         if cp.returncode != 0:
             msg = f"docker cp {entry.ref!r}:/usr/local failed (exit {cp.returncode}): {cp.stderr.strip()}"
             raise ExtractError(msg)
         binary = local_root / "bin" / "opencode"
         _validate_binary(binary, entry.ref, local_root)
         _mark_executable(binary)
-        _run(
-            ["docker", "cp", f"{cid}:/opt/opencode-commit.txt", str(entry_dir / "commit.txt")],
-            run=run,
+        images.copy(
+            f"{cid}:/opt/opencode-commit.txt",
+            str(entry_dir / "commit.txt"),
+            run,
+            DEFAULT_DOCKER_TIMEOUT_S,
         )
     finally:
-        _run(["docker", "rm", cid], run=run)
+        images.remove(cid, run, DEFAULT_DOCKER_TIMEOUT_S)
 
 
 def _publish(staging: Path, entry: Path) -> None:

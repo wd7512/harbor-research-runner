@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from harbor_research_runner.docker_host.profile import profile_differences
 from harbor_research_runner.harbor_adapter import commands, job_folder, set_aside
 from harbor_research_runner.harness.agents import agent_import_path, agent_settings
 from harbor_research_runner.harness.manifest import ImageEntry, load_manifest
@@ -40,7 +41,15 @@ from harbor_research_runner.run.watch import WatchResult
 from harbor_research_runner.trial_validity.verdict import Verdict
 
 logger = logging.getLogger(__name__)
-HOST_FIELDS = {"fingerprint", "arch", "cpus", "memory_mb", "docker_version"}
+HOST_FIELDS = {
+    "fingerprint",
+    "hostname",
+    "host_profile",
+    "arch",
+    "cpus",
+    "memory_mb",
+    "docker_version",
+}
 
 
 def _deadline_timestamp(value: str | None) -> float | None:
@@ -479,6 +488,15 @@ def resume_run(
             return RunOutcome(1, run_dir)
         manifest = load_manifest(manifest_path)
         host = deps.host()
+        recorded_profile = session.metadata.host.get("host_profile")
+        if not recorded_profile:
+            logger.error("resume refused because run %s predates host profile recording", run_id)
+            return RunOutcome(1, run_dir)
+        differences = profile_differences(recorded_profile, host.get("host_profile") or {})
+        if differences:
+            detail = "; ".join(differences)
+            logger.error("resume refused because the host profile differs: %s", detail)
+            return RunOutcome(1, run_dir)
         checks = run_checks(
             session.job,
             session.card,
@@ -634,11 +652,23 @@ def _finish(session, status: SlotsStatus, deps: RunDeps) -> int:
 
 
 def make_read_only(run_dir: Path) -> None:
+    foreign: list[str] = []
     for path in sorted(run_dir.rglob("*"), key=lambda item: len(item.parts), reverse=True):
         if path.is_symlink():
             continue
-        mode = path.stat().st_mode
-        path.chmod(mode & ~0o222)
+        info = path.stat()
+        try:
+            path.chmod(info.st_mode & ~0o222)
+        except PermissionError:
+            if info.st_uid == os.getuid():
+                raise
+            foreign.append(str(path.relative_to(run_dir)))
+    if foreign:
+        logger.warning(
+            "left %d file(s) owned by another user writable, as found: %s",
+            len(foreign),
+            ", ".join(foreign),
+        )
     mode = run_dir.stat().st_mode
     run_dir.chmod(mode & ~0o222)
 
