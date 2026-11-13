@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 from contextlib import suppress
 from dataclasses import asdict, dataclass
+from functools import cache
 from importlib.metadata import version
 from pathlib import Path
 
@@ -125,6 +126,64 @@ def _wait_for_health(process: subprocess.Popen[str], proxy_url: str) -> None:
     raise AssertionError(f"proxy did not become healthy: {last_error}")
 
 
+@cache
+def _docker_proxy_network() -> tuple[str, str]:
+    with socket.socket() as listener:
+        listener.bind(("0.0.0.0", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        probe = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "bridge",
+                "python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
+                "python",
+                "-c",
+                "import socket, sys\n"
+                "try:\n"
+                "    socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=2).close()\n"
+                "except OSError:\n"
+                "    print('HOST_CONNECTION_FAILED')\n"
+                "    raise SystemExit(1)\n",
+                "host.docker.internal",
+                str(port),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    if probe.returncode == 0:
+        return "127.0.0.1", "host.docker.internal"
+    if "HOST_CONNECTION_FAILED" not in probe.stdout:
+        raise AssertionError(
+            f"Docker host-network probe failed ({probe.returncode}): {probe.stdout}{probe.stderr}"
+        )
+    gateway = subprocess.run(
+        [
+            "docker",
+            "network",
+            "inspect",
+            "bridge",
+            "--format",
+            "{{(index .IPAM.Config 0).Gateway}}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if gateway.returncode != 0 or not gateway.stdout.strip():
+        raise AssertionError(
+            f"Docker bridge gateway lookup failed ({gateway.returncode}): "
+            f"{gateway.stdout}{gateway.stderr}"
+        )
+    return "0.0.0.0", gateway.stdout.strip()
+
+
 @pytest.fixture
 def harbor_job(tmp_path: Path, request: pytest.FixtureRequest):
     options = getattr(request, "param", {})
@@ -139,6 +198,7 @@ def harbor_job(tmp_path: Path, request: pytest.FixtureRequest):
     with socket.socket() as reserve:
         reserve.bind(("127.0.0.1", 0))
         port = reserve.getsockname()[1]
+    proxy_host, container_host = _docker_proxy_network()
     proxy_url = f"http://127.0.0.1:{port}"
     ledger_path = run_dir / "proxy-ledger.jsonl"
     proxy_config_path = run_dir / "proxy-config.json"
@@ -204,9 +264,9 @@ def harbor_job(tmp_path: Path, request: pytest.FixtureRequest):
                     }
                 ],
                 "proxy": {
-                    "host": "127.0.0.1",
+                    "host": proxy_host,
                     "port": port,
-                    "container_host": "host.docker.internal",
+                    "container_host": container_host,
                 },
                 "limits": {},
             },
@@ -220,7 +280,7 @@ def harbor_job(tmp_path: Path, request: pytest.FixtureRequest):
         harness="fake",
         commit="fake",
         manifest_path="not-used-by-fake",
-        container_host="host.docker.internal",
+        container_host=container_host,
         proxy_port=port,
         variant=None,
         model_card=model_card,
@@ -562,6 +622,7 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
     runs_dir = tmp_path / "runs"
     evidence_dir = tmp_path / "evidence"
     _clean_docker_and_wait(runs_dir)
+    proxy_host, container_host = _docker_proxy_network()
 
     upstream = FakeUpstream(options.get("upstream_script", ["ok"]), model="fake-model")
     upstream_url = upstream.start()
@@ -640,9 +701,9 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
             for label in labels
         ],
         "proxy": {
-            "host": "127.0.0.1",
+            "host": proxy_host,
             "port": proxy_port,
-            "container_host": "host.docker.internal",
+            "container_host": container_host,
         },
         "limits": limits,
     }
