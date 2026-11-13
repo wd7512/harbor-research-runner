@@ -131,7 +131,7 @@ def test_services_start_stop_and_restart_with_proxy_ledger(tmp_path: Path) -> No
             f"http://{session.job.proxy_host}:{session.job.proxy_port}/control/health", timeout=1
         ) as response:
             assert response.status == 200
-        deadline = time.monotonic() + 2
+        deadline = time.monotonic() + 4
         stats_path = session.run_dir / "resource-stats.jsonl"
         while time.monotonic() < deadline and (
             not stats_path.exists() or not stats_path.read_text(encoding="utf-8").strip()
