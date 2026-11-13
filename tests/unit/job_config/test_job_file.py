@@ -44,6 +44,13 @@ def test_rejects_unknown_job_keys(tmp_path: Path, text: str) -> None:
         load_job(write_job(tmp_path, text))
 
 
+def test_rejects_obsolete_swap_limit_with_replacement_name(tmp_path: Path) -> None:
+    text = valid_job().replace("limits: {}", "limits: {max_swap_used_mb: 10}")
+
+    with pytest.raises(JobFileError, match="max_swapped_out_pages"):
+        load_job(write_job(tmp_path, text))
+
+
 @pytest.mark.parametrize("field", ["repetitions", "concurrency"])
 @pytest.mark.parametrize("value", [0, -1, True, 1.5, "2"])
 def test_rejects_invalid_positive_integer(tmp_path: Path, field: str, value: object) -> None:

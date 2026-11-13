@@ -6,7 +6,7 @@ from dataclasses import dataclass, fields
 class Sample:
     t: float
     mem_available_mb: int
-    swap_used_mb: int
+    swapped_out_pages: int
     disk_free_gb: float
     load1: float
     trial_containers: int
@@ -21,6 +21,8 @@ class Sample:
 
     @classmethod
     def from_row(cls, row: dict) -> "Sample":
+        row = {key: value for key, value in row.items() if key != "swap_used_mb"}
+        row = {**row, "swapped_out_pages": row.get("swapped_out_pages", 0)}
         if set(row) != {item.name for item in fields(cls)}:
             raise ValueError("resource sample fields do not match")
         return cls(**row)

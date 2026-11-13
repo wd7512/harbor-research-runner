@@ -48,7 +48,7 @@ def _write_sample(run_dir: Path) -> None:
                 "type": "sample",
                 "t": 100.0,
                 "mem_available_mb": 8192,
-                "swap_used_mb": 0,
+                "swapped_out_pages": 0,
                 "disk_free_gb": 100.0,
                 "load1": 0.0,
                 "trial_containers": 0,

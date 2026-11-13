@@ -68,12 +68,12 @@ def _host_invalid():
     return _verdict(valid=False, instrument="host", reason="host_fault")
 
 
-def _sample(t, mem_available_mb=8192, swap_used_mb=0, disk_free_gb=100, docker_ok=True):
+def _sample(t, mem_available_mb=8192, swapped_out_pages=0, disk_free_gb=100, docker_ok=True):
     return {
         "type": "sample",
         "t": t,
         "mem_available_mb": mem_available_mb,
-        "swap_used_mb": swap_used_mb,
+        "swapped_out_pages": swapped_out_pages,
         "disk_free_gb": disk_free_gb,
         "load1": 0.5,
         "trial_containers": 1,

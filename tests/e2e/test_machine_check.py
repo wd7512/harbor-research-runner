@@ -57,7 +57,7 @@ def test_check_machine_includes_the_bundled_say_hello_task(tmp_path: Path) -> No
                 "  container_host: host.docker.internal",
                 "limits:",
                 "  min_spare_memory_mb: 0",
-                "  max_swap_used_mb: 1000000",
+                "  max_swapped_out_pages: 1000000",
                 "  min_free_disk_gb: 0",
                 "",
             ]

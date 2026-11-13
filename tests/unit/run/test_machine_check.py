@@ -48,7 +48,7 @@ def _job() -> Job:
 def _checks(tmp_path: Path) -> CheckDeps:
     return CheckDeps(
         select_adapter=lambda *_: object(),
-        measure=lambda: Sample(1.0, 4096, 0, 100.0, 0.0, 0, True),
+        measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
         inventory=lambda: Inventory(True, "ok", (), (), (), ()),
         live_run=lambda _path: None,
         host_lock=HostLock(tmp_path / "host.lock"),

@@ -70,7 +70,7 @@ _LIMITS = {
     "halt_after_consecutive_invalid",
     "zero_billed_window_s",
     "min_spare_memory_mb",
-    "max_swap_used_mb",
+    "max_swapped_out_pages",
     "min_free_disk_gb",
     "host_breach_halt_s",
     "launch_min_interval_s",
@@ -194,6 +194,8 @@ def load_job(path: Path) -> Job:
     proxy_port = _positive_integer(_required(proxy, "port"), "proxy.port")
     container_host = _nonempty_string(_required(proxy, "container_host"), "proxy.container_host")
     limits = _mapping(_required(data, "limits"), "limits")
+    if "max_swap_used_mb" in limits:
+        raise JobFileError("limits.max_swap_used_mb was replaced by max_swapped_out_pages")
     _keys(limits, _LIMITS, "limits")
     return Job(
         path=path.resolve(),

@@ -36,6 +36,13 @@ def test_limits_round_trips():
     assert Limits.from_row(limits.to_row()) == limits
 
 
+def test_old_limits_row_ignores_occupied_swap_limit():
+    row = _limits().to_row()
+    row["max_swap_used_mb"] = 512
+
+    assert Limits.from_row(row).max_swapped_out_pages == 0
+
+
 @pytest.mark.parametrize("field", list(_limits().to_row()))
 def test_limits_parser_rejects_missing_field(field):
     row = _limits().to_row()
@@ -57,7 +64,7 @@ def test_limits_parser_rejects_unknown_field():
     ("field", "bad_value"),
     [
         ("mem_available_mb", 99),
-        ("swap_used_mb", 101),
+        ("swapped_out_pages", 1),
         ("disk_free_gb", 1),
         ("docker_ok", False),
     ],
@@ -65,12 +72,12 @@ def test_limits_parser_rejects_unknown_field():
 def test_host_breach_detects_each_limit(field, bad_value):
     limits = _limits(
         min_spare_memory_mb=100,
-        max_swap_used_mb=100,
+        max_swapped_out_pages=0,
         min_free_disk_gb=10,
     )
     sample = {
         "mem_available_mb": 100,
-        "swap_used_mb": 100,
+        "swapped_out_pages": 0,
         "disk_free_gb": 10,
         "docker_ok": True,
     }
@@ -82,11 +89,20 @@ def test_host_breach_detects_each_limit(field, bad_value):
 def test_host_breach_accepts_values_at_limits():
     limits = _limits(
         min_spare_memory_mb=100,
-        max_swap_used_mb=100,
+        max_swapped_out_pages=0,
         min_free_disk_gb=10,
     )
 
     assert not host_breach(
-        {"mem_available_mb": 100, "swap_used_mb": 100, "disk_free_gb": 10, "docker_ok": True},
+        {"mem_available_mb": 100, "swapped_out_pages": 0, "disk_free_gb": 10, "docker_ok": True},
+        limits,
+    )
+
+
+def test_stale_occupied_swap_does_not_breach_without_swapouts():
+    limits = _limits()
+
+    assert not host_breach(
+        {"mem_available_mb": 8192, "swap_used_mb": 3802, "disk_free_gb": 100, "docker_ok": True},
         limits,
     )

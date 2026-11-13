@@ -204,7 +204,7 @@ def dependencies(
     return RunDeps(
         checks=CheckDeps(
             select_adapter=lambda *_args: None,
-            measure=lambda: None,
+            measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
             inventory=lambda: None,
             live_run=lambda _path: None,
             host_lock=HostLock(tmp_path / "host.lock"),
@@ -237,7 +237,7 @@ def _resume_dependencies(
     return RunDeps(
         checks=CheckDeps(
             select_adapter=lambda *_args: object(),
-            measure=lambda: Sample(1.0, 4096, 0, 100.0, 0.0, 0, True),
+            measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
             inventory=lambda: Inventory(True, "ok", (), ()),
             live_run=lambda _path: None,
             host_lock=HostLock(tmp_path / "resume-host.lock"),
@@ -409,7 +409,7 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
     started: list[bool] = []
     checks = CheckDeps(
         select_adapter=lambda *_args: object(),
-        measure=lambda: Sample(1.0, 4096, 0, 100.0, 0.0, 0, True),
+        measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
         inventory=lambda: Inventory(True, "ok", (), ()),
         live_run=lambda _path: None,
         host_lock=HostLock(lock_path),
