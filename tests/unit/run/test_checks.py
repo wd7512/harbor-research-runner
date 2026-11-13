@@ -22,6 +22,7 @@ from harbor_research_runner.run.checks import (
     machine_check_launch_checks,
     resolve_tasks,
     run_checks,
+    task_source_record,
 )
 
 _COMMIT = "a" * 40
@@ -36,6 +37,7 @@ _HOST_PROFILE = {
     "rootless": False,
     "cgroup_version": "2",
     "docker_memory_mb": 32768,
+    "container_network": "bridge",
 }
 
 
@@ -206,6 +208,10 @@ def test_model_card_check_passes_for_available_card(tmp_path: Path) -> None:
     assert result.ok
 
 
+def test_prebuilt_dataset_task_source_record_omits_image_mode() -> None:
+    assert task_source_record(_job()) == {"dataset": "bench/tasks"}
+
+
 def test_keys_present_check_names_missing_variable(tmp_path: Path) -> None:
     results = _run(
         tmp_path,
@@ -260,6 +266,20 @@ def test_memory_fits_passes_when_concurrent_task_memory_fits_docker_memory(
 
     result = _by_name(_run(tmp_path, job=_job(concurrency=2), deps=deps), "memory_fits")
 
+    assert result.ok
+
+
+def test_host_network_refuses_unreachable_proxy_hostname(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, profile={**_HOST_PROFILE, "container_network": "host"})
+    result = _by_name(_run(tmp_path, deps=deps), "proxy_host_reachable")
+    assert not result.ok
+    assert "10.0.2.2" in result.detail
+
+
+def test_host_network_accepts_rootlesskit_proxy_address(tmp_path: Path) -> None:
+    job = replace(_job(), container_host="10.0.2.2")
+    deps = _deps(tmp_path, profile={**_HOST_PROFILE, "container_network": "host"})
+    result = _by_name(_run(tmp_path, job=job, deps=deps), "proxy_host_reachable")
     assert result.ok
 
 
@@ -778,6 +798,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
         "machine_check_matches",
         "tasks_included",
         "memory_fits",
+        "proxy_host_reachable",
     ]
     assert not _by_name(results, "model_card").ok
     assert not _by_name(results, "docker_clean").ok

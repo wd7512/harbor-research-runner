@@ -46,6 +46,8 @@ Every file in this folder has one line here saying where it came from. No file o
 | `docker_info/docker-desktop-macos.json` | Profile-relevant fields from `docker info --format '{{json .}}'` on Docker Desktop 29.8.0, aarch64, 13 Nov 2026; ID redacted and name generic. |
 | `docker_info/rootless.json` | Hand-written Docker info variant for a rootless daemon with no memory or swap limits and cgroup v2. |
 | `docker_info/no-cgroup.json` | Hand-written Docker info variant with no reported cgroup version. |
+| `docker_network/docker-network-ls-desktop.jsonl` | Captured 13 Nov 2026 from Docker Desktop 29.8.0; `docker network ls --format '{{json .}}'` output. |
+| `docker_network/no-bridge.jsonl` | Hand-written Docker network list representing a daemon started with `--bridge=none`. |
 | `memory_watch/docker-stats-macos.jsonl` | Docker Desktop 29.8.0 `docker stats --no-stream --format '{{json .}}' hrr-fixture-mem` output for a 256 MiB trial container, captured 13 Nov 2026. |
 | `memory_watch/docker-stats-all-containers.jsonl` | Docker Desktop 29.8.0 `docker stats --no-stream --format '{{json .}}'` with no container argument, as the memory watcher calls it, captured 13 Nov 2026. With no argument, `Container` holds the full 64-character ID, not the name. |
 | `memory_watch/docker-inspect-state.json` | Docker Desktop 29.8.0 `docker inspect --format '{{json .State}}'` output for the captured trial container, 13 Nov 2026. |

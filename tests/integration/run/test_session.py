@@ -77,6 +77,7 @@ def _session(tmp_path: Path, upstream_url: str) -> RunSession:
             "rootless": False,
             "cgroup_version": "2",
             "docker_memory_mb": 32768,
+            "container_network": "bridge",
         },
     )
     return RunSession.create(

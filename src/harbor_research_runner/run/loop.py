@@ -435,8 +435,13 @@ def run_job(
         canary_config = canary.canary_job_config(
             job, agents, machine_check.verifier_timeout_multiplier
         )
-        memory_cap = host["host_profile"]["memory_cap"]
-        commands.apply_memory_policy(canary_config, memory_cap)
+        profile = host["host_profile"]
+        commands.apply_host_policy(
+            canary_config,
+            profile,
+            job.tasks.images,
+            session.run_dir / "compose-host-network.yaml",
+        )
         commands.write_job_config(session.run_dir / "canary-job-config.yaml", canary_config)
         canary_argv = commands.run_command(
             session.run_dir, "canary-job", _proxy_url(job), job.task_order
@@ -460,7 +465,12 @@ def run_job(
             agents,
             machine_check.verifier_timeout_multiplier,
         )
-        commands.apply_memory_policy(main_config, memory_cap)
+        commands.apply_host_policy(
+            main_config,
+            profile,
+            job.tasks.images,
+            session.run_dir / "compose-host-network.yaml",
+        )
         commands.write_job_config(session.run_dir / "harbor-job-config.yaml", main_config)
         result = _pass_loop(session, planned_slots(job, task_names), deps, 0)
         services_started = False

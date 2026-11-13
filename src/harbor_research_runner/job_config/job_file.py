@@ -25,6 +25,7 @@ class TaskSource:
     git_commit: str | None
     include: tuple[str, ...]
     exclude: tuple[str, ...]
+    images: str = "prebuilt"
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,10 @@ def _positive_integer(value: object, name: str) -> int:
 
 def _task_source(value: object) -> TaskSource:
     data = _mapping(value, "tasks")
-    _keys(data, {"dataset", "path", "git", "include", "exclude"}, "tasks")
+    _keys(data, {"dataset", "path", "git", "include", "exclude", "images"}, "tasks")
+    images = data.get("images", "prebuilt")
+    if images not in {"prebuilt", "build"}:
+        raise JobFileError("tasks.images must be prebuilt or build")
     kinds = [key for key in ("dataset", "path", "git") if key in data]
     if len(kinds) != 1:
         raise JobFileError("tasks must specify exactly one of dataset, path, or git")
@@ -136,7 +140,9 @@ def _task_source(value: object) -> TaskSource:
         if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
             raise JobFileError(f"tasks.{key} must be a list of strings")
         lists[key] = tuple(raw)
-    return TaskSource(kind, dataset, path, git_url, git_commit, lists["include"], lists["exclude"])
+    return TaskSource(
+        kind, dataset, path, git_url, git_commit, lists["include"], lists["exclude"], images
+    )
 
 
 def load_job(path: Path) -> Job:

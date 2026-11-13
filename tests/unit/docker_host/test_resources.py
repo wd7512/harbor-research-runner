@@ -270,10 +270,18 @@ def test_docker_down_marks_measurement_unhealthy(tmp_path: Path) -> None:
 def test_host_description_records_hostname_and_profile_fields() -> None:
     fixture = Path(__file__).parents[2] / "fixtures" / "docker_info" / "docker-desktop-macos.json"
     payload = fixture.read_text(encoding="utf-8")
+    networks = (
+        Path(__file__).parents[2]
+        / "fixtures"
+        / "docker_network"
+        / "docker-network-ls-desktop.jsonl"
+    ).read_text(encoding="utf-8")
 
     def run(argv, **kwargs):
-        assert argv == ["docker", "info", "--format", "{{json .}}"]
-        return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+        if argv == ["docker", "info", "--format", "{{json .}}"]:
+            return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+        assert argv == ["docker", "network", "ls", "--format", "{{json .}}"]
+        return SimpleNamespace(returncode=0, stdout=networks, stderr="")
 
     description = host_description(run=run)
 
@@ -281,6 +289,7 @@ def test_host_description_records_hostname_and_profile_fields() -> None:
     assert description["hostname"]
     assert description["host_profile"]["memory_cap"] == "kernel"
     assert description["host_profile"]["rootless"] is False
+    assert description["host_profile"]["container_network"] == "bridge"
 
 
 def test_host_fingerprint_fails_when_docker_is_unavailable() -> None:

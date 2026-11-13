@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from pathlib import Path
 
 import yaml
@@ -29,13 +30,33 @@ def job_config(
     return config
 
 
-def apply_memory_policy(config: dict, memory_cap: str) -> dict:
+def apply_host_policy(
+    config: dict,
+    profile: Mapping,
+    images: str,
+    overlay_path: Path,
+) -> dict:
+    memory_cap = profile["memory_cap"]
     if memory_cap == "none":
         environment = config.setdefault("environment", {})
         environment["memory_enforcement_policy"] = "ignore"
         environment["cpu_enforcement_policy"] = "ignore"
     elif memory_cap != "kernel":
         raise ValueError(f"unsupported memory cap {memory_cap!r}")
+    if images == "build":
+        config.setdefault("environment", {})["force_build"] = True
+    elif images != "prebuilt":
+        raise ValueError(f"unsupported task image mode {images!r}")
+    container_network = profile["container_network"]
+    if container_network == "host":
+        compose_content = yaml.safe_dump(
+            {"services": {"main": {"network_mode": "host"}}}, sort_keys=True
+        )
+        overlay_path.write_text(compose_content, encoding="utf-8")
+        environment = config.setdefault("environment", {})
+        environment["extra_docker_compose"] = [str(overlay_path.resolve())]
+    elif container_network != "bridge":
+        raise ValueError(f"unsupported container network {container_network!r}")
     return config
 
 

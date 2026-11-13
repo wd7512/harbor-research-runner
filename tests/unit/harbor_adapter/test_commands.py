@@ -6,7 +6,7 @@ from harbor.models.job.config import JobConfig
 from harbor.models.trial.config import ResourceMode
 
 from harbor_research_runner.harbor_adapter.commands import (
-    apply_memory_policy,
+    apply_host_policy,
     job_config,
     machine_check_command,
     oracle_job_config,
@@ -15,6 +15,7 @@ from harbor_research_runner.harbor_adapter.commands import (
     write_job_config,
 )
 from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
+from harbor_research_runner.run.canary import canary_job_config
 
 AGENT_SETTINGS = (
     {"arm": "arm-a", "nested": {"requests": 3}, "flag": True},
@@ -143,7 +144,12 @@ def test_job_config_uses_the_given_job_name():
 
 
 def test_memory_policy_is_ignored_only_when_host_has_no_memory_cap():
-    config = apply_memory_policy({"job_name": "harbor-job"}, "none")
+    config = apply_host_policy(
+        {"job_name": "harbor-job"},
+        {"memory_cap": "none", "container_network": "bridge"},
+        "prebuilt",
+        Path("unused.yaml"),
+    )
 
     environment = JobConfig.model_validate(config).environment
     assert environment.memory_enforcement_policy == ResourceMode.IGNORE
@@ -151,11 +157,61 @@ def test_memory_policy_is_ignored_only_when_host_has_no_memory_cap():
 
 
 def test_kernel_memory_policy_leaves_harbor_defaults_untouched():
-    config = apply_memory_policy({"job_name": "harbor-job"}, "kernel")
+    config = apply_host_policy(
+        {"job_name": "harbor-job"},
+        {"memory_cap": "kernel", "container_network": "bridge"},
+        "prebuilt",
+        Path("unused.yaml"),
+    )
 
     assert config == {"job_name": "harbor-job"}
     environment = JobConfig.model_validate(config).environment
     assert environment.memory_enforcement_policy == ResourceMode.AUTO
+
+
+def test_apply_environment_policy_round_trips_native_build_and_host_network(tmp_path: Path):
+    job = make_job(TaskSource("dataset", "org/dataset", None, None, None, (), ()))
+    configs = {
+        "main": job_config(job, ["task-a"], agents(), 1.0),
+        "canary": canary_job_config(job, agents(), 1.0),
+        "machine-check": oracle_job_config(job, ["task-a"], "oracle", "harbor-job"),
+    }
+    compose_path = tmp_path / "compose-host-network.yaml"
+
+    for name, config in configs.items():
+        apply_host_policy(
+            config,
+            {"memory_cap": "kernel", "container_network": "host"},
+            "build",
+            compose_path,
+        )
+        path = tmp_path / f"{name}.yaml"
+        write_job_config(path, config)
+        parsed = JobConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        assert parsed.environment.force_build is True
+        assert parsed.environment.extra_docker_compose == [compose_path]
+
+
+def test_apply_environment_policy_leaves_prebuilt_bridge_config_unmodified(tmp_path: Path):
+    job = make_job(TaskSource("dataset", "org/dataset", None, None, None, (), ()))
+    configs = {
+        "main": job_config(job, ["task-a"], agents(), 1.0),
+        "canary": canary_job_config(job, agents(), 1.0),
+        "machine-check": oracle_job_config(job, ["task-a"], "oracle", "harbor-job"),
+    }
+
+    for index, config in enumerate(configs.values()):
+        apply_host_policy(
+            config,
+            {"memory_cap": "kernel", "container_network": "bridge"},
+            "prebuilt",
+            tmp_path / "unused.yaml",
+        )
+        path = tmp_path / f"job-{index}.yaml"
+        write_job_config(path, config)
+        parsed = JobConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        assert parsed.environment.force_build is False
+        assert parsed.environment.extra_docker_compose == []
 
 
 def test_write_job_config_writes_yaml_with_sorted_keys(tmp_path: Path):

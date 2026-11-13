@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from harbor_research_runner.docker_host.cleanup import DOCKER_TIMEOUT_S
 
@@ -16,12 +16,28 @@ def host_profile(run: Callable = subprocess.run) -> dict:
     )
     if result.returncode != 0:
         raise OSError(f"docker info exited {result.returncode}: {result.stderr.strip()}")
+    networks_result = run(
+        ["docker", "network", "ls", "--format", "{{json .}}"],
+        capture_output=True,
+        text=True,
+        timeout=DOCKER_TIMEOUT_S,
+    )
+    if networks_result.returncode != 0:
+        raise OSError(
+            f"docker network ls exited {networks_result.returncode}: {networks_result.stderr.strip()}"
+        )
     try:
         info = json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError) as exc:
         raise ValueError("Docker returned invalid info JSON") from exc
     if not isinstance(info, dict):
         raise ValueError("Docker info must be a JSON object")
+    try:
+        networks = [json.loads(line) for line in networks_result.stdout.splitlines() if line]
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("Docker returned invalid network JSON") from exc
+    if any(not isinstance(network, dict) for network in networks):
+        raise ValueError("Docker network rows must be JSON objects")
     required = (
         "Architecture",
         "MemoryLimit",
@@ -63,12 +79,30 @@ def host_profile(run: Callable = subprocess.run) -> dict:
         "rootless": "name=rootless" in security_options,
         "cgroup_version": info["CgroupVersion"],
         "docker_memory_mb": memory_bytes // (1024**2),
+        "container_network": (
+            "bridge"
+            if any(
+                network.get("Name") == "bridge" and network.get("Driver") == "bridge"
+                for network in networks
+            )
+            else "host"
+        ),
     }
 
 
 def profile_differences(recorded: dict, current: dict) -> list[str]:
+    recorded = canonical_profile(recorded)
+    current = canonical_profile(current)
     return [
         f"{name} differs: {recorded.get(name)} -> {current.get(name)}"
         for name in sorted(set(recorded) | set(current))
         if recorded.get(name) != current.get(name)
     ]
+
+
+def canonical_profile(profile: Mapping) -> dict:
+    return {
+        key: value
+        for key, value in profile.items()
+        if key != "hostname" and not (key == "container_network" and value == "bridge")
+    }
