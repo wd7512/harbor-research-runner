@@ -1,0 +1,26 @@
+{
+  "Architecture": "aarch64",
+  "CgroupDriver": "cgroupfs",
+  "CgroupVersion": "2",
+  "Containers": 0,
+  "CpuCfsPeriod": true,
+  "CpuCfsQuota": true,
+  "Driver": "overlayfs",
+  "ID": "REDACTED-ID",
+  "Images": 125,
+  "KernelVersion": "7.0.12-linuxkit",
+  "MemTotal": 16745164800,
+  "MemoryLimit": true,
+  "NCPU": 15,
+  "Name": "docker-desktop",
+  "OSType": "linux",
+  "OomKillDisable": false,
+  "OperatingSystem": "Docker Desktop",
+  "SecurityOptions": [
+    "name=seccomp,profile=builtin",
+    "name=cgroupns"
+  ],
+  "ServerVersion": "29.8.0",
+  "SwapLimit": true,
+  "Warnings": null
+}

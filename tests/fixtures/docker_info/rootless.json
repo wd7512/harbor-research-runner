@@ -1,0 +1,13 @@
+{
+  "Architecture": "aarch64",
+  "CgroupDriver": "cgroupfs",
+  "CgroupVersion": "2",
+  "ID": "REDACTED-ID",
+  "MemTotal": 16745164800,
+  "MemoryLimit": false,
+  "NCPU": 15,
+  "Name": "docker-rootless",
+  "SecurityOptions": ["name=seccomp,profile=builtin", "name=rootless"],
+  "ServerVersion": "29.8.0",
+  "SwapLimit": false
+}

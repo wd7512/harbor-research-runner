@@ -68,6 +68,16 @@ def _session(tmp_path: Path, upstream_url: str) -> RunSession:
         tasks=[{"name": "task-a", "digest": "sha256:task"}],
         included=["task-a"],
         verifier_timeout_multiplier=1.0,
+        host_profile={
+            "arch": "arm64",
+            "cpus": 8,
+            "docker_version": "27.0.0",
+            "memory_cap": "kernel",
+            "swap_limit": True,
+            "rootless": False,
+            "cgroup_version": "2",
+            "docker_memory_mb": 32768,
+        },
     )
     return RunSession.create(
         job=job,
@@ -92,10 +102,12 @@ def _session(tmp_path: Path, upstream_url: str) -> RunSession:
         tool=ToolIdentity("0.1.0", "a" * 40),
         host={
             "fingerprint": "fingerprint",
+            "hostname": "test-node",
             "arch": "arm64",
             "cpus": 8,
             "memory_mb": 32768,
             "docker_version": "27.0.0",
+            "host_profile": machine_check.host_profile,
         },
     )
 

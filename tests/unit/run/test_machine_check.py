@@ -188,6 +188,7 @@ def test_run_machine_check_writes_results_and_keeps_the_host_lock(
     assert result.tasks[0]["agent_budget_s"] == 3600.0
     assert result.tasks[0]["nothing_reward"] == 0.0
     assert result.host_fingerprint == "fingerprint"
+    assert result.host_profile == {}
     assert checks.host_lock.held
     checks.host_lock.release()
 

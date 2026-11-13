@@ -1,8 +1,4 @@
-import hashlib
-import os
-import platform
 import re
-import socket
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -271,27 +267,25 @@ def test_docker_down_marks_measurement_unhealthy(tmp_path: Path) -> None:
     assert not sample.docker_ok
 
 
-def test_host_fingerprint_and_description_keep_host_identity_fields() -> None:
-    calls = []
+def test_host_description_records_hostname_and_profile_fields() -> None:
+    fixture = Path(__file__).parents[2] / "fixtures" / "docker_info" / "docker-desktop-macos.json"
+    payload = fixture.read_text(encoding="utf-8")
 
     def run(argv, **kwargs):
-        calls.append(argv)
-        if argv[:2] == ["docker", "version"]:
-            return SimpleNamespace(returncode=0, stdout="29.7.2\n", stderr="")
-        raise AssertionError(argv)
+        assert argv == ["docker", "info", "--format", "{{json .}}"]
+        return SimpleNamespace(returncode=0, stdout=payload, stderr="")
 
     description = host_description(run=run)
-    material = "|".join(
-        (socket.gethostname(), platform.machine(), str(os.cpu_count() or ""), "29.7.2")
-    )
 
     assert set(description) == HOST_FIELDS
-    assert description["fingerprint"] == hashlib.sha256(material.encode()).hexdigest()[:12]
-    assert len(calls) == 1
+    assert description["hostname"]
+    assert description["host_profile"]["memory_cap"] == "kernel"
+    assert description["host_profile"]["rootless"] is False
 
 
-def test_host_fingerprint_survives_unavailable_docker() -> None:
+def test_host_fingerprint_fails_when_docker_is_unavailable() -> None:
     def run(argv, **kwargs):
         raise FileNotFoundError(argv[0])
 
-    assert len(host_fingerprint(run=run)) == 12
+    with pytest.raises(FileNotFoundError):
+        host_fingerprint(run=run)

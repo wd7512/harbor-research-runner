@@ -43,6 +43,9 @@ Every file in this folder has one line here saying where it came from. No file o
 | `oom/docker-oom-events.jsonl` | Two real Docker Desktop OOM events from Harbor 0.23.0 oracle trials on 13 Nov 2026; `config_files` and host paths redacted. |
 | `oom/agent-result.json` | Real Harbor 0.23.0 agent-phase OOM trial result from 13 Nov 2026; host paths redacted. |
 | `oom/verifier-result.json` | Real Harbor 0.23.0 verifier-phase OOM trial result from 13 Nov 2026; host paths redacted. |
+| `docker_info/docker-desktop-macos.json` | Profile-relevant fields from `docker info --format '{{json .}}'` on Docker Desktop 29.8.0, aarch64, 13 Nov 2026; ID redacted and name generic. |
+| `docker_info/rootless.json` | Hand-written Docker info variant for a rootless daemon with no memory or swap limits and cgroup v2. |
+| `docker_info/no-cgroup.json` | Hand-written Docker info variant with no reported cgroup version. |
 
 - `run_folders/`: hand-made compact run-folder samples for `evidence_bundle.trials`, covering a clean two-task/two-arm run and a set-aside, unmeasured, unfinished, and canary trial.
 - `run_folders/{clean,retries}/machine-check.json` and `expected-report.md`: hand-made five-task machine-check records and the resulting evidence report goldens; each includes three tasks and excludes two.

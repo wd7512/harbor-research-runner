@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
-import platform
 import re
 import shutil
 import socket
@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from harbor_research_runner.docker_host.cleanup import is_residue_container
+from harbor_research_runner.docker_host.profile import host_profile
 from harbor_research_runner.records.resource_stats import Sample
 
 LINUX_MEMINFO = Path("/proc/meminfo")
@@ -173,33 +174,12 @@ def measure(
     )
 
 
-def _fingerprint_parts(run: Callable) -> tuple[str, str, str, str]:
-    try:
-        hostname = socket.gethostname()
-    except OSError:
-        hostname = ""
-    try:
-        arch = platform.machine()
-    except OSError:
-        arch = ""
-    try:
-        cpus = str(os.cpu_count() or "")
-    except OSError:
-        cpus = ""
-    try:
-        result = _run_result(run, ["docker", "version", "--format", "{{.Server.Version}}"], 10)
-        docker_version = result.stdout.strip() if result.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
-        docker_version = ""
-    return hostname, arch, cpus, docker_version
-
-
-def host_fingerprint(run: Callable = subprocess.run) -> str:
-    return _fingerprint(_fingerprint_parts(run))
-
-
-def _fingerprint(parts: tuple[str, str, str, str]) -> str:
-    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:12]
+def host_fingerprint(run: Callable = subprocess.run, *, profile: dict | None = None) -> str:
+    selected = host_profile(run) if profile is None else profile
+    canonical = {key: value for key, value in selected.items() if key != "hostname"}
+    return hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:12]
 
 
 def host_description(run: Callable = subprocess.run) -> dict:
@@ -207,12 +187,17 @@ def host_description(run: Callable = subprocess.run) -> dict:
         memory_mb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // (1024**2)
     except (AttributeError, OSError, ValueError):
         memory_mb = 0
-    parts = _fingerprint_parts(run)
-    _, arch, cpus, docker_version = parts
+    try:
+        hostname = socket.gethostname()
+    except OSError:
+        hostname = ""
+    profile = host_profile(run)
     return {
-        "fingerprint": _fingerprint(parts),
-        "arch": arch,
-        "cpus": int(cpus) if cpus else 0,
+        "fingerprint": host_fingerprint(profile=profile),
+        "hostname": hostname,
+        "arch": profile["arch"],
+        "cpus": profile["cpus"],
+        "docker_version": profile["docker_version"],
+        "host_profile": profile,
         "memory_mb": memory_mb,
-        "docker_version": docker_version,
     }

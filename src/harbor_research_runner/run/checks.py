@@ -53,6 +53,7 @@ class CheckDeps:
     host_fingerprint: Callable[[], str]
     harbor_version: Callable[[], str]
     docker_memory_mb: Callable[[], int]
+    host_profile: Callable[[], dict] = lambda: {}
     bind_port: Callable[[str, int], None] = _bind_port
     processes: Callable[[Path], list[int]] = pids_naming_run
     digest_of: Callable[[str], str | None] = local_image_digest
@@ -195,8 +196,17 @@ def run_checks(
             mismatches.append("task source differs")
         if machine_check.harbor_version != deps.harbor_version():
             mismatches.append("Harbor version differs")
-        if machine_check.host_fingerprint != deps.host_fingerprint():
-            mismatches.append("machine fingerprint differs")
+        if machine_check.host_profile is None:
+            mismatches.append(
+                "the machine check predates host profile recording; rerun `hrr check-machine`"
+            )
+        else:
+            current_profile = deps.host_profile()
+            for name in sorted(set(machine_check.host_profile) | set(current_profile)):
+                recorded = machine_check.host_profile.get(name)
+                current = current_profile.get(name)
+                if recorded != current:
+                    mismatches.append(f"{name} differs: {recorded} -> {current}")
         if job.concurrency > machine_check.concurrency:
             mismatches.append(
                 f"job concurrency {job.concurrency} exceeds checked concurrency "
