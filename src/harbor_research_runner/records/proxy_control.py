@@ -1,4 +1,5 @@
 import json
+import uuid
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -10,6 +11,10 @@ CLOSED_BODY = '{"error":{"message":"trial closed","type":"trial_closed"}}'
 
 def trial_base_url(host: str, port: int, trial: str) -> str:
     return f"http://{host}:{port}/trial/{trial}/v1"
+
+
+def session_id_for_run(run_folder_name: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, "hrr-run:" + run_folder_name).hex
 
 
 def trial_from_path(path: str) -> tuple[str, str] | None:
@@ -63,6 +68,14 @@ class ProxyConfig:
     model: dict
     limits: dict
     restart_cooldown_s: float
+    session_id: str = ""
+
+    def __post_init__(self) -> None:
+        request = self.model.get("request") or {}
+        if request.get("session_header") and (
+            not isinstance(self.session_id, str) or not self.session_id
+        ):
+            raise ValueError("proxy config requires a non-empty session_id for the model card")
 
     def to_row(self) -> dict:
         return {item.name: getattr(self, item.name) for item in fields(self)}

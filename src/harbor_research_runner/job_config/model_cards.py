@@ -117,7 +117,9 @@ def load_card(model_id: str, extra_dir: Path | None = None) -> ModelCard:
     if "request" in raw:
         if not isinstance(request, dict):
             raise ModelCardError("model card request must be an object")
-        unknown_request = sorted(set(request) - {"drop_message_fields", "max_tokens_cap"})
+        unknown_request = sorted(
+            set(request) - {"drop_message_fields", "max_tokens_cap", "headers", "session_header"}
+        )
         if unknown_request:
             raise ModelCardError(f"unknown request key(s): {', '.join(unknown_request)}")
         if "drop_message_fields" in request and (
@@ -131,6 +133,27 @@ def load_card(model_id: str, extra_dir: Path | None = None) -> ModelCard:
             cap = request["max_tokens_cap"]
             if cap is not None and (not isinstance(cap, int) or isinstance(cap, bool) or cap <= 0):
                 raise ModelCardError("request max_tokens_cap must be a positive integer or null")
+        if "headers" in request:
+            headers = request["headers"]
+            if not isinstance(headers, dict) or any(
+                not isinstance(name, str) or not name or not isinstance(value, str) or not value
+                for name, value in headers.items()
+            ):
+                raise ModelCardError(
+                    "request headers must map non-empty strings to non-empty strings"
+                )
+            session_header = request.get("session_header")
+            forbidden = {"authorization", "content-type"}
+            if isinstance(session_header, str):
+                forbidden.add(session_header.lower())
+            if any(name.lower() in forbidden for name in headers):
+                raise ModelCardError("request headers cannot include reserved headers")
+        if "session_header" in request:
+            session_header = request["session_header"]
+            if session_header is not None and (
+                not isinstance(session_header, str) or not session_header
+            ):
+                raise ModelCardError("request session_header must be a non-empty string or null")
     if not isinstance(raw["upstream_model"], str) or not isinstance(raw["id"], str):
         raise ModelCardError("model card id and upstream_model must be strings")
     return ModelCard(**raw)
