@@ -1,7 +1,7 @@
 import json
 import os
 import tempfile
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 
@@ -16,7 +16,7 @@ class MachineCheck:
     tasks: list[dict]
     included: list[str]
     verifier_timeout_multiplier: float
-    host_profile: dict | None = field(default_factory=dict)
+    host_profile: dict | None = None
 
     def excluded_tasks(self) -> list[str]:
         included = set(self.included)

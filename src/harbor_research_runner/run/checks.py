@@ -14,6 +14,7 @@ from harbor_research_runner.docker_host.host_lock import (
     HostLockUnsupported,
 )
 from harbor_research_runner.docker_host.processes import pids_naming_run
+from harbor_research_runner.docker_host.profile import profile_differences
 from harbor_research_runner.harness.manifest import (
     ImageEntry,
     ManifestError,
@@ -201,12 +202,7 @@ def run_checks(
                 "the machine check predates host profile recording; rerun `hrr check-machine`"
             )
         else:
-            current_profile = deps.host_profile()
-            for name in sorted(set(machine_check.host_profile) | set(current_profile)):
-                recorded = machine_check.host_profile.get(name)
-                current = current_profile.get(name)
-                if recorded != current:
-                    mismatches.append(f"{name} differs: {recorded} -> {current}")
+            mismatches.extend(profile_differences(machine_check.host_profile, deps.host_profile()))
         if job.concurrency > machine_check.concurrency:
             mismatches.append(
                 f"job concurrency {job.concurrency} exceeds checked concurrency "

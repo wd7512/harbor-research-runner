@@ -6,18 +6,6 @@ from collections.abc import Callable
 
 from harbor_research_runner.docker_host.cleanup import DOCKER_TIMEOUT_S
 
-PROFILE_FIELDS = (
-    "arch",
-    "cpus",
-    "docker_version",
-    "memory_cap",
-    "swap_limit",
-    "rootless",
-    "cgroup_version",
-    "docker_memory_mb",
-)
-
-
 def host_profile(run: Callable = subprocess.run) -> dict:
     result = run(
         ["docker", "info", "--format", "{{json .}}"],
@@ -75,3 +63,11 @@ def host_profile(run: Callable = subprocess.run) -> dict:
         "cgroup_version": info["CgroupVersion"],
         "docker_memory_mb": memory_bytes // (1024**2),
     }
+
+
+def profile_differences(recorded: dict, current: dict) -> list[str]:
+    return [
+        f"{name} differs: {recorded.get(name)} -> {current.get(name)}"
+        for name in sorted(set(recorded) | set(current))
+        if recorded.get(name) != current.get(name)
+    ]

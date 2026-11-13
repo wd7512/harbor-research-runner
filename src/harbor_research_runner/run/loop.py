@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from harbor_research_runner.docker_host.profile import PROFILE_FIELDS
+from harbor_research_runner.docker_host.profile import profile_differences
 from harbor_research_runner.harbor_adapter import commands, job_folder, set_aside
 from harbor_research_runner.harness.agents import agent_import_path, agent_settings
 from harbor_research_runner.harness.manifest import ImageEntry, load_manifest
@@ -475,15 +475,13 @@ def resume_run(
             return RunOutcome(1, run_dir)
         manifest = load_manifest(manifest_path)
         host = deps.host()
-        recorded_profile = session.metadata.host.get("host_profile") or {}
-        current_profile = host.get("host_profile") or {}
-        profile_differences = [
-            f"{name} differs: {recorded_profile.get(name)} -> {current_profile.get(name)}"
-            for name in PROFILE_FIELDS
-            if recorded_profile.get(name) != current_profile.get(name)
-        ]
-        if profile_differences:
-            detail = "; ".join(profile_differences)
+        recorded_profile = session.metadata.host.get("host_profile")
+        if not recorded_profile:
+            logger.error("resume refused because run %s predates host profile recording", run_id)
+            return RunOutcome(1, run_dir)
+        differences = profile_differences(recorded_profile, host.get("host_profile") or {})
+        if differences:
+            detail = "; ".join(differences)
             logger.error("resume refused because the host profile differs: %s", detail)
             return RunOutcome(1, run_dir)
         checks = run_checks(
