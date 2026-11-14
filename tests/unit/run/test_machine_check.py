@@ -296,9 +296,19 @@ def test_run_machine_check_excludes_environment_setup_failures(
     checks.host_lock.release()
 
 
+def _cache_fix_git_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    package_cache = tmp_path / "cache" / "tasks" / "packages"
+    task_dir = package_cache / "terminal-bench" / "fix-git" / FIX_GIT_DIGEST
+    task_dir.mkdir(parents=True)
+    shutil.copyfile(FIXTURE_ROOT / "task-tomls" / "fix-git.task.toml", task_dir / "task.toml")
+    monkeypatch.setattr(harbor_task_id, "PACKAGE_CACHE_DIR", package_cache)
+
+
 def test_run_machine_check_still_rejects_incomplete_agent_phase_exception(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _cache_fix_git_task(tmp_path, monkeypatch)
     checks = _checks(tmp_path)
 
     def run_harbor(argv: list[str], cwd: Path) -> int:
@@ -337,11 +347,7 @@ def test_run_machine_check_reports_setup_errors_when_no_task_is_included(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    package_cache = tmp_path / "cache" / "tasks" / "packages"
-    task_dir = package_cache / "terminal-bench" / "fix-git" / FIX_GIT_DIGEST
-    task_dir.mkdir(parents=True)
-    shutil.copyfile(FIXTURE_ROOT / "task-tomls" / "fix-git.task.toml", task_dir / "task.toml")
-    monkeypatch.setattr(harbor_task_id, "PACKAGE_CACHE_DIR", package_cache)
+    _cache_fix_git_task(tmp_path, monkeypatch)
     checks = _checks(tmp_path)
 
     def run_harbor(argv: list[str], cwd: Path) -> int:
