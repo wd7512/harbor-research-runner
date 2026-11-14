@@ -1,0 +1,1 @@
+The delegate gate command now runs through `sh -c`. The delegate tool splits the command with `shlex` and runs it without a shell, so the previous `&&` reached `gate` as an argument and every lane gate failed with `unrecognized arguments`.

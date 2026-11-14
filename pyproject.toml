@@ -91,7 +91,7 @@ changelog_exempt = ["docs/", "changes/", "CHANGELOG.md"]
 base = "origin/dev"
 
 [tool.devtools.delegate]
-gate_command = "uv run gate && uv run check --checks test-names,test-layout,filename-portability,secrets,untracked-paths"
+gate_command = "sh -c 'uv run gate && uv run check --checks test-names,test-layout,filename-portability,secrets,untracked-paths'"
 base = "origin/dev"
 extra_rules = [
     "Read `AGENTS.md`, `docs/architecture.md` and your brief before anything else. If they disagree, or the brief is wrong about OLD code, stop and report.",
