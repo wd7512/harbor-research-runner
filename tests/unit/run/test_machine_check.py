@@ -23,6 +23,8 @@ from harbor_research_runner.run.machine_check import (
 FIXTURE_ROOT = Path(__file__).parents[2] / "fixtures" / "harbor_job"
 TASK = "terminal-bench/bn-fit-modify"
 TASK_DIGEST = "b5f9644970c17ad9ddb46b7266f7bcd87c761d77d7e6f55d7cfe7284d5ff66e9"
+FIX_GIT_TASK = "terminal-bench/fix-git"
+FIX_GIT_DIGEST = "16948b980df9d96de616a205f5acca1c5d395de83ff4f8ffabcafacb93226f2e"
 
 
 def _job() -> Job:
@@ -215,6 +217,160 @@ def test_run_machine_check_writes_results_and_keeps_the_host_lock(
         "container_network": "bridge",
     }
     assert checks.host_lock.held
+    checks.host_lock.release()
+
+
+def test_run_machine_check_excludes_environment_setup_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    package_cache = tmp_path / "cache" / "tasks" / "packages"
+    for task, digest, filename in (
+        (TASK, TASK_DIGEST, "bn-fit-modify.task.toml"),
+        (FIX_GIT_TASK, FIX_GIT_DIGEST, "fix-git.task.toml"),
+    ):
+        task_dir = package_cache / "terminal-bench" / task.split("/")[1] / digest
+        task_dir.mkdir(parents=True)
+        shutil.copyfile(FIXTURE_ROOT / "task-tomls" / filename, task_dir / "task.toml")
+    monkeypatch.setattr(harbor_task_id, "PACKAGE_CACHE_DIR", package_cache)
+    checks = _checks(tmp_path)
+
+    def run_harbor(argv: list[str], cwd: Path) -> int:
+        job_name = argv[argv.index("--job-name") + 1]
+        pass_dir = cwd / job_name / "pass-bn-fit"
+        shutil.copytree(FIXTURE_ROOT / "pass-bn-fit", pass_dir)
+        config = json.loads((pass_dir / "config.json").read_text(encoding="utf-8"))
+        config["agent"] = {"name": "nop" if job_name == "nop-job" else "oracle"}
+        (pass_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        if job_name == "nop-job":
+            result_path = pass_dir / "result.json"
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["verifier_result"]["rewards"]["reward"] = 0.0
+            result_path.write_text(json.dumps(result), encoding="utf-8")
+        else:
+            shutil.copytree(
+                FIXTURE_ROOT / "setup-failed-fix-git" / "trial",
+                cwd / job_name / "fix-git__jKxeyVV",
+            )
+        return 0
+
+    deps = MachineCheckDeps(
+        checks,
+        run_harbor,
+        lambda: 1_800_000_000.0,
+        host_arch=lambda: "arm64",
+    )
+    job = replace(
+        _job(),
+        tasks=TaskSource(
+            "dataset",
+            "terminal-bench/terminal-bench-2-1",
+            None,
+            None,
+            None,
+            (TASK, FIX_GIT_TASK),
+            (),
+            "build",
+        ),
+    )
+
+    result = run_machine_check(
+        job, tmp_path / "checks" / "machine-check.json", True, tmp_path / "runs", deps
+    )
+
+    by_name = {task["name"]: task for task in result.tasks}
+    assert result.included == [TASK]
+    assert by_name[TASK]["oracle_reward"] == 1.0
+    assert by_name[FIX_GIT_TASK]["oracle_reward"] is None
+    assert by_name[FIX_GIT_TASK]["agent_s"] is None
+    assert by_name[FIX_GIT_TASK]["verifier_s"] is None
+    assert by_name[FIX_GIT_TASK]["nothing_reward"] is None
+    assert by_name[FIX_GIT_TASK]["setup_error"] == (
+        "RuntimeError: Docker compose command failed for environment fix-git."
+    )
+    warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert FIX_GIT_TASK in warnings[0]
+    assert "RuntimeError" in warnings[0]
+    checks.host_lock.release()
+
+
+def test_run_machine_check_still_rejects_incomplete_agent_phase_exception(
+    tmp_path: Path,
+) -> None:
+    checks = _checks(tmp_path)
+
+    def run_harbor(argv: list[str], cwd: Path) -> int:
+        job_name = argv[argv.index("--job-name") + 1]
+        trial_dir = cwd / job_name / "fix-git__jKxeyVV"
+        shutil.copytree(FIXTURE_ROOT / "setup-failed-fix-git" / "trial", trial_dir)
+        if job_name == "harbor-job":
+            result_path = trial_dir / "result.json"
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["agent_execution"] = {"started_at": "2026-11-14T23:07:30.000000Z"}
+            result_path.write_text(json.dumps(result), encoding="utf-8")
+        return 0
+
+    deps = MachineCheckDeps(checks, run_harbor, lambda: 1_800_000_000.0, host_arch=lambda: "arm64")
+    job = replace(
+        _job(),
+        tasks=TaskSource(
+            "dataset",
+            "terminal-bench/terminal-bench-2-1",
+            None,
+            None,
+            None,
+            (FIX_GIT_TASK,),
+            (),
+            "build",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="incomplete phase times"):
+        run_machine_check(
+            job, tmp_path / "checks" / "machine-check.json", False, tmp_path / "runs", deps
+        )
+
+
+def test_run_machine_check_reports_setup_errors_when_no_task_is_included(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_cache = tmp_path / "cache" / "tasks" / "packages"
+    task_dir = package_cache / "terminal-bench" / "fix-git" / FIX_GIT_DIGEST
+    task_dir.mkdir(parents=True)
+    shutil.copyfile(FIXTURE_ROOT / "task-tomls" / "fix-git.task.toml", task_dir / "task.toml")
+    monkeypatch.setattr(harbor_task_id, "PACKAGE_CACHE_DIR", package_cache)
+    checks = _checks(tmp_path)
+
+    def run_harbor(argv: list[str], cwd: Path) -> int:
+        job_name = argv[argv.index("--job-name") + 1]
+        shutil.copytree(
+            FIXTURE_ROOT / "setup-failed-fix-git" / "trial",
+            cwd / job_name / "fix-git__jKxeyVV",
+        )
+        return 0
+
+    deps = MachineCheckDeps(checks, run_harbor, lambda: 1_800_000_000.0, host_arch=lambda: "arm64")
+    job = replace(
+        _job(),
+        tasks=TaskSource(
+            "dataset",
+            "terminal-bench/terminal-bench-2-1",
+            None,
+            None,
+            None,
+            (FIX_GIT_TASK,),
+            (),
+            "build",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=r"zero included tasks.*fix-git.*RuntimeError"):
+        run_machine_check(
+            job, tmp_path / "checks" / "machine-check.json", False, tmp_path / "runs", deps
+        )
     checks.host_lock.release()
 
 

@@ -57,6 +57,15 @@ def read_trial(trial_dir: Path, *, arm: str | None = None) -> TrialFacts:
     )
 
 
+def exception_message(trial_dir: Path) -> str | None:
+    """Return Harbor's exception message for a trial, if it has one."""
+    result = _read_result(trial_dir)
+    exception = result.get("exception_info") if result is not None else None
+    exception = exception if isinstance(exception, dict) else None
+    message = exception.get("exception_message") if exception is not None else None
+    return message if isinstance(message, str) else None
+
+
 def read_trial_details(trial_dir: Path) -> TrialDetails:
     """Read trajectory metrics and harness details for one Harbor trial."""
     config = _read_config(trial_dir)
