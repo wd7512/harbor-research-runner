@@ -36,7 +36,11 @@ Every file in this folder has one line here saying where it came from. No file o
 | `harbor_job/nonzeroexit-pytorch-2027run/config.json` | Trimmed Harbor trial config from the nonzero-exit sample; agent settings use the product shape documented in `harbor_job/README.md`. |
 | `harbor_job/nonzeroexit-pytorch-2027run/result.json` | Trimmed Harbor trial result from the nonzero-exit sample. |
 | `harbor_job/nonzeroexit-pytorch-2027run/lock.json` | Trimmed Harbor trial lock from the nonzero-exit sample. |
+| `harbor_job/setup-failed-fix-git/trial/config.json` | Harbor 0.23.0 trial config from the real `fix-git` environment-build failure repro on 14 Nov 2026; absolute paths trimmed. |
+| `harbor_job/setup-failed-fix-git/trial/result.json` | Harbor 0.23.0 result from the real `fix-git` environment-build failure repro on 14 Nov 2026; absolute paths and the oversized exception body trimmed, with exception type and phase structure retained. |
+| `harbor_job/setup-failed-fix-git/trial/lock.json` | Harbor 0.23.0 trial lock from the real `fix-git` environment-build failure repro on 14 Nov 2026. |
 | `harbor_job/task-tomls/bn-fit-modify.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/bn-fit-modify`. |
+| `harbor_job/task-tomls/fix-git.task.toml` | Task name, timeouts, image, and memory limit from the real Harbor dataset-cache task used in the `fix-git` environment-build failure repro on 14 Nov 2026. |
 | `harbor_job/task-tomls/break-filter-js-from-html.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/break-filter-js-from-html`. |
 | `harbor_job/task-tomls/git-multibranch.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/git-multibranch`. |
 | `harbor_job/task-tomls/pytorch-model-cli.task.toml` | Trimmed timeout fields from the approved Harbor dataset-cache sample for `terminal-bench/pytorch-model-cli`. |

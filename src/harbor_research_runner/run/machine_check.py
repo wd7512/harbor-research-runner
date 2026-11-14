@@ -144,13 +144,12 @@ def run_machine_check(
         raise RuntimeError("Harbor oracle machine-check job failed")
 
     oracle_dir = check_dir / oracle_name
-    oracle_trials = {
-        facts.task: facts
-        for facts in (
-            job_folder.read_trial(path, arm="oracle")
-            for path in job_folder.trial_folders(oracle_dir)
-        )
-    }
+    oracle_trials = {}
+    oracle_trial_dirs = {}
+    for path in job_folder.trial_folders(oracle_dir):
+        facts = job_folder.read_trial(path, arm="oracle")
+        oracle_trials[facts.task] = facts
+        oracle_trial_dirs[facts.task] = path
     task_toml_texts = task_tomls(oracle_dir)
     task_budgets = job_folder.task_budgets(oracle_dir, task_toml_texts)
     agent_budgets = {name: agent_budget for name, (agent_budget, _) in task_budgets.items()}
@@ -193,38 +192,76 @@ def run_machine_check(
 
     tasks = []
     for name, facts in sorted(oracle_trials.items()):
+        if name not in digests or name not in agent_budgets or name not in verifier_budgets:
+            raise ValueError(f"machine-check trial {facts.trial} has no task digest or budget")
         agent_start = facts.phase_started.get("agent")
         agent_finish = facts.phase_finished.get("agent")
         verifier_start = facts.phase_started.get("verifier")
         verifier_finish = facts.phase_finished.get("verifier")
+        row = {
+            "name": name,
+            "digest": digests[name],
+            "arch": arches[name],
+            "memory_mb": memories[name],
+            "agent_budget_s": agent_budgets[name],
+            "verifier_budget_s": verifier_budgets[name],
+        }
         if (
-            agent_start is None
-            or agent_finish is None
-            or verifier_start is None
-            or verifier_finish is None
+            agent_start is not None
+            and agent_finish is not None
+            and verifier_start is not None
+            and verifier_finish is not None
         ):
-            raise ValueError(f"machine-check trial {facts.trial} has incomplete phase times")
-        if name not in digests or name not in agent_budgets or name not in verifier_budgets:
-            raise ValueError(f"machine-check trial {facts.trial} has no task digest or budget")
-        tasks.append(
-            {
-                "name": name,
-                "digest": digests[name],
-                "arch": arches[name],
-                "memory_mb": memories[name],
+            row |= {
                 "oracle_reward": facts.reward,
                 "agent_s": agent_finish - agent_start,
-                "agent_budget_s": agent_budgets[name],
                 "verifier_s": verifier_finish - verifier_start,
-                "verifier_budget_s": verifier_budgets[name],
                 "nothing_reward": nothing_rewards.get(name),
+                "setup_error": None,
             }
+        elif (
+            facts.exception_type is not None
+            and job_folder.failed_phase(facts) == "environment_setup"
+        ):
+            message = job_folder.exception_message(oracle_trial_dirs[name])
+            first_line = message.splitlines()[0] if message else ""
+            first_sentence = first_line.split(". ", 1)[0].rstrip(".")
+            logger.warning(
+                "task %s was excluded after environment setup failed with %s",
+                name,
+                facts.exception_type,
+            )
+            row |= {
+                "oracle_reward": None,
+                "agent_s": None,
+                "verifier_s": None,
+                "nothing_reward": None,
+                "setup_error": (
+                    f"{facts.exception_type}: {first_sentence}."
+                    if first_sentence
+                    else facts.exception_type
+                ),
+            }
+        else:
+            raise ValueError(f"machine-check trial {facts.trial} has incomplete phase times")
+        tasks.append(row)
+
+    included = included_tasks(tasks)
+    setup_errors = [
+        f"{task['name']}: {task['setup_error']}"
+        for task in tasks
+        if task["setup_error"] is not None
+    ]
+    if not included and setup_errors:
+        raise RuntimeError(
+            "machine check has zero included tasks after environment setup failures: "
+            + "; ".join(setup_errors)
         )
 
     if job.tasks.images == "prebuilt":
-        included = set(included_tasks(tasks))
+        included_set = set(included)
         for task in tasks:
-            if task["name"] not in included and task["arch"] != docker_host_arch:
+            if task["name"] not in included_set and task["arch"] != docker_host_arch:
                 logger.warning(
                     "task %s was excluded: image architecture %s differs from Docker host "
                     "architecture %s; set tasks.images: build if this host cannot emulate %s",
@@ -244,7 +281,7 @@ def run_machine_check(
         task_source=task_source,
         concurrency=job.concurrency,
         tasks=tasks,
-        included=included_tasks(tasks),
+        included=included,
         verifier_timeout_multiplier=verifier_multiplier(tasks),
     )
     out.parent.mkdir(parents=True, exist_ok=True)

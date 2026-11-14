@@ -1,0 +1,12 @@
+[task]
+name = "terminal-bench/fix-git"
+
+[agent]
+timeout_sec = 900.0
+
+[verifier]
+timeout_sec = 900.0
+
+[environment]
+docker_image = "alexgshaw/fix-git:20260403"
+memory_mb = 2048
