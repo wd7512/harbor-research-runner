@@ -85,6 +85,35 @@ def _events(run_dir: Path):
     return [json.loads(line) for line in (run_dir / "run-events.jsonl").read_text().splitlines()]
 
 
+def _write_inflight_ledger(run_dir: Path, *, closed: bool = False) -> None:
+    rows = [
+        {
+            "type": "open",
+            "seq": 1,
+            "t": 1.0,
+            "trial": "trial-a",
+            "task": "terminal-bench/task-a",
+            "arm": "arm-a",
+        },
+        {
+            "type": "request_start",
+            "seq": 2,
+            "t": 2.0,
+            "trial": "trial-a",
+            "request_id": "request-a",
+            "model": "model-a",
+            "is_stream": True,
+            "prompt_chars": 1,
+            "paced_wait_s": 0.0,
+        },
+    ]
+    if closed:
+        rows.append({"type": "close", "seq": 3, "t": 3.0, "trial": "trial-a"})
+    (run_dir / "proxy-ledger.jsonl").write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8"
+    )
+
+
 def test_finished_clean_trial_writes_one_valid_verdict(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -144,6 +173,62 @@ def test_deadline_deferred_trial_has_deferred_verdict(tmp_path: Path) -> None:
     assert event["valid"] is False
     assert event["reason"] == "deferred"
     assert event["instrument"] is None
+
+
+def test_halt_invalidates_valid_inflight_trial(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    trial_dir = _trial(job_dir, "trial-a", exception="NonZeroAgentExitCodeError")
+    result = json.loads((trial_dir / "result.json").read_text(encoding="utf-8"))
+    result["exception_info"]["occurred_at"] = "2026-11-12T00:00:02.500000Z"
+    (trial_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    _write_inflight_ledger(run_dir)
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+
+    judge_all_remaining(_session(run_dir), job_dir, set(), 10.0, halt_reason="proxy_dead")
+
+    event = _events(run_dir)[0]
+    assert event["valid"] is False
+    assert event["reason"] == "run_halted"
+    assert event["instrument"] is None
+
+
+def test_halt_keeps_closed_trial_verdict(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    trial_dir = _trial(job_dir, "trial-a", exception="NonZeroAgentExitCodeError")
+    result = json.loads((trial_dir / "result.json").read_text(encoding="utf-8"))
+    result["exception_info"]["occurred_at"] = "2026-11-12T00:00:02.500000Z"
+    (trial_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    _write_inflight_ledger(run_dir, closed=True)
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+
+    judge_all_remaining(_session(run_dir), job_dir, set(), 10.0, halt_reason="proxy_dead")
+
+    event = _events(run_dir)[0]
+    assert event["valid"] is True
+
+
+def test_inflight_trial_without_halt_keeps_valid_verdict(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    trial_dir = _trial(job_dir, "trial-a", exception="NonZeroAgentExitCodeError")
+    result = json.loads((trial_dir / "result.json").read_text(encoding="utf-8"))
+    result["exception_info"]["occurred_at"] = "2026-11-12T00:00:02.500000Z"
+    (trial_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    _write_inflight_ledger(run_dir)
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+
+    judge_all_remaining(_session(run_dir), job_dir, set(), 10.0)
+
+    event = _events(run_dir)[0]
+    assert event["valid"] is True
 
 
 def test_deadline_trial_opened_at_proxy_keeps_never_finished_verdict(tmp_path: Path) -> None:

@@ -59,14 +59,20 @@ def _trial_verdict(
             row.get("type") == "open" and row.get("trial") == facts.trial for row in ledger.rows
         )
     )
+    run_halted = (
+        halt_reason is not None
+        and any(row.get("type") == "open" and row.get("trial") == facts.trial for row in ledger.rows)
+        and not any(row.get("type") == "close" and row.get("trial") == facts.trial for row in ledger.rows)
+        and result.valid
+    )
     event = TrialVerdict(
         t=now,
         trial=facts.trial,
         task=facts.task,
         arm=facts.arm,
-        valid=result.valid,
-        reason="deferred" if deferred else result.reason,
-        instrument=None if deferred else result.instrument,
+        valid=False if run_halted else result.valid,
+        reason="deferred" if deferred else "run_halted" if run_halted else result.reason,
+        instrument=None if deferred or run_halted else result.instrument,
         labels=list(result.labels),
         measured=result.measured,
         unmeasured_reason=result.unmeasured_reason,
