@@ -81,6 +81,18 @@ Equivalent mutants:
 - `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_15`: omitting the split limit does not change the first split field.
 - `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_18`: a positive split limit of two does not change the first split field.
 
+### harbor_research_runner.run.checks
+
+- `x_run_checks__mutmut_3`: `machine_check_error` is read only when the machine check failed to load, and that path always reassigns it.
+- `x__bind_port__mutmut_4`: omitting the socket type uses Python's default `SOCK_STREAM`.
+- `x__bind_port__mutmut_11`: `SO_REUSEADDR` accepts any nonzero value, so `2` enables the same option as `1`.
+- `x_run_checks__mutmut_104`: valid parsed jobs have a path only when `tasks.kind == "path"`, so changing `and` to `or` does not change the branch for valid jobs.
+
+### harbor_research_runner.records.proxy_ledger
+
+- `x_sequence_gaps__mutmut_3`: `strict=None` behaves as `zip`'s default non-strict mode.
+- `x_sequence_gaps__mutmut_6`: omitting `strict=False` uses `zip`'s default non-strict behavior.
+
 Message-text mutants:
 
 ### harbor_research_runner.evidence_bundle.trials
@@ -94,6 +106,14 @@ Message-text mutants:
 ### harbor_research_runner.evidence_bundle.verify
 
 8: `x__json__mutmut_7`, `x__jsonl_gzip__mutmut_7`, `x__jsonl_gzip__mutmut_8`, `x__jsonl_gzip__mutmut_15`, `x_verify__mutmut_942`, `x_verify__mutmut_943`, `x_verify__mutmut_944`, `x_verify__mutmut_945`. These alter exception wording or a displayed JSONL line number only; no record, exit code or documented remedy depends on the wording.
+
+### harbor_research_runner.run.checks
+
+49 survivors change only human-readable check details; launch decisions do not depend on that wording. Where a mutant puts `None` into a detail list, the join raises inside `_evaluate`, which still records the check as failed.
+
+### harbor_research_runner.records.proxy_ledger
+
+15 survivors change only `ValueError` messages; callers and record validity depend on the exception type and parsed value, not its wording.
 
 Not unit-testable:
 
@@ -128,3 +148,10 @@ Simplification candidates:
 - `harbor_research_runner.evidence_bundle.verify.x__host_window_damaged__mutmut_73` and `x__host_window_damaged__mutmut_78`: the absent-resource fallback's `torn_last_line` value is unused; `bad_line_time_spans` only reads `rows` and `bad_lines`.
 - `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_52`, `x_verify__mutmut_57`, `x_verify__mutmut_61` and `x_verify__mutmut_66`: the absent OOM and memory fallbacks' `torn_last_line` value is unused by telemetry span checks.
 - `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_799` and `x_verify__mutmut_801`: an absent sample list defaults to either `None` or `[]`, and both are falsey before any `max` call.
+
+### harbor_research_runner.run.checks
+
+- `harbor_research_runner.run.checks.x_run_checks__mutmut_127` and `harbor_research_runner.run.checks.x_run_checks__mutmut_128`: the `except OSError` around `task_content_hash` is unreachable for missing paths, regular files and folders with unreadable files, because Harbor's `Packager.compute_content_hash` returns the empty-content digest for all three; those tasks are already reported as drifted by the digest comparison.
+- `harbor_research_runner.run.checks.x_run_checks__mutmut_235`: task memory is either returned through the earlier missing-memory branch or `max_task_memory` includes the canary limit, so this `None` branch is unreachable.
+- `harbor_research_runner.run.checks.x_host_resources_check__mutmut_4`, `x_machine_check_launch_checks__mutmut_29` and `_35`, `x_run_checks__mutmut_176`, `_180`, `_310` and `_316`: they change the verifier timeout multiplier passed into `Limits`, a field `host_breach` never reads.
+
