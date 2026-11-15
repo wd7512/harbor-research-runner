@@ -196,7 +196,15 @@ def _build_snapshot(
         if (timestamp := _timestamp(row)) is not None and timestamp >= pass_started_t
     ]
     events = _read_events(session.run_dir)
-    verdicts = [row for row in events if row.get("type") == "trial_verdict"]
+    latest_resume = max(
+        (index for index, row in enumerate(events) if row.get("type") == "resume"),
+        default=-1,
+    )
+    verdicts = [
+        row
+        for index, row in enumerate(events)
+        if index > latest_resume and row.get("type") == "trial_verdict"
+    ]
     judged = {row["trial"] for row in verdicts if isinstance(row.get("trial"), str)}
     opens: set[str] = set()
     closed: set[str] = set()
