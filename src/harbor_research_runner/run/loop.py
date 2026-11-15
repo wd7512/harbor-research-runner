@@ -370,6 +370,8 @@ def slots_status(
             valid_counts[slot] = valid_counts.get(slot, 0) + 1
             if not event["measured"]:
                 unmeasured_final.append(trial)
+        elif event.get("reason") == "deferred":
+            to_set_aside.append(trial)
         elif set_aside_counts.get(slot, 0) < limits.max_set_asides_per_slot:
             to_set_aside.append(trial)
             set_aside_counts[slot] = set_aside_counts.get(slot, 0) + 1
