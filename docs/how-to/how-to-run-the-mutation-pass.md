@@ -30,6 +30,7 @@ For each survivor, write a test that detects the behavior or add its mutant name
 
 ### `trial_validity.verdict`
 
+- `harbor_research_runner.trial_validity.verdict.x__boundary__mutmut_8`: with `or`, the trial's first row becomes the open entry until its open row replaces it; the two differ only for a trial with two open rows, which the proxy never writes because `TrialRegistry.open` returns early for a trial already open.
 - `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_19`: `damaged` starts as `None` instead of `False`; it is only read as a condition, where both are false.
 - `harbor_research_runner.trial_validity.verdict.x__position_within__mutmut_2`, `harbor_research_runner.trial_validity.verdict.x__position_within__mutmut_3`, `harbor_research_runner.trial_validity.verdict.x__position_within__mutmut_4`: an invalid row at the open or close position is the trial's own row, and the trial-row check already marks it damaged.
 - `harbor_research_runner.trial_validity.verdict.x__positive_seq__mutmut_8`: sequence zero is rejected by `records.proxy_ledger.is_valid_row`; the invalid trial row already marks measurement damaged, so treating its sequence as positive cannot change the public verdict.

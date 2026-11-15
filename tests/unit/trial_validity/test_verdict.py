@@ -1474,6 +1474,22 @@ def test_result_without_agent_phase_window_is_unmeasured():
     assert verdict.unmeasured_reason == "phase_times_missing"
 
 
+def test_missing_agent_start_with_malformed_memory_watch_line_is_phase_times_missing(tmp_path):
+    phase_started, phase_finished = _phases(agent=(None, 5.0))
+    memory = _telemetry_read(
+        tmp_path, "memory-watch.jsonl", [_memory_sample(2), _memory_sample(6)], 2
+    )
+
+    verdict = _judge(
+        _facts(phase_started=phase_started, phase_finished=phase_finished),
+        rows=[_open_row(1), _close_row(2)],
+        memory_watch_events=memory,
+    )
+
+    assert not verdict.measured
+    assert verdict.unmeasured_reason == "phase_times_missing"
+
+
 @pytest.mark.parametrize("field", ["prompt_tokens", "completion_tokens", "cached_read_tokens"])
 def test_string_token_value_marks_trial_unmeasured(field):
     rows = _clean_ledger()
