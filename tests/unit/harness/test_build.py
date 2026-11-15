@@ -30,6 +30,10 @@ ARM64_NODE = (
 )
 LABEL_FORMAT = '{{index .Config.Labels "hrr.opencode.commit"}}'
 BUILD_DIR = Path(build_module.__file__).parent / "build"
+DOCKER_INFO_FIXTURE = (
+    Path(__file__).resolve().parents[2] / "fixtures" / "docker_info" / "docker-desktop-macos.json"
+)
+DOCKER_NETWORK_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "docker_network"
 LISTING_FIXTURE = (
     Path(__file__).resolve().parents[2]
     / "fixtures"
@@ -56,6 +60,7 @@ class FakeRun:
         version: str = "1.19.5\n",
         version_exit: int = 0,
         build_exit: int = 0,
+        networks: str | None = None,
     ) -> None:
         self.docker_arch = docker_arch
         self.listing = ["packages/opencode/script/build.ts"] if listing is None else listing
@@ -67,11 +72,24 @@ class FakeRun:
         self.version = version
         self.version_exit = version_exit
         self.build_exit = build_exit
+        self.networks = (
+            DOCKER_NETWORK_FIXTURES.joinpath("docker-network-ls-desktop.jsonl").read_text(
+                encoding="utf-8"
+            )
+            if networks is None
+            else networks
+        )
         self.calls: list[list[str]] = []
 
     def __call__(self, args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         args = list(args)
         self.calls.append(args)
+        if args == ["docker", "info", "--format", "{{json .}}"]:
+            return subprocess.CompletedProcess(
+                args, 0, stdout=DOCKER_INFO_FIXTURE.read_text(encoding="utf-8"), stderr=""
+            )
+        if args == ["docker", "network", "ls", "--format", "{{json .}}"]:
+            return subprocess.CompletedProcess(args, 0, stdout=self.networks, stderr="")
         if args[:2] == ["docker", "info"]:
             return subprocess.CompletedProcess(args, 0, stdout=self.docker_arch + "\n", stderr="")
         if args[0] == "curl":
@@ -286,6 +304,49 @@ def test_build_downloads_the_commit_archive_and_runs_the_platform_build(tmp_path
     assert curl[5] == f"https://github.com/anomalyco/opencode/archive/{COMMIT}.tar.gz"
     assert ["tar", "-tzf", curl[4]] in run.calls
     assert build_command("opencode", COMMIT, "arm64", "v1") in run.calls
+
+
+def test_build_uses_host_network_for_docker_commands_without_a_bridge(tmp_path: Path) -> None:
+    networks = (DOCKER_NETWORK_FIXTURES / "no-bridge.jsonl").read_text(encoding="utf-8")
+    run = FakeRun(networks=networks)
+
+    build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
+
+    docker_build_and_run = [
+        call
+        for call in run.calls
+        if call[:2] == ["docker", "build"] or call[:2] == ["docker", "run"]
+    ]
+    assert docker_build_and_run
+    assert all(call[2:4] == ["--network", "host"] for call in docker_build_and_run)
+
+
+def test_build_keeps_docker_commands_unchanged_with_a_bridge(tmp_path: Path) -> None:
+    networks = (DOCKER_NETWORK_FIXTURES / "docker-network-ls-desktop.jsonl").read_text(
+        encoding="utf-8"
+    )
+    run = FakeRun(networks=networks)
+
+    build("opencode", COMMIT, tmp_path / "harness-manifest.toml", run=run, arch="arm64")
+
+    docker_build_and_run = [
+        call
+        for call in run.calls
+        if call[:2] == ["docker", "build"] or call[:2] == ["docker", "run"]
+    ]
+    assert docker_build_and_run == [
+        build_command("opencode", COMMIT, "arm64", "v1"),
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--platform",
+            "linux/arm64",
+            image_ref(COMMIT, "arm64"),
+            "opencode",
+            "--version",
+        ],
+    ]
 
 
 def test_build_uses_requested_architecture_on_an_arm64_host(tmp_path: Path) -> None:

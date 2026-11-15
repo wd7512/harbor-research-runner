@@ -36,7 +36,9 @@ Rulings agreed between the owner and the advisor on 11 November 2026. This file 
 
 ## Scope
 
-**D15. Old repo.** The old repo freezes at 0.15.4. Its parked milestone is not finished. No paid run happens on old code. The first paid study is the new tool's acceptance run, after end-to-end tests, a free oracle sweep and a free-model pilot.
+**D15. Old repo.** The old repo freezes at 0.15.4. Its parked milestone is not finished. No paid run happens on old code. The first paid study runs on the released `0.1.0`, after end-to-end tests, a free oracle sweep, a free-model pilot and a halt-and-resume drill.
+
+15 November 2026: the release now comes before the first paid study instead of after it. Evidence names the tool version, and before a release the development line already reports the next version, so a study run from it would cite a version whose code could still change. A defect the study finds ships as a patch release.
 
 **D16. Task fixes.** The tool is benchmark-agnostic. Task fixes live in a separate pinned task repository. A fix changes plumbing only, never the instruction or what the tests accept, and is proven by the oracle scoring 1.0 and a do-nothing agent scoring 0.0. A task not fixed within about an hour is excluded by the declared rule. Results state the patched and excluded counts.
 

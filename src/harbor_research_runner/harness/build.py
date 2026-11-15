@@ -10,6 +10,7 @@ from datetime import date
 from pathlib import Path
 
 from harbor_research_runner.docker_host import images
+from harbor_research_runner.docker_host.profile import host_profile
 from harbor_research_runner.harness.manifest import (
     ImageEntry,
     ManifestError,
@@ -179,8 +180,12 @@ def _prove_image(ref: str, commit: str, arch: str, run: ExternalRunner) -> str:
     return digest
 
 
-def _version_from_image(ref: str, arch: str, run: ExternalRunner) -> str:
-    result = _run_docker(lambda: images.run_version(ref, arch, run))
+def _version_from_image(
+    ref: str, arch: str, run: ExternalRunner, *, use_host_network: bool = False
+) -> str:
+    result = _run_docker(
+        lambda: images.run_version(ref, arch, run, use_host_network=use_host_network)
+    )
     output = result.stdout.strip()
     if result.returncode != 0:
         raise BuildError(
@@ -212,6 +217,7 @@ def build(
     """Build one harness image from source and add it to the commit manifest."""
     _require_harness(harness)
     _require_commit(commit)
+    use_host_network = host_profile(run=run)["container_network"] == "host"
     with tempfile.TemporaryDirectory(prefix="hrr-opencode-source-") as directory:
         archive = Path(directory) / "source.tar.gz"
         url = _SOURCE_URL.format(commit=commit)
@@ -223,7 +229,11 @@ def build(
             )
         layout = layout_for(_archive_listing(archive, run))
 
-        result = _run_docker(lambda: images.build_image(*_build_args(commit, arch, layout), run))
+        result = _run_docker(
+            lambda: images.build_image(
+                *_build_args(commit, arch, layout), run, use_host_network=use_host_network
+            )
+        )
         if result.returncode != 0:
             raise BuildError(
                 f"docker build failed for commit {commit!r} (exit {result.returncode}): "
@@ -232,7 +242,7 @@ def build(
 
     ref = _image_ref(commit, arch)
     digest = _prove_image(ref, commit, arch, run)
-    version = _version_from_image(ref, arch, run)
+    version = _version_from_image(ref, arch, run, use_host_network=use_host_network)
     existing = _existing_commit_entry(manifest_path, harness, commit)
     entry = ImageEntry(
         harness=harness,
