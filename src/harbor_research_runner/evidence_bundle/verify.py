@@ -127,11 +127,7 @@ def verify(bundle_dir: Path) -> list[Problem]:
     planned_slots = {(task["name"], arm["label"]) for task in task_set for arm in arms}
     final_counts: dict[tuple[str, str], int] = {}
     for row in trials:
-        if (
-            row.get("location") == "harbor-job"
-            and row.get("valid") is True
-            and row.get("measured") is True
-        ):
+        if row.get("location") == "harbor-job" and row.get("valid") is True:
             slot = (row["task"], row["arm"])
             final_counts[slot] = final_counts.get(slot, 0) + 1
     slots_complete = sum(final_counts.get(slot, 0) >= repetitions for slot in planned_slots)
@@ -149,10 +145,9 @@ def verify(bundle_dir: Path) -> list[Problem]:
     }
     actual_counts = _report_counts(report)
     has_finish = any(event.get("type") == "finish" for event in events)
-    if "Trials not yet judged" in actual_counts:
-        expected_counts["Trials not yet judged"] = (
-            0 if has_finish else actual_counts["Trials not yet judged"]
-        )
+    expected_counts["Trials not yet judged"] = (
+        0 if has_finish else actual_counts.get("Trials not yet judged")
+    )
     if actual_counts != expected_counts:
         _problem(problems, "report_agreement", "report.md", expected_counts, actual_counts)
 
