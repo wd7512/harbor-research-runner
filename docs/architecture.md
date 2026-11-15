@@ -434,6 +434,8 @@ built_at = "2026-12-01"
 - `report.md`: generated from `statistics`; `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, and the loaded `MachineCheck` record.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
+The results explorer verifies every bundle file against `manifest.json` before loading the bundle. A missing or altered file refuses the bundle and is reported with the manifest problems.
+
 The secret scan runs before anything is written: it searches every output for the literal values of the model card's `key_env` variables and for the patterns ported from OLD's `runtime/secrets.py`. A hit exits 4 and writes nothing.
 
 ## 10. Statistics
