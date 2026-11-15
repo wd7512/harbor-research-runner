@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 import math
+import shutil
+import tempfile
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
+from harbor_research_runner.docker_host import cleanup
 from harbor_research_runner.harbor_adapter import job_folder
 from harbor_research_runner.harbor_adapter.commands import (
     apply_host_policy,
@@ -36,6 +38,7 @@ class MachineCheckDeps:
     now: Callable[[], float]
     host_arch: Callable[[], str] = host_arch
     image_arch: Callable[[str], str] = local_image_arch
+    cleanup_projects: Callable[[set[str]], object] = cleanup.clean_projects
 
 
 def verifier_multiplier(tasks: list[dict]) -> float:
@@ -123,10 +126,32 @@ def run_machine_check(
         raise RuntimeError("machine check refused: " + "; ".join(failed))
 
     created_t = deps.now()
-    created_at = datetime.fromtimestamp(created_t, UTC)
-    run_id = f"{job.name}-{created_at.strftime('%Y%m%dT%H%M%S%fZ')}"
-    check_dir = runs_dir / run_id
-    check_dir.mkdir(parents=True, exist_ok=False)
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    workspace = Path(tempfile.mkdtemp(prefix=f"machine-check-{job.name}-", dir=runs_dir))
+    try:
+        check = _run_machine_check_in_directory(
+            job, out, with_do_nothing, workspace, deps, created_t
+        )
+    except BaseException:
+        logger.error("machine check failed; its Harbor workspace is kept at %s", workspace)
+        raise
+    shutil.rmtree(
+        workspace,
+        onexc=lambda _function, path, error: logger.warning(
+            "could not remove machine check workspace file %s: %s", path, error
+        ),
+    )
+    return check
+
+
+def _run_machine_check_in_directory(
+    job: Job,
+    out: Path,
+    with_do_nothing: bool,
+    check_dir: Path,
+    deps: MachineCheckDeps,
+    created_t: float,
+) -> MachineCheck:
     task_names = list(job.tasks.include)
     oracle_name = "harbor-job"
     oracle_config_name = "oracle-job-config.yaml"
@@ -286,4 +311,22 @@ def run_machine_check(
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     write(out, check)
+    project_names = {
+        cleanup.compose_project_name(path.name)
+        for job_name in (oracle_name, "nop-job")
+        for path in job_folder.trial_folders(check_dir / job_name)
+    }
+    deps.cleanup_projects(project_names)
+    inventory = deps.checks.inventory()
+    if not inventory.daemon_ok:
+        raise RuntimeError(
+            f"could not verify Docker residue after machine check: {inventory.daemon_detail}"
+        )
+    residue = cleanup.residue_names(inventory, project_names)
+    if residue:
+        raise RuntimeError(
+            "Docker residue remains after machine check: "
+            + ", ".join(residue)
+            + "; remove it with `hrr clean-docker --apply`"
+        )
     return check

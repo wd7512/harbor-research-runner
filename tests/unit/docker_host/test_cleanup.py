@@ -9,6 +9,7 @@ import pytest
 from harbor_research_runner.docker_host.cleanup import (
     RunActive,
     clean,
+    clean_projects,
     clean_trials,
     compose_project_name,
     docker_memory_mb,
@@ -218,6 +219,17 @@ def test_clean_trials_matches_dotted_task_names():
     result = clean_trials(frozenset({trial}), run=run)
     assert result.removed_containers == (container,)
     assert result.removed_networks == (network,)
+
+
+def test_clean_projects_leaves_other_project_networks_untouched():
+    selected = "check-job__task__env_default"
+    foreign = "unrelated__env_default"
+    run, calls = docker_run(containers=[], networks=[selected, foreign])
+
+    result = clean_projects({"check-job__task"}, run=run)
+
+    assert result.removed_networks == (selected,)
+    assert [call[-1] for call in calls if call[:3] == ["docker", "network", "rm"]] == [selected]
 
 
 @pytest.mark.parametrize(
