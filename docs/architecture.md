@@ -136,7 +136,8 @@ Every row has `seq` (integer, starts at 1, +1 per row, never reused across proxy
 | `stalled` | The proxy cut the request: no first chunk within `first_chunk_max_s`, a gap over `inter_chunk_gap_max_s`, or total over `request_latency_max_s` | yes |
 | `truncated` | The stream ended without its terminator | yes |
 | `transport_error` | Connection to the upstream failed | yes |
-| `client_error` | Other 4xx: the harness sent a bad request | no |
+| `upstream_auth` | 401, 402 or 403 from the upstream: the proxy's own key, billing or account was refused | yes |
+| `client_error` | Other 4xx (except 401, 402, 403 and 429): the harness sent a bad request | no |
 | `client_disconnect` | The harness closed the connection first | no |
 
 A failover that the proxy absorbed (a later key or endpoint answered) is an `ok` row with `failovers > 0`.
