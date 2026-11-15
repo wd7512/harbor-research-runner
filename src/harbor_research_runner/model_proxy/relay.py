@@ -643,6 +643,7 @@ def _can_fail_over(observation: _Observation) -> bool:
         "rate_limited",
         "server_error",
         "transport_error",
+        "upstream_auth",
     }
 
 

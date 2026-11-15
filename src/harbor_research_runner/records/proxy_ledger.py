@@ -10,6 +10,7 @@ UPSTREAM_STATUSES = (
     "stalled",
     "truncated",
     "transport_error",
+    "upstream_auth",
     "client_error",
     "client_disconnect",
 )
@@ -22,6 +23,7 @@ COUNTS_AGAINST_TRIAL = frozenset(
         "stalled",
         "truncated",
         "transport_error",
+        "upstream_auth",
     }
 )
 
