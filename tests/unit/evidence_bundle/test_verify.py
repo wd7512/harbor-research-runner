@@ -6,6 +6,8 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from harbor_research_runner.evidence_bundle.build import build
 from harbor_research_runner.evidence_bundle.verify import Problem, verify
 from harbor_research_runner.records.manifest import write_manifest
@@ -163,9 +165,14 @@ def test_finished_bundle_reports_unjudged_proxy_trial(tmp_path: Path) -> None:
 
     problems = verify(bundle)
 
-    assert any(
-        problem.invariant == "proxy_accounting" and problem.subject == "unfinished"
-        for problem in problems
+    assert (
+        Problem(
+            "proxy_accounting",
+            "unfinished",
+            "trial row or documented non-trial id",
+            "request without trial row",
+        )
+        in problems
     )
 
 
@@ -206,7 +213,33 @@ def test_manifest_mismatch_is_reported(tmp_path: Path) -> None:
         report_path.read_text(encoding="utf-8").replace("# Run report", "# Changed report", 1),
         encoding="utf-8",
     )
-    assert set(_problem_ids(verify(bundle))) == {"manifest"}
+    problems = verify(bundle)
+    assert len(problems) == 2
+    assert all(
+        problem.invariant == "manifest"
+        and problem.subject == "report.md"
+        and problem.expected == "valid manifest"
+        and problem.actual is not None
+        for problem in problems
+    )
+
+
+def test_manifest_problem_subject_preserves_colons_in_file_names(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"].append(
+        {
+            "name": "report:copy.md",
+            "bytes": 0,
+            "sha256": hashlib.sha256(b"").hexdigest(),
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert verify(bundle) == [
+        Problem("manifest", "report", "valid manifest", "report:copy.md: missing file")
+    ]
 
 
 def test_resource_sample_count_disagreement_is_reported(tmp_path: Path) -> None:
@@ -220,7 +253,14 @@ def test_resource_sample_count_disagreement_is_reported(tmp_path: Path) -> None:
     )
     _refresh_manifest(bundle)
 
-    assert "resource_samples" in _problem_ids(verify(bundle))
+    problems = verify(bundle)
+    assert Problem("resource_samples", "resource-stats.jsonl.gz", 1, 2) in problems
+    report_problem = next(
+        problem for problem in problems if problem.invariant == "report_agreement"
+    )
+    assert report_problem.subject == "report.md"
+    assert report_problem.expected["Malformed resource samples"] == 1
+    assert report_problem.actual["Malformed resource samples"] == 2
 
 
 def test_zero_sampler_interval_is_reported(tmp_path: Path) -> None:
@@ -382,6 +422,114 @@ def test_host_sample_gap_at_three_intervals_is_accepted(tmp_path: Path) -> None:
     _assert_host_sample_result(bundle, damaged=False)
 
 
+def test_host_sample_edge_at_three_intervals_is_accepted(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [
+            {"type": "sample", "t": 70},
+            {"type": "sample", "t": 100},
+            {"type": "sample", "t": 110},
+            {"type": "sample", "t": 140},
+        ],
+    )
+
+    _assert_host_sample_result(bundle, damaged=False)
+
+
+def test_host_sample_gap_beyond_window_edge_is_ignored(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 70}, {"type": "sample", "t": 80}],
+    )
+
+    _assert_host_sample_result(bundle, damaged=False)
+
+
+@pytest.mark.parametrize(
+    ("samples", "start", "end", "damaged"),
+    [
+        (
+            [
+                {"type": "sample", "t": 70},
+                {"type": "sample", "t": 80},
+                b'{"type":',
+                {"type": "sample", "t": 90},
+                {"type": "sample", "t": 100},
+                {"type": "sample", "t": 110},
+                {"type": "sample", "t": 120},
+                {"type": "sample", "t": 130},
+            ],
+            100,
+            110,
+            False,
+        ),
+        (
+            [
+                {"type": "sample", "t": 90},
+                {"type": "sample", "t": 100},
+                {"type": "sample", "t": 110},
+                b'{"type":',
+                {"type": "sample", "t": 120},
+                {"type": "sample", "t": 130},
+                {"type": "sample", "t": 140},
+            ],
+            100,
+            110,
+            True,
+        ),
+        (
+            [
+                {"type": "sample", "t": 70},
+                {"type": "sample", "t": 80},
+                {"type": "sample", "t": 90},
+                b'{"type":',
+                {"type": "sample", "t": 100},
+                {"type": "sample", "t": 110},
+                {"type": "sample", "t": 120},
+            ],
+            100,
+            110,
+            True,
+        ),
+    ],
+)
+def test_malformed_resource_row_only_damages_overlapping_trial_window(
+    samples: list[dict | bytes], start: int, end: int, damaged: bool, tmp_path: Path
+) -> None:
+    bundle = _host_sample_bundle(tmp_path, samples, start=start, end=end)
+
+    _assert_host_sample_result(bundle, damaged=damaged)
+
+
+def test_resource_sample_gap_line_numbers_are_preserved(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 90}, b'{"type":', {"type": "sample", "t": 120}],
+    )
+
+    _assert_host_sample_result(bundle, damaged=True)
+
+
+def test_one_second_sampler_interval_is_not_replaced_by_default(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [
+            {"type": "sample", "t": 97},
+            {"type": "sample", "t": 100},
+            {"type": "sample", "t": 105},
+            {"type": "sample", "t": 110},
+            {"type": "sample", "t": 113},
+        ],
+    )
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["sampler_interval_s"] = 1
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _refresh_manifest(bundle)
+
+    _assert_host_sample_result(bundle, damaged=True)
+
+
 def test_host_sample_gap_before_trial_window_is_ignored(tmp_path: Path) -> None:
     bundle = _host_sample_bundle(
         tmp_path,
@@ -487,10 +635,28 @@ def test_duplicate_trial_row_is_reported(tmp_path: Path) -> None:
     duplicate = dict(rows[0])
     duplicate["valid"] = False
     rows.append(duplicate)
+    rows[1]["requests"] += 1
     _write_rows(bundle / "trials.jsonl", rows)
+    compressed = gzip.decompress((bundle / "proxy-requests.jsonl.gz").read_bytes()).decode("utf-8")
+    requests = [json.loads(line) for line in compressed.splitlines()]
+    completed = [
+        request
+        for request in requests
+        if request["trial"] == rows[1]["trial"] and request.get("upstream_status") is not None
+    ]
+    expected = {
+        "requests": len(completed),
+        "prompt_tokens": sum(request.get("prompt_tokens") or 0 for request in completed),
+        "completion_tokens": sum(request.get("completion_tokens") or 0 for request in completed),
+        "cached_read_tokens": sum(request.get("cached_read_tokens") or 0 for request in completed),
+    }
+    actual = {key: rows[1].get(key) for key in expected}
     _refresh_manifest(bundle)
 
-    assert verify(bundle) == [Problem("trial_identity", rows[0]["trial"], 1, 2)]
+    assert verify(bundle) == [
+        Problem("trial_identity", rows[0]["trial"], 1, 2),
+        Problem("proxy_accounting", rows[1]["trial"], expected, actual),
+    ]
 
 
 def test_missing_trial_verdict_is_reported(tmp_path: Path) -> None:
@@ -607,7 +773,7 @@ def test_telemetry_damage_and_null_peak_verify_from_memory_watch_copy(tmp_path: 
     assert verify(bundle) == []
 
 
-def test_malformed_oom_event_is_checked_against_trial_windows(tmp_path: Path) -> None:
+def test_oom_damage_disagreement_reports_trial_state(tmp_path: Path) -> None:
     bundle = _bundle("clean", tmp_path)
     trials_path = bundle / "trials.jsonl"
     trials = _rows(trials_path)
@@ -636,7 +802,9 @@ def test_malformed_oom_event_is_checked_against_trial_windows(tmp_path: Path) ->
             verifier_started_t=verifier_start,
             verifier_finished_t=verifier_end,
         )
-        if row is harbor_trials[0] or row is harbor_trials[1]:
+        if row is harbor_trials[0]:
+            row["peak_memory_mb"] = None
+        if row is harbor_trials[1]:
             row.update(measured=False, unmeasured_reason="telemetry_damaged", peak_memory_mb=None)
             damaged_trials.add(row["trial"])
     _write_rows(trials_path, trials)
@@ -657,7 +825,61 @@ def test_malformed_oom_event_is_checked_against_trial_windows(tmp_path: Path) ->
     )
     report_path = bundle / "report.md"
     report = report_path.read_text(encoding="utf-8")
-    report = report.replace("| Unmeasured trials | 0 |", "| Unmeasured trials | 2 |")
+    report = report.replace("| Unmeasured trials | 0 |", "| Unmeasured trials | 1 |")
+    report_path.write_text(
+        report.replace(
+            "| Tokens spent on set-aside trials |",
+            "| Malformed Docker OOM events | 1 |\n| Tokens spent on set-aside trials |",
+        ),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [
+        Problem(
+            "telemetry_damaged",
+            harbor_trials[0]["trial"],
+            {"measured": False, "unmeasured_reason": "telemetry_damaged"},
+            {"measured": True, "unmeasured_reason": None},
+        )
+    ]
+
+
+def test_telemetry_damage_uses_agent_end_without_verifier(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    trial = next(row for row in trials if row["location"] == "harbor-job")
+    for row in trials:
+        row.update(
+            agent_started_t=None,
+            agent_finished_t=None,
+            verifier_started_t=None,
+            verifier_finished_t=None,
+        )
+    trial.update(
+        agent_started_t=100,
+        agent_finished_t=110,
+        measured=False,
+        unmeasured_reason="telemetry_damaged",
+    )
+    _write_rows(trials_path, trials)
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    next(event for event in events if event.get("trial") == trial["trial"]).update(
+        measured=False,
+        unmeasured_reason="telemetry_damaged",
+    )
+    _write_rows(events_path, events)
+    (bundle / "docker-oom-events.jsonl").write_text(
+        '{"type":"oom","timeNano":105000000000}\n'
+        '{"type":\n'
+        '{"type":"oom","timeNano":106000000000}\n',
+        encoding="utf-8",
+    )
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report = report.replace("| Unmeasured trials | 0 |", "| Unmeasured trials | 1 |")
     report_path.write_text(
         report.replace(
             "| Tokens spent on set-aside trials |",
@@ -668,6 +890,84 @@ def test_malformed_oom_event_is_checked_against_trial_windows(tmp_path: Path) ->
     _refresh_manifest(bundle)
 
     assert verify(bundle) == []
+
+
+@pytest.mark.parametrize(
+    ("start", "agent_end", "verifier_start", "verifier_end"),
+    [(True, 110, None, None), (100, 105, 106, True)],
+)
+def test_boolean_trial_telemetry_times_do_not_mark_trial_damaged(
+    start: object,
+    agent_end: object,
+    verifier_start: object,
+    verifier_end: object,
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle("clean", tmp_path)
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    trial = next(row for row in trials if row["location"] == "harbor-job")
+    for row in trials:
+        row.update(
+            agent_started_t=None,
+            agent_finished_t=None,
+            verifier_started_t=None,
+            verifier_finished_t=None,
+        )
+    trial.update(
+        agent_started_t=start,
+        agent_finished_t=agent_end,
+        verifier_started_t=verifier_start,
+        verifier_finished_t=verifier_end,
+    )
+    _write_rows(trials_path, trials)
+    (bundle / "docker-oom-events.jsonl").write_text('{"type":\n', encoding="utf-8")
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report_path.write_text(
+        report.replace(
+            "| Tokens spent on set-aside trials |",
+            "| Malformed Docker OOM events | 1 |\n| Tokens spent on set-aside trials |",
+        ),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
+
+
+def test_telemetry_damage_problem_reports_expected_and_actual_trial_state(
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle("clean", tmp_path)
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    row = next(row for row in trials if row["location"] == "harbor-job")
+    row.update(measured=False, unmeasured_reason="telemetry_damaged")
+    _write_rows(trials_path, trials)
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    next(event for event in events if event.get("trial") == row["trial"]).update(
+        measured=False,
+        unmeasured_reason="telemetry_damaged",
+    )
+    _write_rows(events_path, events)
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report_path.write_text(
+        report.replace("| Unmeasured trials | 0 |", "| Unmeasured trials | 1 |"),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [
+        Problem(
+            "telemetry_damaged",
+            row["trial"],
+            {"measured": True, "unmeasured_reason": None},
+            {"measured": False, "unmeasured_reason": "telemetry_damaged"},
+        )
+    ]
 
 
 def test_set_aside_trial_must_be_invalid(tmp_path: Path) -> None:
@@ -694,6 +994,56 @@ def test_arm_outside_metadata_arms_is_reported(tmp_path: Path) -> None:
     metadata = json.loads((bundle / "run-metadata.json").read_text(encoding="utf-8"))
     arm_names = sorted(arm["label"] for arm in metadata["arms"])
     assert verify(bundle) == [Problem("task_set", row["trial"], arm_names, "arm/missing")]
+
+
+def test_set_aside_trial_task_outside_metadata_task_set_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("retries", tmp_path)
+    rows = _rows(bundle / "trials.jsonl")
+    row = next(row for row in rows if row["location"] == "set-aside-trials")
+    row["task"] = "task/missing"
+    _write_rows(bundle / "trials.jsonl", rows)
+    metadata = json.loads((bundle / "run-metadata.json").read_text(encoding="utf-8"))
+    task_names = sorted(task["name"] for task in metadata["task_set"]["tasks"])
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [Problem("task_set", row["trial"], task_names, "task/missing")]
+
+
+def test_missing_task_set_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    del metadata["task_set"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _refresh_manifest(bundle)
+
+    problems = verify(bundle)
+    assert Problem("task_set", "tasks", "non-empty task set", []) in problems
+
+
+def test_missing_task_list_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    del metadata["task_set"]["tasks"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _refresh_manifest(bundle)
+
+    problems = verify(bundle)
+    assert Problem("task_set", "tasks", "non-empty task set", []) in problems
+
+
+def test_missing_arm_list_reports_unrecognized_trial_arm(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    del metadata["arms"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _refresh_manifest(bundle)
+    row = _rows(bundle / "trials.jsonl")[0]
+
+    problems = verify(bundle)
+    assert Problem("task_set", row["trial"], [], row["arm"]) in problems
 
 
 def test_report_slot_counts_are_recomputed(tmp_path: Path) -> None:
@@ -724,6 +1074,95 @@ def test_finish_counts_must_match_trials(tmp_path: Path) -> None:
             {"slots_complete": 3, "slots_incomplete": 1},
         )
     ]
+
+
+def test_finish_zero_exit_with_incomplete_slots_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["job"]["repetitions"] = 2
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    events.append({"type": "finish", "exit_code": 0, "slots_complete": 0, "slots_incomplete": 4})
+    _write_rows(events_path, events)
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report = report.replace("| Slots complete | 4 |", "| Slots complete | 0 |")
+    report_path.write_text(
+        report.replace("| Slots incomplete | 0 |", "| Slots incomplete | 4 |"),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [Problem("finish_agreement", "finish.exit_code", 0, 4)]
+
+
+def test_repetitions_count_valid_harbor_trials_per_slot(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["job"]["repetitions"] = 2
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    original = next(row for row in trials if row["location"] == "harbor-job")
+    duplicate = dict(original)
+    duplicate["trial"] = f"{original['trial']}-repeat"
+    duplicate.update(requests=0, prompt_tokens=0, completion_tokens=0, cached_read_tokens=0)
+    trials.append(duplicate)
+    _write_rows(trials_path, trials)
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    verdict = dict(
+        next(
+            event
+            for event in events
+            if event.get("type") == "trial_verdict" and event["trial"] == original["trial"]
+        )
+    )
+    verdict["trial"] = duplicate["trial"]
+    events.append(verdict)
+    _write_rows(events_path, events)
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report = report.replace("| Slots complete | 4 |", "| Slots complete | 1 |")
+    report_path.write_text(
+        report.replace("| Slots incomplete | 0 |", "| Slots incomplete | 3 |"),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
+
+
+def test_canary_trial_does_not_complete_a_main_slot(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["job"]["repetitions"] = 2
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    main = next(row for row in trials if row["location"] == "harbor-job")
+    canary = next(row for row in trials if row["location"] == "canary-job")
+    canary.update(task=main["task"], arm=main["arm"], valid=True)
+    _write_rows(trials_path, trials)
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    verdict = next(event for event in events if event.get("trial") == canary["trial"])
+    verdict.update(task=main["task"], arm=main["arm"], valid=True)
+    _write_rows(events_path, events)
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report = report.replace("| Slots complete | 4 |", "| Slots complete | 0 |")
+    report_path.write_text(
+        report.replace("| Slots incomplete | 0 |", "| Slots incomplete | 4 |"),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
 
 
 def test_set_aside_cap_excludes_deferred_events(tmp_path: Path) -> None:
@@ -757,6 +1196,88 @@ def test_set_aside_cap_excludes_deferred_events(tmp_path: Path) -> None:
     assert verify(bundle) == [Problem("set_aside_cap", "task/a/alpha", 0, 1)]
 
 
+def test_set_aside_cap_allows_count_at_limit(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["limits"]["max_set_asides_per_slot"] = 1
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    task = metadata["task_set"]["tasks"][0]["name"]
+    arm = metadata["arms"][0]["label"]
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    events.append(
+        {
+            "type": "set_aside",
+            "trial": "a-retry",
+            "task": task,
+            "arm": arm,
+            "reason": "upstream_terminal_error",
+        }
+    )
+    _write_rows(events_path, events)
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
+
+
+def test_exempt_set_aside_event_does_not_count_toward_cap(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["limits"]["max_set_asides_per_slot"] = 0
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    events.append(
+        {
+            "type": "set_aside",
+            "trial": "deferred-trial",
+            "task": metadata["task_set"]["tasks"][0]["name"],
+            "arm": metadata["arms"][0]["label"],
+            "reason": "deferred",
+        }
+    )
+    _write_rows(events_path, events)
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
+
+
+def test_default_set_aside_cap_scales_with_repetitions(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["job"]["repetitions"] = 2
+    del metadata["limits"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    task = metadata["task_set"]["tasks"][0]["name"]
+    arm = metadata["arms"][0]["label"]
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    events.extend(
+        {
+            "type": "set_aside",
+            "trial": f"retry-{index}",
+            "task": task,
+            "arm": arm,
+            "reason": "upstream_terminal_error",
+        }
+        for index in range(5)
+    )
+    _write_rows(events_path, events)
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report = report.replace("| Slots complete | 4 |", "| Slots complete | 0 |")
+    report_path.write_text(
+        report.replace("| Slots incomplete | 0 |", "| Slots incomplete | 4 |"),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [Problem("set_aside_cap", f"{task}/{arm}", 4, 5)]
+
+
 def test_memory_peak_must_match_samples(tmp_path: Path) -> None:
     bundle = _bundle("clean", tmp_path)
     rows = _rows(bundle / "trials.jsonl")
@@ -775,11 +1296,116 @@ def test_memory_peak_must_match_samples(tmp_path: Path) -> None:
     assert Problem("memory", rows[0]["trial"], 42, None) in problems
 
 
+def test_memory_peak_disagreement_preserves_non_null_trial_value(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    trials = _rows(bundle / "trials.jsonl")
+    row = trials[0]
+    row["peak_memory_mb"] = 41
+    _write_rows(bundle / "trials.jsonl", trials)
+    (bundle / "memory-watch.jsonl").write_text(
+        json.dumps(
+            {"type": "sample", "trial": row["trial"], "location": "harbor-job", "used_mb": 42}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert Problem("memory", row["trial"], 42, 41) in verify(bundle)
+
+
+def test_non_sample_memory_rows_do_not_hide_later_samples(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    trials = _rows(bundle / "trials.jsonl")
+    row = trials[0]
+    row["peak_memory_mb"] = 42
+    _write_rows(bundle / "trials.jsonl", trials)
+    (bundle / "memory-watch.jsonl").write_text(
+        json.dumps({"type": "over_limit", "trial": row["trial"]})
+        + "\n"
+        + json.dumps(
+            {"type": "sample", "trial": row["trial"], "location": "harbor-job", "used_mb": 42}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report_path.write_text(
+        report.replace(
+            "| Tokens spent on set-aside trials |",
+            "| Malformed memory-watch samples | 0 |\n| Tokens spent on set-aside trials |",
+        ),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
+
+
+def test_canary_memory_sample_is_included_in_peak_check(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    canary = next(row for row in _rows(bundle / "trials.jsonl") if row["location"] == "canary-job")
+    canary["peak_memory_mb"] = None
+    trials = _rows(bundle / "trials.jsonl")
+    next(row for row in trials if row["trial"] == canary["trial"])["peak_memory_mb"] = None
+    _write_rows(bundle / "trials.jsonl", trials)
+    (bundle / "memory-watch.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "over_limit",
+                "trial": canary["trial"],
+                "location": "canary-job",
+                "container": "container-a",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "sample",
+                "trial": canary["trial"],
+                "location": "canary-job",
+                "container": "container-a",
+                "used_mb": 42,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report_path.write_text(
+        report.replace(
+            "| Tokens spent on set-aside trials |",
+            "| Malformed memory-watch samples | 0 |\n| Tokens spent on set-aside trials |",
+        ),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    problems = verify(bundle)
+    assert Problem("memory", canary["trial"], 42, None) in problems
+
+
 def test_proxy_usage_must_match_request_rows(tmp_path: Path) -> None:
     bundle = _bundle("clean", tmp_path)
     rows = _rows(bundle / "trials.jsonl")
     rows[0]["requests"] += 1
     _write_rows(bundle / "trials.jsonl", rows)
+    requests_path = bundle / "proxy-requests.jsonl.gz"
+    compressed = gzip.decompress(requests_path.read_bytes()).decode("utf-8")
+    requests = [json.loads(line) for line in compressed.splitlines()]
+    nullable = next(
+        request
+        for request in requests
+        if request["trial"] == rows[0]["trial"] and request.get("upstream_status") is not None
+    )
+    nullable["prompt_tokens"] = None
+    nullable["completion_tokens"] = None
+    raw = "".join(json.dumps(request, sort_keys=True) + "\n" for request in requests).encode(
+        "utf-8"
+    )
+    requests_path.write_bytes(gzip.compress(raw, mtime=0))
     _refresh_manifest(bundle)
     compressed = gzip.decompress((bundle / "proxy-requests.jsonl.gz").read_bytes()).decode("utf-8")
     requests = [json.loads(line) for line in compressed.splitlines()]
@@ -819,3 +1445,14 @@ def test_measured_trial_cannot_have_unfinished_request(tmp_path: Path) -> None:
     requests_path.write_bytes(gzip.compress(raw, mtime=0))
     _refresh_manifest(bundle)
     assert verify(bundle) == [Problem("measured_closed", trial, "no unfinished requests", 1)]
+
+
+@pytest.mark.parametrize("filename", ["trials.jsonl", "run-events.jsonl"])
+def test_one_malformed_identity_jsonl_file_is_rejected(filename: str, tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    path = bundle / filename
+    lines = path.read_bytes().splitlines()
+    path.write_bytes(b"\n".join([lines[0], b"not-json", *lines[1:]]) + b"\n")
+
+    with pytest.raises(ValueError, match="bundle contains malformed JSONL records"):
+        verify(bundle)

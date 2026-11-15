@@ -38,12 +38,25 @@ For each survivor, write a test that detects the behavior or add its mutant name
 - `harbor_research_runner.evidence_bundle.verify.x__jsonl_gzip__mutmut_13`: Python's codec lookup treats `UTF-8` and `utf-8` as the same encoding.
 - `harbor_research_runner.evidence_bundle.verify.x__resource_rows__mutmut_19`: Python's codec lookup treats `UTF-8` and `utf-8` as the same encoding.
 - `harbor_research_runner.evidence_bundle.verify.x_malformed_jsonl_count__mutmut_16`: Python's codec lookup treats `UTF-8` and `utf-8` as the same encoding.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_83`: Python's codec lookup treats `UTF-8` and `utf-8` as the same encoding when reading the report.
+- `harbor_research_runner.evidence_bundle.verify.x__json__mutmut_3`: valid UTF-8 JSON decodes identically with the explicit UTF-8 codec or the supported UTF-8 default.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_15`: omitting the split limit does not change the first split field.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_18`: a positive split limit of two does not change the first split field.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_78`: valid UTF-8 report text decodes identically with the explicit UTF-8 codec or the supported UTF-8 default.
 
 ## Message-text mutants
 
 ### harbor_research_runner.evidence_bundle.verify
 
-7: `x__json__mutmut_7`, `x__jsonl_gzip__mutmut_8`, `x__jsonl_gzip__mutmut_15`, `x_verify__mutmut_942`, `x_verify__mutmut_943`, `x_verify__mutmut_944`, `x_verify__mutmut_945`. These alter exception wording or a displayed JSONL line number only; no record, exit code or documented remedy depends on the wording.
+8: `x__json__mutmut_7`, `x__jsonl_gzip__mutmut_7`, `x__jsonl_gzip__mutmut_8`, `x__jsonl_gzip__mutmut_15`, `x_verify__mutmut_942`, `x_verify__mutmut_943`, `x_verify__mutmut_944`, `x_verify__mutmut_945`. These alter exception wording or a displayed JSONL line number only; no record, exit code or documented remedy depends on the wording.
+
+## Simplification candidates
+
+### harbor_research_runner.evidence_bundle.verify
+
+- `harbor_research_runner.evidence_bundle.verify.x__host_window_damaged__mutmut_73` and `x__host_window_damaged__mutmut_78`: the absent-resource fallback's `torn_last_line` value is unused; `bad_line_time_spans` only reads `rows` and `bad_lines`.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_52`, `x_verify__mutmut_57`, `x_verify__mutmut_61` and `x_verify__mutmut_66`: the absent OOM and memory fallbacks' `torn_last_line` value is unused by telemetry span checks.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_799` and `x_verify__mutmut_801`: an absent sample list defaults to either `None` or `[]`, and both are falsey before any `max` call.
 
 ## Not unit-testable
 
