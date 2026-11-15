@@ -838,6 +838,33 @@ def test_empty_task_include_means_all_included_tasks_pass(tmp_path: Path) -> Non
     assert result.ok
 
 
+@pytest.mark.parametrize(
+    ("included", "include", "exclude", "reason"),
+    [
+        ([], (), (), "machine check included no tasks"),
+        (["task-a", "task-b"], (), ("task-a", "task-b"), "every included task"),
+        (["task-a", "task-b"], ("task-c",), (), "not included in the machine check: task-c"),
+    ],
+)
+def test_tasks_included_check_refuses_an_empty_resolved_selection(
+    tmp_path: Path,
+    included: list[str],
+    include: tuple[str, ...],
+    exclude: tuple[str, ...],
+    reason: str,
+) -> None:
+    check = _machine_check(included=included)
+    deps = _deps(tmp_path, read_machine_check=lambda _path: check)
+
+    result = _by_name(
+        _run(tmp_path, job=_job(include=include, exclude=exclude), deps=deps),
+        "tasks_included",
+    )
+
+    assert not result.ok
+    assert reason in result.detail
+
+
 def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path) -> None:
     deps = _deps(
         tmp_path,

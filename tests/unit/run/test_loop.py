@@ -511,10 +511,11 @@ def test_harbor_failure_without_trial_folder_halts_resumably(tmp_path: Path) -> 
     assert stat.S_IMODE(session.run_dir.stat().st_mode) & stat.S_IWUSR
 
 
-def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Path) -> None:
+def _launch_with_machine_check(
+    tmp_path: Path, machine_check: MachineCheck
+) -> tuple[RunOutcome, list[bool]]:
     job_path = tmp_path / "job.yaml"
-    machine_check_path = tmp_path / "machine-check.json"
-    machine_check_path.write_text("{}", encoding="utf-8")
+    (tmp_path / "machine-check.json").write_text("{}", encoding="utf-8")
     job_path.write_text(
         "name: study\n"
         "model: provider/model\n"
@@ -548,28 +549,13 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
     )
     manifest_path = tmp_path / "manifest.toml"
     manifest_path.write_text("", encoding="utf-8")
-    lock_path = tmp_path / "host.lock"
-    holder = HostLock(lock_path)
-    holder.acquire()
-    machine_check = MachineCheck(
-        created_t=1.0,
-        tool_version="0.1.0",
-        harbor_version="0.23.0",
-        host_fingerprint="fingerprint",
-        host_profile=_PROFILE,
-        task_source={"dataset": "bench/tasks"},
-        concurrency=1,
-        tasks=[{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}],
-        included=["task-a"],
-        verifier_timeout_multiplier=1.0,
-    )
     started: list[bool] = []
     checks = CheckDeps(
         select_adapter=lambda *_args: object(),
         measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
         inventory=lambda: Inventory(True, "ok", (), ()),
         live_run=lambda _path: None,
-        host_lock=HostLock(lock_path),
+        host_lock=HostLock(tmp_path / "host.lock"),
         read_machine_check=lambda _path: machine_check,
         host_fingerprint=lambda: "fingerprint",
         host_profile=lambda: _PROFILE,
@@ -596,15 +582,32 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
         stop_services=lambda *_args: None,
         now=lambda: 1.0,
     )
+    return run_job(job_path, tmp_path / "runs", manifest_path, {}, deps), started
 
+
+def _machine_check_including(tasks: list[dict], included: list[str]) -> MachineCheck:
+    return MachineCheck(
+        created_t=1.0,
+        tool_version="0.1.0",
+        harbor_version="0.23.0",
+        host_fingerprint="fingerprint",
+        host_profile=_PROFILE,
+        task_source={"dataset": "bench/tasks"},
+        concurrency=1,
+        tasks=tasks,
+        included=included,
+        verifier_timeout_multiplier=1.0,
+    )
+
+
+def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Path) -> None:
+    holder = HostLock(tmp_path / "host.lock")
+    holder.acquire()
+    machine_check = _machine_check_including(
+        [{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}], ["task-a"]
+    )
     try:
-        result = run_job(
-            job_path,
-            tmp_path / "runs",
-            manifest_path,
-            {},
-            deps,
-        )
+        result, started = _launch_with_machine_check(tmp_path, machine_check)
     finally:
         holder.release()
 
@@ -613,6 +616,21 @@ def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Pa
     events = jsonl.read_rows(result.run_dir / "run-events.jsonl").rows
     assert any(
         event["type"] == "launch_check" and event["name"] == "single_run" and event["ok"] is False
+        for event in events
+    )
+    assert started == []
+
+
+def test_run_job_refuses_empty_resolved_tasks_before_starting_services(tmp_path: Path) -> None:
+    result, started = _launch_with_machine_check(tmp_path, _machine_check_including([], []))
+
+    assert result.exit_code == 1
+    assert result.run_dir is not None
+    events = jsonl.read_rows(result.run_dir / "run-events.jsonl").rows
+    assert any(
+        event["type"] == "launch_check"
+        and event["name"] == "tasks_included"
+        and event["ok"] is False
         for event in events
     )
     assert started == []
