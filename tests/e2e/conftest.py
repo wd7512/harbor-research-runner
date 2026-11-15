@@ -627,7 +627,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
     report = yield
     if report.failed:
         e2e_run = item.funcargs.get("e2e_run")
-        if isinstance(e2e_run, E2ERun):
+        if isinstance(e2e_run, E2ERun) and e2e_run.runs_dir.is_dir():
             run_dirs = sorted(
                 path
                 for path in e2e_run.runs_dir.iterdir()
