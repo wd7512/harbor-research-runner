@@ -168,7 +168,7 @@ def test_sample_records_memory_and_kills_over_limit_container(tmp_path: Path):
         os.close(fd)
 
     rows = read_rows(run_dir / "memory-watch.jsonl").rows
-    assert [row["type"] for row in rows] == ["sample", "kill"]
+    assert [row["type"] for row in rows] == ["sample", "over_limit", "kill"]
     assert all(row["trial"] == "trial-a__abc" for row in rows)
     assert all(row["used_mb"] == 3.758 and row["limit_mb"] == 3 for row in rows)
     assert all(row["location"] == "harbor-job" for row in rows)
@@ -219,8 +219,10 @@ def test_canary_container_is_sampled_and_killed_above_canary_limit(tmp_path: Pat
                     "Labels": "com.docker.compose.project=canary__alpha__env",
                 }
             )
-        else:
+        elif command[1] == "kill":
             output = ""
+        else:
+            output = "PID RSS COMMAND\n"
         return SimpleNamespace(stdout=output)
 
     fd = os.open(tmp_path / "memory-watch.jsonl", os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
@@ -230,7 +232,7 @@ def test_canary_container_is_sampled_and_killed_above_canary_limit(tmp_path: Pat
         os.close(fd)
 
     rows = read_rows(tmp_path / "memory-watch.jsonl").rows
-    assert [row["type"] for row in rows] == ["sample", "kill"]
+    assert [row["type"] for row in rows] == ["sample", "over_limit", "kill"]
     assert all(row["location"] == "canary-job" for row in rows)
     assert all(row["limit_mb"] == canary_memory_mb() for row in rows)
     assert any(command[:2] == ["docker", "kill"] for command in commands)
@@ -296,7 +298,7 @@ def test_sample_skips_container_that_disappears_during_inspect(tmp_path: Path):
     assert [(row["trial"], row["type"]) for row in rows] == [("trial-healthy", "sample")]
 
 
-def test_sample_skips_container_when_kill_fails_without_marking_it_killed(tmp_path: Path):
+def test_sample_records_breach_when_kill_fails_and_does_not_retry(tmp_path: Path):
     (tmp_path / "machine-check.json").write_text(
         json.dumps(
             {
@@ -349,7 +351,9 @@ def test_sample_skips_container_when_kill_fails_without_marking_it_killed(tmp_pa
                 )
             )
         if command[1] == "kill":
-            raise OSError("container disappeared before kill")
+            raise subprocess.CalledProcessError(1, command, stderr="kill failed")
+        if command[1] == "top":
+            return SimpleNamespace(stdout="PID RSS COMMAND\n")
         return SimpleNamespace(stdout="")
 
     fd = os.open(tmp_path / "memory-watch.jsonl", os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
@@ -359,8 +363,229 @@ def test_sample_skips_container_when_kill_fails_without_marking_it_killed(tmp_pa
         os.close(fd)
 
     rows = read_rows(tmp_path / "memory-watch.jsonl").rows
-    assert [(row["trial"], row["type"]) for row in rows] == [("trial-healthy", "sample")]
-    assert killed == set()
+    assert [(row["trial"], row["type"]) for row in rows] == [
+        ("trial-gone", "sample"),
+        ("trial-gone", "over_limit"),
+        ("trial-gone", "kill_failed"),
+        ("trial-healthy", "sample"),
+    ]
+    assert rows[2]["error"]
+    assert killed == {"gone"}
+
+    fd = os.open(tmp_path / "memory-watch.jsonl", os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+    try:
+        sample_once(tmp_path, fd, "kernel", now=lambda: 12.0, run=run, killed=killed)
+    finally:
+        os.close(fd)
+    rows = read_rows(tmp_path / "memory-watch.jsonl").rows
+    assert [row["type"] for row in rows[-2:]] == ["sample", "sample"]
+
+
+def test_docker_stats_over_limit_row_lists_processes_from_docker_top(tmp_path: Path):
+    run_dir = tmp_path
+    (run_dir / "machine-check.json").write_text(
+        json.dumps(
+            {
+                "created_t": 1,
+                "tool_version": "1",
+                "harbor_version": "0.23.0",
+                "host_fingerprint": "host",
+                "task_source": {},
+                "concurrency": 1,
+                "tasks": [{"name": "task-a", "memory_mb": 1}],
+                "included": ["task-a"],
+                "verifier_timeout_multiplier": 1.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    trial_dir = run_dir / "harbor-job" / "trial-a__abc"
+    trial_dir.mkdir(parents=True)
+    (trial_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "trial_name": "trial-a__abc",
+                "task": {"path": "task-a"},
+                "agent": {"kwargs": {"arm_label": "arm-a"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    top = (FIXTURES / "docker-top-macos.txt").read_text(encoding="utf-8")
+
+    def run(command):
+        if command[1] == "ps":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    {
+                        "ID": "be3b8bd3cf84",
+                        "Names": "hrr-fixture-mem",
+                        "Labels": "com.docker.compose.project=trial-a__abc__env",
+                    }
+                )
+            )
+        if command[1] == "stats":
+            return SimpleNamespace(
+                stdout='{"Container":"hrr-fixture-mem","MemUsage":"3MiB / 4GiB"}'
+            )
+        if command[1] == "top":
+            return SimpleNamespace(stdout=top)
+        return SimpleNamespace(stdout="")
+
+    fd = os.open(run_dir / "memory-watch.jsonl", os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+    try:
+        sample_once(run_dir, fd, "kernel", now=lambda: 10.0, run=run)
+    finally:
+        os.close(fd)
+
+    rows = read_rows(run_dir / "memory-watch.jsonl").rows
+    assert rows[1]["type"] == "over_limit"
+    assert rows[1]["processes"] == [
+        {"pid": 617, "cmd": "sleep 120", "mb": 816 / 1024},
+        {"pid": 630, "cmd": "sleep 120", "mb": 812 / 1024},
+    ]
+
+
+def test_proc_over_limit_row_lists_processes_from_namespace_scan(tmp_path: Path):
+    run_dir = tmp_path
+    (run_dir / "machine-check.json").write_text(
+        json.dumps(
+            {
+                "created_t": 1,
+                "tool_version": "1",
+                "harbor_version": "0.23.0",
+                "host_fingerprint": "host",
+                "task_source": {},
+                "concurrency": 1,
+                "tasks": [{"name": "task-a", "memory_mb": 1}],
+                "included": ["task-a"],
+                "verifier_timeout_multiplier": 1.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    trial_dir = run_dir / "harbor-job" / "trial-a__abc"
+    trial_dir.mkdir(parents=True)
+    (trial_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "trial_name": "trial-a__abc",
+                "task": {"path": "task-a"},
+                "agent": {"kwargs": {"arm_label": "arm-a"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def run(command):
+        if command[1] == "ps":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    {"ID": "container-a", "Labels": "com.docker.compose.project=trial-a__abc__env"}
+                )
+            )
+        if command[1] == "inspect":
+            return SimpleNamespace(stdout='{"Pid":100}')
+        return SimpleNamespace(stdout="")
+
+    def read_text(path):
+        path = str(path)
+        if path.endswith("/100/smaps_rollup"):
+            return "Pss: 1024 kB\n"
+        if path.endswith("/200/smaps_rollup"):
+            return "Pss: 2048 kB\n"
+        if path.endswith("/100/cmdline"):
+            return "python\0app.py\0"
+        if path.endswith("/200/cmdline"):
+            return "python\0worker.py\0"
+        raise FileNotFoundError(path)
+
+    def readlink(path):
+        mapping = {
+            "/proc/100/ns/pid": "pid:[4026532001]",
+            "/proc/200/ns/pid": "pid:[4026532001]",
+            "/proc/self/ns/pid": "pid:[4026531836]",
+        }
+        return mapping[str(path)]
+
+    fd = os.open(run_dir / "memory-watch.jsonl", os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+    try:
+        sample_once(
+            run_dir,
+            fd,
+            "none",
+            now=lambda: 10.0,
+            run=run,
+            list_dir=lambda _path: [Path("/proc/100"), Path("/proc/200")],
+            read_text=read_text,
+            readlink=readlink,
+        )
+    finally:
+        os.close(fd)
+
+    rows = read_rows(run_dir / "memory-watch.jsonl").rows
+    assert rows[1]["type"] == "over_limit"
+    assert rows[1]["processes"] == [
+        {"pid": 200, "cmd": "python worker.py", "mb": 2.0},
+        {"pid": 100, "cmd": "python app.py", "mb": 1.0},
+    ]
+
+
+def test_over_limit_row_records_process_listing_failure(tmp_path: Path):
+    run_dir = tmp_path
+    (run_dir / "machine-check.json").write_text(
+        json.dumps(
+            {
+                "created_t": 1,
+                "tool_version": "1",
+                "harbor_version": "0.23.0",
+                "host_fingerprint": "host",
+                "task_source": {},
+                "concurrency": 1,
+                "tasks": [{"name": "task-a", "memory_mb": 1}],
+                "included": ["task-a"],
+                "verifier_timeout_multiplier": 1.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    trial_dir = run_dir / "harbor-job" / "trial-a__abc"
+    trial_dir.mkdir(parents=True)
+    (trial_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "trial_name": "trial-a__abc",
+                "task": {"path": "task-a"},
+                "agent": {"kwargs": {"arm_label": "arm-a"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def run(command):
+        if command[1] == "ps":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    {"ID": "container-a", "Labels": "com.docker.compose.project=trial-a__abc__env"}
+                )
+            )
+        if command[1] == "stats":
+            return SimpleNamespace(stdout='{"Container":"container-a","MemUsage":"2MiB / 4GiB"}')
+        if command[1] == "top":
+            raise OSError("docker top unavailable")
+        return SimpleNamespace(stdout="")
+
+    fd = os.open(run_dir / "memory-watch.jsonl", os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+    try:
+        sample_once(run_dir, fd, "kernel", now=lambda: 10.0, run=run)
+    finally:
+        os.close(fd)
+
+    rows = read_rows(run_dir / "memory-watch.jsonl").rows
+    assert rows[1]["type"] == "over_limit"
+    assert rows[1]["processes"] is None
+    assert rows[1]["processes_error"] == "docker top unavailable"
+    assert rows[2]["type"] == "kill"
 
 
 def test_watcher_stops_when_the_runner_lifeline_closes(tmp_path: Path, monkeypatch):

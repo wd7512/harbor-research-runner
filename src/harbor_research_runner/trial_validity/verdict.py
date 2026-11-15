@@ -267,8 +267,7 @@ def judge_trial(
         for event in memory_watch_events:
             if (
                 isinstance(event, dict)
-                and event.get("type") == "kill"
-                and event.get("location") == "harbor-job"
+                and event.get("type") in {"kill", "kill_failed"}
                 and event.get("trial") == facts.trial
                 and isinstance(event.get("t"), (int, float))
                 and not isinstance(event.get("t"), bool)

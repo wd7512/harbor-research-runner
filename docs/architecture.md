@@ -190,13 +190,13 @@ Each row has `t` and `type`:
 | `resume` | `tool_version`, `tool_commit`, `pid` |
 | `finish` | `exit_code`, `slots_complete`, `slots_incomplete` |
 
-A `trial_verdict` is written exactly once per trial, by `run`, when the trial has finished or is found unfinished at a halt or resume. Nothing else decides validity. The event includes `oom_source` (`kernel`, `watchdog`, or null); if both OOM records fall within the trial's agent/verifier window, the earlier record determines the source.
+A `trial_verdict` is written exactly once per trial, by `run`, when the trial has finished or is found unfinished at a halt or resume. Nothing else decides validity. The event includes `oom_source` (`kernel`, `watchdog`, or null); if both OOM records fall within the trial's agent/verifier window, the earlier record determines the source. A watchdog `kill` or `kill_failed` row for the trial counts as a watchdog breach at any location.
 
 ### 4.5 `resource-stats.jsonl`
 
 One row every 10 seconds, `type` = `sample`: `t`, `mem_available_mb`, `swapped_out_pages`, `disk_free_gb`, `load1`, `trial_containers`, `docker_ok` (bool). `swapped_out_pages` is the increase in the cumulative swap-out counter since the previous sample; the first sample and a counter reset record 0.
 
-`memory-watch.jsonl` records every 2 seconds, per main or canary trial container. A sample row has `type: "sample"`, `t`, `trial`, `location` (`harbor-job` or `canary-job`), `container`, `used_mb`, `limit_mb` (integer or null), and `reader` (`docker_stats`, `proc_pss` or `proc_rss`). A watchdog kill adds a `type: "kill"` row with the same fields. The always-on memory watcher uses Docker stats when the host memory cap is `kernel` and process PSS with RSS fallback otherwise; it kills a container only when `used_mb > limit_mb`. A null task memory limit is sampled without a kill. Canary trials use the bundled canary task's memory limit.
+`memory-watch.jsonl` records every 2 seconds, per main or canary trial container. A sample row has `type: "sample"`, `t`, `trial`, `location` (`harbor-job` or `canary-job`), `container`, `used_mb`, `limit_mb` (integer or null), and `reader` (`docker_stats`, `proc_pss` or `proc_rss`). On the first over-limit sample for a container, the watcher adds an `over_limit` row with the sample fields, `processes` (up to 20 largest processes, each with `pid`, `cmd`, and `mb`), or `processes: null` and `processes_error` when listing fails. It then records `kill` on a successful watchdog kill or `kill_failed` with the exception text (up to 200 characters) when the kill fails. Further samples continue to be recorded without repeating the breach rows. The always-on memory watcher uses Docker stats when the host memory cap is `kernel` and process PSS with RSS fallback otherwise; it kills a container only when `used_mb > limit_mb`. A null task memory limit is sampled without a kill. Canary trials use the bundled canary task's memory limit.
 
 ### 4.5a Machine check file (`records/machine_check.py`)
 

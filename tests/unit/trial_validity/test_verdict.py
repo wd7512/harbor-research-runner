@@ -254,7 +254,7 @@ def test_earlier_watchdog_kill_sets_oom_source_and_precedes_kernel_event():
     assert verdict.oom_source == "watchdog"
 
 
-def test_canary_watchdog_kill_does_not_add_an_oom_label():
+def test_canary_watchdog_kill_adds_an_oom_label():
     facts = _facts(exception_type="NonZeroExitError")
     watchdog_event = {
         "type": "kill",
@@ -270,8 +270,29 @@ def test_canary_watchdog_kill_does_not_add_an_oom_label():
     verdict = _judge(facts, memory_watch_events=[watchdog_event])
 
     assert verdict.valid
-    assert "oom_killed" not in verdict.labels
-    assert verdict.oom_source is None
+    assert "oom_killed" in verdict.labels
+    assert verdict.oom_source == "watchdog"
+
+
+def test_failed_watchdog_kill_adds_an_oom_label():
+    facts = _facts(exception_type="NonZeroExitError")
+    watchdog_event = {
+        "type": "kill_failed",
+        "trial": facts.trial,
+        "location": "harbor-job",
+        "t": 4.0,
+        "container": "container-a",
+        "used_mb": 101,
+        "limit_mb": 100,
+        "reader": "proc_rss",
+        "error": "docker kill failed",
+    }
+
+    verdict = _judge(facts, memory_watch_events=[watchdog_event])
+
+    assert verdict.valid
+    assert "oom_killed" in verdict.labels
+    assert verdict.oom_source == "watchdog"
 
 
 def test_verifier_oom_event_labels_valid_zero_reward_trial():

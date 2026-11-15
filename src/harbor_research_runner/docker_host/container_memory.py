@@ -42,12 +42,13 @@ def proc_rss_mb(
     read_text: Callable[[Path], str] = lambda path: path.read_text(encoding="utf-8"),
     list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
     readlink: Callable[[Path], str] = os.readlink,
-) -> tuple[float, str]:
+) -> tuple[float, str, list[dict[str, int | float | str]]]:
     init_namespace = readlink(Path(f"/proc/{pid}/ns/pid"))
     if init_namespace == readlink(Path("/proc/self/ns/pid")):
         raise ValueError("container shares the host PID namespace")
     total_kb = 0
     used_rss = False
+    processes = []
     for process_dir in list_dir(Path("/proc")):
         if not process_dir.name.isdecimal():
             continue
@@ -64,11 +65,18 @@ def proc_rss_mb(
                 status = read_text(process_dir / "status")
             except OSError:
                 continue
-            total_kb += _memory_kb(status, "VmRSS:")
+            memory_kb = _memory_kb(status, "VmRSS:")
             used_rss = True
         else:
-            total_kb += _memory_kb(smaps, "Pss:")
-    return total_kb / 1024, "proc_rss" if used_rss else "proc_pss"
+            memory_kb = _memory_kb(smaps, "Pss:")
+        total_kb += memory_kb
+        try:
+            command = read_text(process_dir / "cmdline").replace("\0", " ").strip()
+        except OSError:
+            command = ""
+        processes.append({"pid": int(process_dir.name), "cmd": command, "mb": memory_kb / 1024})
+    processes.sort(key=lambda process: process["mb"], reverse=True)
+    return total_kb / 1024, "proc_rss" if used_rss else "proc_pss", processes
 
 
 def compose_project_label(row: dict) -> str | None:
@@ -127,10 +135,30 @@ def proc_container_memory(
     read_text=Path.read_text,
     list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
     readlink: Callable[[Path], str] = os.readlink,
-) -> tuple[float, str]:
+) -> tuple[float, str, list[dict[str, int | float | str]]]:
     result = run(["docker", "inspect", "--format", "{{json .State}}", container_id])
     state = json.loads(result.stdout)
     pid = state.get("Pid")
     if type(pid) is not int or pid <= 0:
         raise ValueError(f"container {container_id!r} has no process")
     return proc_rss_mb(pid, read_text=read_text, list_dir=list_dir, readlink=readlink)
+
+
+def docker_top_processes(
+    container_id: str, run: Callable = _run
+) -> list[dict[str, int | float | str]]:
+    result = run(["docker", "top", container_id, "-eo", "pid,rss,args"])
+    lines = result.stdout.splitlines()
+    if not lines or lines[0].split()[:3] != ["PID", "RSS", "COMMAND"]:
+        raise ValueError("invalid docker top output")
+    processes = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        parts = line.split(maxsplit=2)
+        if len(parts) != 3:
+            raise ValueError("invalid docker top process row")
+        pid, rss = int(parts[0]), int(parts[1])
+        processes.append({"pid": pid, "cmd": parts[2], "mb": rss / 1024})
+    processes.sort(key=lambda process: process["mb"], reverse=True)
+    return processes[:20]

@@ -27,7 +27,7 @@ The command exits 0 when the bundle is consistent, 1 when it finds invariant pro
 - `trials.jsonl` has one row per canary, main, and set-aside trial. It records task, arm, reward, phase times, validity, labels, token use, request counts, and other measured behaviour.
 - `proxy-requests.jsonl.gz` merges each request's start and end ledger rows, ordered by request start. It is useful for inspecting status, timing, token counts, model served, and failovers.
 - `resource-stats.jsonl.gz` contains the host resource samples.
-- `memory-watch.jsonl` records every main and canary trial-container memory sample (`location`, `used_mb`, task `limit_mb`, and the `docker_stats`, `proc_pss` or `proc_rss` reader) and any watchdog kill. `trials.jsonl` adds `peak_memory_mb` and `memory_limit_mb` for each trial.
+- `memory-watch.jsonl` records every main and canary trial-container memory sample (`location`, `used_mb`, task `limit_mb`, and the `docker_stats`, `proc_pss` or `proc_rss` reader), first over-limit process lists, and successful or failed watchdog kills. A `kill_failed` row still records a watchdog breach and is attributed as `oom_source: watchdog` during verdict judgement.
 - `run-events.jsonl` records launch checks and run lifecycle events.
 - `run-metadata.json` is the immutable record of the job, model card, arms, task set, machine check, host, and limits.
 
@@ -75,4 +75,4 @@ JSONL files contain one UTF-8 JSON object per line. Gzip files are compressed JS
 | `oom_killed` | The kernel or memory watchdog killed the trial container during the agent or verifier window. `oom_source` is `kernel` or `watchdog`; the trial remains a valid failure or pass according to its reward. |
 | `refused_after_close` | The proxy refused one or more requests because the trial was already closed. |
 
-   The report's label summary shows timed out, nonzero exit, verifier failed, harness could not start, no requests, possible bypass, and OOM-killed counts. Inspect `trials.jsonl` for any `refused_after_close` labels. `docker-oom-events.jsonl` preserves kernel OOM events; `memory-watch.jsonl` preserves watchdog samples and kills.
+   The report's label summary shows timed out, nonzero exit, verifier failed, harness could not start, no requests, possible bypass, and OOM-killed counts. Inspect `trials.jsonl` for any `refused_after_close` labels. `docker-oom-events.jsonl` preserves kernel OOM events; `memory-watch.jsonl` preserves watchdog samples, process lists, and kill outcomes.
