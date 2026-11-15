@@ -40,6 +40,7 @@ def _session(run_dir: Path):
         event=lambda event: _append_event(run_dir, event),
         oom_watch_alive=lambda: True,
         memory_watch_alive=lambda: True,
+        metadata=SimpleNamespace(sampler_interval_s=10.0),
     )
 
 

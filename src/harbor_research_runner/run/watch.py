@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from harbor_research_runner.harbor_adapter import job_folder, set_aside
-from harbor_research_runner.records import jsonl, machine_check, run_metadata
+from harbor_research_runner.records import jsonl, machine_check
 from harbor_research_runner.records.jsonl import JsonlTail
 from harbor_research_runner.records.run_events import Halt, TrialVerdict
 from harbor_research_runner.run import process_group
@@ -51,11 +51,7 @@ def _trial_verdict(
         oom_events,
         jsonl.read_rows(memory_path).rows if memory_path.exists() else [],
         resource_problems=resources,
-        sampler_interval_s=getattr(
-            getattr(session, "metadata", None),
-            "sampler_interval_s",
-            run_metadata.SAMPLER_INTERVAL_S,
-        ),
+        sampler_interval_s=session.metadata.sampler_interval_s,
     )
     telemetry_missing = any(event.get("type") == "harbor_start" for event in events) and (
         not oom_path.exists() or not memory_path.exists()
@@ -270,7 +266,6 @@ def _build_snapshot(
         oom_watch_alive=session.oom_watch_alive(),
         memory_watch_alive=session.memory_watch_alive(),
         resource_rows=resources.rows,
-        resource_bad_lines=resources.bad_lines,
         last_activity_t=last_activity,
         longest_agent_budget_s=longest_agent,
         longest_verifier_budget_s=longest_verifier,

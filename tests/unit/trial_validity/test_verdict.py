@@ -172,6 +172,8 @@ def _judge(
     rows = _clean_ledger() if rows is None else rows
     if samples is None and resource_problems is None:
         samples = [_sample(0.0), _sample(10.0)]
+    if resource_problems is None:
+        resource_problems = ReadResult(list(samples), False, [])
     if problems is None:
         problems = ReadResult(list(rows), False, [])
     return judge_trial(

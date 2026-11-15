@@ -280,8 +280,8 @@ def judge_trial(
     oom_events: list[dict] | tuple[()] = (),
     memory_watch_events: list[dict] | tuple[()] = (),
     *,
-    resource_problems: ReadResult | None = None,
-    sampler_interval_s: float = 10.0,
+    resource_problems: ReadResult,
+    sampler_interval_s: float,
 ) -> Verdict:
     """Decide one trial's validity, applying rules 1 to 11 in order."""
     phase = failed_phase(facts)
@@ -290,11 +290,7 @@ def judge_trial(
     measured, unmeasured_reason = _measurement(
         facts.trial, trial_rows, ledger_problems, facts.has_result
     )
-    if (
-        measured
-        and resource_problems is not None
-        and _host_samples_damaged(facts, resource_problems, sampler_interval_s)
-    ):
+    if measured and _host_samples_damaged(facts, resource_problems, sampler_interval_s):
         measured, unmeasured_reason = False, "host_samples_damaged"
     start = facts.phase_started.get("agent")
     end = (
