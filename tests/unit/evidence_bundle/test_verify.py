@@ -142,6 +142,80 @@ def test_trial_verdict_disagreement_is_reported(tmp_path: Path) -> None:
     assert _problem_ids(verify(bundle)) == ["trial_identity"]
 
 
+def test_telemetry_damage_and_null_peak_verify_from_memory_watch_copy(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    trial = next(row for row in trials if row["location"] == "harbor-job")
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    timed_trials = [row for row in trials if row["agent_started_t"] is not None]
+    first = min(row["agent_started_t"] for row in timed_trials) + 1
+    second = max(row["verifier_finished_t"] for row in timed_trials) + 1
+    damaged = []
+    for row in trials:
+        end = (
+            row["verifier_finished_t"]
+            if row["verifier_started_t"] is not None
+            else row["agent_finished_t"]
+        )
+        if (
+            row["agent_started_t"] is not None
+            and end is not None
+            and first <= end
+            and second >= row["agent_started_t"]
+        ):
+            row.update(measured=False, unmeasured_reason="telemetry_damaged", peak_memory_mb=None)
+            damaged.append(row["trial"])
+    _write_rows(trials_path, trials)
+    for event in events:
+        if event.get("trial") in damaged:
+            event.update(measured=False, unmeasured_reason="telemetry_damaged")
+    _write_rows(events_path, events)
+    memory_lines = [
+        json.dumps(
+            {
+                "type": "sample",
+                "t": first,
+                "trial": trial["trial"],
+                "location": "harbor-job",
+                "container": "container-a",
+                "used_mb": 42,
+                "limit_mb": 128,
+                "reader": "docker_stats",
+            },
+            sort_keys=True,
+        ),
+        '{"t":',
+        json.dumps(
+            {
+                "type": "sample",
+                "t": second,
+                "trial": trial["trial"],
+                "location": "harbor-job",
+                "container": "container-a",
+                "used_mb": 48,
+                "limit_mb": 128,
+                "reader": "docker_stats",
+            },
+            sort_keys=True,
+        ),
+    ]
+    (bundle / "memory-watch.jsonl").write_text("\n".join(memory_lines) + "\n")
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    unmeasured = sum(row["location"] != "canary-job" and row["trial"] in damaged for row in trials)
+    report = report.replace("| Unmeasured trials | 0 |", f"| Unmeasured trials | {unmeasured} |")
+    report = report.replace(
+        "| Tokens spent on set-aside trials |",
+        "| Malformed memory-watch samples | 1 |\n| Tokens spent on set-aside trials |",
+    )
+    report_path.write_text(report, encoding="utf-8")
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
+
+
 def test_set_aside_trial_must_be_invalid(tmp_path: Path) -> None:
     bundle = _bundle("retries", tmp_path)
     rows = _rows(bundle / "trials.jsonl")
@@ -233,7 +307,7 @@ def test_memory_peak_must_match_samples(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     _refresh_manifest(bundle)
-    assert _problem_ids(verify(bundle)) == ["memory"]
+    assert set(_problem_ids(verify(bundle))) == {"report_agreement", "memory"}
 
 
 def test_proxy_usage_must_match_request_rows(tmp_path: Path) -> None:

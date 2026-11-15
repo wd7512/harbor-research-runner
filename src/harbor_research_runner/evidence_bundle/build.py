@@ -105,6 +105,8 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
     planned_slots = _planned_slots(metadata, rows)
     resource_path = run_dir / "resource-stats.jsonl"
     resource_data = resource_path.read_bytes() if resource_path.exists() else b""
+    oom_path = run_dir / "docker-oom-events.jsonl"
+    memory_path = run_dir / "memory-watch.jsonl"
     report = render_report(
         rows,
         metadata,
@@ -114,10 +116,14 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
         machine_check=machine_check,
         unjudged_trials=len(unjudged_trial_names(run_dir)),
         malformed_resource_samples=malformed_jsonl_count(resource_data),
+        malformed_oom_events=(
+            malformed_jsonl_count(oom_path.read_bytes()) if oom_path.exists() else None
+        ),
+        malformed_memory_watch_samples=(
+            malformed_jsonl_count(memory_path.read_bytes()) if memory_path.exists() else None
+        ),
     )
     ledger_rows = read_rows(run_dir / "proxy-ledger.jsonl").rows
-    oom_path = run_dir / "docker-oom-events.jsonl"
-    memory_path = run_dir / "memory-watch.jsonl"
     files = {
         "trials.jsonl": _jsonl([row.to_row() for row in rows]),
         "proxy-requests.jsonl.gz": _gzip(_jsonl(merged_requests(ledger_rows))),

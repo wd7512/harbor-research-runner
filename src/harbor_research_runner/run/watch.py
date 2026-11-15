@@ -37,7 +37,7 @@ def _trial_verdict(
     ledger = ledger_tail.read()
     resources = resource_tail.read()
     oom_path = session.run_dir / "docker-oom-events.jsonl"
-    oom_events = jsonl.read_rows(oom_path).rows if oom_path.exists() else []
+    oom_events = jsonl.read_rows(oom_path)
     memory_path = session.run_dir / "memory-watch.jsonl"
     events = _read_events(session.run_dir)
     earlier = set_aside.earlier_reasons(events, facts.task, facts.arm)
@@ -49,7 +49,7 @@ def _trial_verdict(
         session.limits,
         earlier,
         oom_events,
-        jsonl.read_rows(memory_path).rows if memory_path.exists() else [],
+        jsonl.read_rows(memory_path),
         resource_problems=resources,
         sampler_interval_s=session.metadata.sampler_interval_s,
     )

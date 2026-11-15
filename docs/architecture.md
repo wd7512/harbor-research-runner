@@ -219,7 +219,7 @@ One row per judged trial, including set-aside trials and canary trials. Unjudged
 Identity: `trial`, `task`, `arm`, `harness`, `commit`, `model`, `location` (`harbor-job`, `set-aside-trials` or `canary-job`), `is_first_attempt`, `is_final`.
 
 Outcome: `reward` (number or null), `is_pass` (`reward == 1.0`), `harbor_exception` (Harbor's label, verbatim, or null), `agent_exit_nonzero` (bool).
-Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null), `memory_limit_mb` (the task's declared limit, or null), and `oom_source` (`kernel`, `watchdog`, or null).
+Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null; also null when a malformed memory-watch line overlaps the trial window), `memory_limit_mb` (the task's declared limit, or null), and `oom_source` (`kernel`, `watchdog`, or null).
 
 Phases: `environment_setup_started_t`, `environment_setup_finished_t`, `agent_setup_started_t`, `agent_setup_finished_t`, `agent_started_t`, `agent_finished_t`, `verifier_started_t`, `verifier_finished_t`.
 
@@ -315,7 +315,7 @@ Rules, first match wins:
 
 Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`).
 
-`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`); any `ok` request has a null prompt or completion token count (`usage_incomplete`); host samples are malformed or have a gap greater than three times `sampler_interval_s` overlapping the agent-to-verifier window (`host_samples_damaged`); or a required telemetry file is missing after `harbor_start` (`telemetry_missing`). For malformed host rows, the interval between the parsed samples on either side of the bad line is attributed to that line. A host breach still invalidates a damaged trial. An unmeasured trial is not re-run; it stops the run from exiting 0.
+`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`); any `ok` request has a null prompt or completion token count (`usage_incomplete`); host samples are malformed or have a gap greater than three times `sampler_interval_s` overlapping the agent-to-verifier window (`host_samples_damaged`); a malformed Docker OOM-event or memory-watch line overlaps that window (`telemetry_damaged`); or a required telemetry file is missing after `harbor_start` (`telemetry_missing`). For malformed rows, the interval between the parsed rows on either side of the bad line is attributed to it; a missing side extends the interval to infinity. A host breach still invalidates a damaged trial. An unmeasured trial is not re-run; it stops the run from exiting 0.
 
 Validity never reads `reward`, except rule 10, which reads only whether a reward exists.
 
@@ -440,8 +440,8 @@ built_at = "2026-12-01"
 - `resource-stats.jsonl.gz`, `docker-oom-events.jsonl`, `run-events.jsonl`, `run-metadata.json`: copied.
 - `memory-watch.jsonl`: copied.
 - All three telemetry files are required when `run-events.jsonl` has a `harbor_start`; verification reports `telemetry_present` once per missing file. Before `harbor_start`, absent telemetry files are allowed and are omitted from the bundle.
-- `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged`. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
-- The completeness table reports malformed resource sample lines; `verify-evidence` re-derives that count from `resource-stats.jsonl.gz`.
+- `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged` and counts malformed resource, Docker OOM-event and memory-watch rows when those telemetry files are present. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
+- `verify-evidence` re-derives the malformed telemetry counts from the copied files and re-derives `telemetry_damaged` for every overlapping trial.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
 The results explorer verifies every bundle file against `manifest.json` before loading the bundle. A missing or altered file refuses the bundle and is reported with the manifest problems.
