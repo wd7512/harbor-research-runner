@@ -1,0 +1,1 @@
+The service lifecycle integration test now uses a local fake Docker executable, so its first resource sample does not depend on Docker daemon latency. It verifies the sampler reaches Docker while still checking that both services stop.
