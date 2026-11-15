@@ -18,14 +18,14 @@ from harbor_research_runner.evidence_bundle.trials import (
 )
 from harbor_research_runner.records.jsonl import append_row, read_rows
 from harbor_research_runner.records.machine_check import read as read_machine_check
-from harbor_research_runner.records.proxy_ledger import has_valid_accounting_fields
+from harbor_research_runner.records.proxy_ledger import is_valid_row
 
 
 def merged_requests(ledger_rows: list[dict]) -> list[dict]:
     starts: dict[str, dict] = {}
     ends: dict[str, dict] = {}
     for row in ledger_rows:
-        if not has_valid_accounting_fields(row):
+        if not is_valid_row(row):
             continue
         if row.get("type") == "request_start":
             starts[row["request_id"]] = row

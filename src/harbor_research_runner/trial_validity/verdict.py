@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from harbor_research_runner.records.jsonl import ReadResult
 from harbor_research_runner.records.limits import Limits, host_breach
-from harbor_research_runner.records.proxy_ledger import parse_row, rows_for_trial
+from harbor_research_runner.records.proxy_ledger import is_valid_row, rows_for_trial
 from harbor_research_runner.trial_validity.phase_table import failed_phase
 from harbor_research_runner.trial_validity.upstream import upstream_reason
 
@@ -36,14 +36,6 @@ class Verdict:
     oom_source: str | None = None
 
 
-def _valid(row: dict) -> bool:
-    try:
-        parse_row(row)
-    except ValueError:
-        return False
-    return True
-
-
 def _physical_positions(problems: ReadResult) -> list[int]:
     total = len(problems.rows) + len(problems.bad_lines) + (1 if problems.torn_last_line else 0)
     bad_lines = set(problems.bad_lines)
@@ -60,7 +52,7 @@ def _physical_positions(problems: ReadResult) -> list[int]:
 def _view(problems: ReadResult) -> list[tuple[dict, int, bool]]:
     positions = _physical_positions(problems)
     return [
-        (row, position, _valid(row))
+        (row, position, is_valid_row(row))
         for row, position in zip(problems.rows, positions, strict=False)
     ]
 
@@ -116,7 +108,7 @@ def _measurement(
     valid_rows = []
     damaged = False
     for row in trial_rows:
-        if _valid(row):
+        if is_valid_row(row):
             valid_rows.append(row)
         else:
             damaged = True
@@ -233,7 +225,7 @@ def judge_trial(
     """Decide one trial's validity, applying rules 1 to 11 in order."""
     phase = failed_phase(facts)
     trial_rows = rows_for_trial(ledger_rows, facts.trial)
-    usable_rows = [row for row in trial_rows if _valid(row)]
+    usable_rows = [row for row in trial_rows if is_valid_row(row)]
     measured, unmeasured_reason = _measurement(
         facts.trial, trial_rows, ledger_problems, facts.has_result
     )

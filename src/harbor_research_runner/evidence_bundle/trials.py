@@ -13,7 +13,7 @@ from harbor_research_runner.harbor_adapter.job_folder import (
 from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.proxy_ledger import (
     COUNTS_AGAINST_TRIAL,
-    has_valid_accounting_fields,
+    is_valid_row,
 )
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.statistics.cost import cost_usd
@@ -40,9 +40,7 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
     events = read_rows(run_dir / "run-events.jsonl").rows
     verdicts = {row["trial"]: row for row in events if row.get("type") == "trial_verdict"}
     ledger_rows = [
-        row
-        for row in read_rows(run_dir / "proxy-ledger.jsonl").rows
-        if has_valid_accounting_fields(row)
+        row for row in read_rows(run_dir / "proxy-ledger.jsonl").rows if is_valid_row(row)
     ]
     memory_path = run_dir / "memory-watch.jsonl"
     memory_rows = read_rows(memory_path).rows if memory_path.exists() else []
