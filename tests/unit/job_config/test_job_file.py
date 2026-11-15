@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from harbor_research_runner.harbor_adapter.commands import job_config, oracle_job_config
 from harbor_research_runner.job_config.job_file import JobFileError, load_job, planned_slots
 
 
@@ -153,6 +154,28 @@ def test_rejects_non_string_task_order(tmp_path: Path) -> None:
 def test_resolves_machine_check_relative_to_job_file(tmp_path: Path) -> None:
     job_path = write_job(tmp_path, valid_job())
     assert load_job(job_path).machine_check == (tmp_path / "checks/machine.json").resolve()
+
+
+def test_resolves_relative_task_path_for_harbor_configs(tmp_path: Path) -> None:
+    study = tmp_path / "a"
+    tasks = tmp_path / "tasks"
+    study.mkdir()
+    (tasks / "example-task").mkdir(parents=True)
+    job_path = study / "job.yaml"
+    job_path.write_text(
+        valid_job().replace("  dataset: example/data", "  path: ../tasks"), encoding="utf-8"
+    )
+
+    job = load_job(job_path)
+
+    expected = str(tasks.resolve())
+    assert job.tasks.path == expected
+    assert job_config(job, ["example-task"], [], 1.0)["datasets"] == [
+        {"path": expected, "task_names": ["example-task"]}
+    ]
+    assert oracle_job_config(job, ["example-task"], "oracle", "check")["datasets"] == [
+        {"path": expected, "task_names": ["example-task"]}
+    ]
 
 
 def test_fake_arm_keeps_the_opaque_fake_mapping(tmp_path: Path) -> None:

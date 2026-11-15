@@ -96,16 +96,10 @@ Set a timezone-aware stop time early enough that the longest agent budget, its v
 uv run hrr run study.yaml --stop-launching-at "$STOP_AT"
 ```
 
-Exit code 2 means hrr stopped launching trials and the run is resumable. Reuse the run folder ID and provide that job's stop time on each resume:
+Exit code 2 means hrr stopped launching trials and the run is resumable. In each later scheduler allocation, compute a fresh stop time from that allocation's hard end and resume once:
 
 ```sh
-while true; do
-  uv run hrr run --resume "$RUN_ID" --stop-launching-at "$STOP_AT"
-  status=$?
-  if [ "$status" -ne 2 ]; then
-    exit "$status"
-  fi
-done
+uv run hrr run --resume "$RUN_ID" --stop-launching-at "$STOP_AT"
 ```
 
-For each scheduler job, start or resume with a stop time that leaves room for active trials and cleanup before its hard end.
+Then return control to the scheduler. Do not loop on exit code 2 within one allocation: the stop time is then in the past, and hrr refuses it.

@@ -15,7 +15,7 @@ from harbor_research_runner.records.proxy_control import (
     CloseMessage,
     OpenMessage,
 )
-from harbor_research_runner.records.proxy_ledger import Open
+from harbor_research_runner.records.proxy_ledger import Open, ProxyStart
 
 UPSTREAM_UNAVAILABLE_BODY = (
     '{"error": {"message": "upstream unavailable", "type": "upstream_unavailable"}}'
@@ -172,7 +172,7 @@ def test_control_refusal_body_avoids_harbor_error_pattern(body: str) -> None:
         assert re.search(pattern.pattern, body, re.IGNORECASE) is None
 
 
-def test_replay_with_bad_line_raises_ledger_unavailable(ledger_path):
+def test_replay_skips_bad_line_and_replays_later_rows(ledger_path):
     ledger_path.write_bytes(
         b'{"arm":"arm","seq":1,"t":1.0,"task":"task","trial":"A","type":"open"}\n'
         b"not json\n"
@@ -180,20 +180,27 @@ def test_replay_with_bad_line_raises_ledger_unavailable(ledger_path):
     )
     writer = LedgerWriter(ledger_path, now=lambda: 1.0)
 
-    with pytest.raises(LedgerUnavailable):
-        TrialRegistry(writer)
+    registry = TrialRegistry(writer)
+
+    assert registry.open_trials() == 0
+    assert registry.admit("A") is False
     writer.close()
 
 
-def test_replay_with_torn_line_raises_ledger_unavailable(ledger_path):
+def test_replay_skips_repaired_torn_line_and_does_not_admit_lost_open(ledger_path, caplog):
     ledger_path.write_bytes(
-        b'{"arm":"arm","seq":1,"t":1.0,"task":"task","trial":"A","type":"open"}\n'
-        b'{"seq":2,"t":1.0,"trial":"A","typ'
+        b'{"seq":1,"t":1.0,"type":"proxy_start","proxy_version":"v",'
+        b'"config_sha256":"' + b"a" * 64 + b'","restart":false}\n'
+        b'{"arm":"arm","seq":2,"t":1.0,"task":"task","trial":"A","type":"op'
     )
     writer = LedgerWriter(ledger_path, now=lambda: 1.0)
+    writer.write(ProxyStart(0, 0.0, "v", "a" * 64, True))
 
-    with pytest.raises(LedgerUnavailable):
-        TrialRegistry(writer)
+    registry = TrialRegistry(writer)
+
+    assert registry.open_trials() == 0
+    assert registry.admit("A") is False
+    assert "skipped 1 damaged line(s): 2" in caplog.text
     writer.close()
 
 
@@ -209,27 +216,31 @@ def test_replay_with_malformed_row_raises_ledger_unavailable(ledger_path):
     writer.close()
 
 
-def test_replay_with_sequence_gap_raises_ledger_unavailable(ledger_path):
+def test_replay_accepts_sequence_gap(ledger_path):
     ledger_path.write_bytes(
         b'{"arm":"arm","seq":1,"t":1.0,"task":"task","trial":"A","type":"open"}\n'
         b'{"seq":3,"t":1.0,"trial":"A","type":"close"}\n'
     )
     writer = LedgerWriter(ledger_path, now=lambda: 1.0)
 
-    with pytest.raises(LedgerUnavailable):
-        TrialRegistry(writer)
+    registry = TrialRegistry(writer)
+
+    assert registry.open_trials() == 0
+    assert registry.admit("A") is False
     writer.close()
 
 
-def test_replay_with_missing_initial_sequences_raises_ledger_unavailable(ledger_path):
+def test_replay_accepts_rows_with_missing_initial_sequences(ledger_path):
     ledger_path.write_bytes(
         b'{"seq":2,"t":1.0,"trial":"A","type":"close"}\n'
         b'{"seq":3,"t":1.0,"trial":"B","type":"close"}\n'
     )
     writer = LedgerWriter(ledger_path, now=lambda: 1.0)
 
-    with pytest.raises(LedgerUnavailable, match="proxy ledger replay failed"):
-        TrialRegistry(writer)
+    registry = TrialRegistry(writer)
+
+    assert registry.open_trials() == 0
+    assert registry.admit("A") is False
     writer.close()
 
 

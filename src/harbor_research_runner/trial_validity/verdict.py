@@ -104,7 +104,7 @@ def _reset_within(open_position: int, close_position: int | None, position: int)
 
 
 def _measurement(
-    trial: str, trial_rows: list[dict], problems: ReadResult
+    trial: str, trial_rows: list[dict], problems: ReadResult, has_result: bool
 ) -> tuple[bool, str | None]:
     view = _view(problems)
     open_entry, close_entry = _boundary(view, trial)
@@ -159,12 +159,14 @@ def _measurement(
     starts = [row for row in valid_rows if row.get("type") == "request_start"]
     ends = [row for row in valid_rows if row.get("type") == "request_end"]
     has_close = any(row.get("type") == "close" for row in valid_rows)
+    has_open = any(row.get("type") == "open" for row in valid_rows)
+    if has_result and has_open and not has_close:
+        return False, "close_not_recorded"
     started_ids = {row["request_id"] for row in starts}
     ended_ids = {row["request_id"] for row in ends}
     if has_close and started_ids - ended_ids:
         return False, "request_not_recorded"
 
-    has_open = any(row.get("type") == "open" for row in valid_rows)
     if not has_open and (starts or ends):
         return False, "no_open_row"
     return True, None
@@ -232,7 +234,9 @@ def judge_trial(
     phase = failed_phase(facts)
     trial_rows = rows_for_trial(ledger_rows, facts.trial)
     usable_rows = [row for row in trial_rows if _valid(row)]
-    measured, unmeasured_reason = _measurement(facts.trial, trial_rows, ledger_problems)
+    measured, unmeasured_reason = _measurement(
+        facts.trial, trial_rows, ledger_problems, facts.has_result
+    )
     start = facts.phase_started.get("agent")
     end = (
         facts.phase_finished.get("verifier")

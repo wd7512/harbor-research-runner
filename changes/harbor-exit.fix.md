@@ -1,0 +1,1 @@
+Harbor failures that leave planned trials unlaunched now halt runs resumably instead of finishing them. The halt records the Harbor exit code, and the pass loop and resume path share the same remaining-trials check.
