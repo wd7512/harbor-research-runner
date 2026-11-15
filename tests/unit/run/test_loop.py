@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import stat
 from collections.abc import Callable
 from dataclasses import replace
@@ -672,6 +673,37 @@ def test_run_job_refuses_empty_resolved_tasks_before_starting_services(tmp_path:
     assert started == []
 
 
+def test_run_job_records_task_and_arm_metadata_and_detaches_its_log(
+    tmp_path: Path,
+) -> None:
+    machine_check = _machine_check_including(
+        [{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}], ["task-a"]
+    )
+
+    result, _started = _launch_with_machine_check(tmp_path, machine_check)
+
+    assert result.run_dir is not None
+    metadata = json.loads((result.run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+    assert metadata["task_set"] == {
+        "ref": "bench/tasks",
+        "tasks": [{"name": "task-a", "digest": "sha256:task"}],
+    }
+    assert metadata["arms"] == [
+        {
+            "label": "arm",
+            "harness": "fake",
+            "commit": "a" * 40,
+            "image_ref": "",
+            "image_digest": "",
+            "build_method": "",
+        }
+    ]
+    log_path = result.run_dir / "runner.log"
+    log_before = log_path.read_bytes()
+    logging.getLogger("harbor_research_runner.run.loop").warning("after run")
+    assert log_path.read_bytes() == log_before
+
+
 def _finished_session(
     tmp_path: Path, *, repetitions: int = 1, finished: bool = True
 ) -> tuple[Path, Path, MachineCheck]:
@@ -853,6 +885,84 @@ def test_resume_of_finished_run_returns_one_without_appending(tmp_path: Path) ->
     assert (run_dir / "run-events.jsonl").read_bytes() == before
     assert commands == []
     assert "already finished" in (run_dir / "runner.log").read_text(encoding="utf-8")
+
+
+def test_resume_finishes_when_every_slot_has_a_valid_trial(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    (run_dir / "harbor-job").mkdir()
+    _record_main_start(run_dir)
+    _trial_dir(run_dir, "trial-valid")
+    fd = jsonl.open_for_append(run_dir / "run-events.jsonl")
+    try:
+        jsonl.append_row(fd, _trial_verdict("trial-valid", valid=True).to_row())
+    finally:
+        import os
+
+        os.close(fd)
+    stopped: list[bool] = []
+    commands: list[list[str]] = []
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        commands,
+        stopped,
+    )
+    deps = replace(
+        deps,
+        start_services=lambda *_args: None,
+        stop_services=lambda _session: stopped.append(True),
+    )
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    events = jsonl.read_rows(run_dir / "run-events.jsonl").rows
+    finish = next(row for row in events if row["type"] == "finish")
+    assert result == RunOutcome(0, run_dir)
+    assert commands == []
+    assert stopped == [True]
+    assert finish["slots_complete"] == 1
+    assert finish["slots_incomplete"] == 0
+
+
+def test_resume_sets_aside_invalid_trial_before_next_pass(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    (run_dir / "harbor-job").mkdir()
+    _record_main_start(run_dir)
+    _trial_dir(run_dir, "trial-invalid")
+    fd = jsonl.open_for_append(run_dir / "run-events.jsonl")
+    try:
+        jsonl.append_row(fd, _trial_verdict("trial-invalid", valid=False).to_row())
+    finally:
+        import os
+
+        os.close(fd)
+    commands: list[list[str]] = []
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        commands,
+        [],
+    )
+    deps = replace(deps, start_services=lambda *_args: None)
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    events = jsonl.read_rows(run_dir / "run-events.jsonl").rows
+    set_aside = next(row for row in events if row["type"] == "set_aside")
+    assert result == RunOutcome(1, run_dir)
+    assert commands == []
+    assert not (run_dir / "harbor-job" / "trial-invalid").exists()
+    assert (run_dir / "set-aside-trials" / "trial-invalid").is_dir()
+    assert set_aside == {
+        "type": "set_aside",
+        "t": 2.0,
+        "trial": "trial-invalid",
+        "task": "task-a",
+        "arm": "arm-a",
+        "reason": "upstream_errors",
+    }
 
 
 def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_trials(
@@ -1044,6 +1154,34 @@ def test_create_writes_launch_checks_and_metadata(tmp_path: Path) -> None:
     assert metadata["tool_version"] == "0.1.0"
 
 
+def test_create_records_job_arm_task_and_proxy_metadata(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+
+    metadata = json.loads((session.run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+
+    assert metadata["run_id"] == session.run_dir.name
+    assert metadata["created_t"] == 1794480000.123456
+    assert metadata["job"]["path"] == str(session.job.path)
+    assert metadata["job"]["machine_check"] == str(session.job.machine_check)
+    assert metadata["job_file_sha256"] == hashlib.sha256(session.job.path.read_bytes()).hexdigest()
+    assert metadata["arms"] == [
+        {
+            "label": "arm-a",
+            "harness": "fake",
+            "commit": "a" * 40,
+            "image_ref": "",
+            "image_digest": "",
+            "build_method": "",
+        }
+    ]
+    assert metadata["task_set"] == {
+        "ref": "bench/tasks",
+        "tasks": [{"name": "task-a", "digest": "sha256:task"}],
+    }
+    assert metadata["proxy"] == {"host": "127.0.0.1", "port": 8766}
+    assert metadata["sampler_interval_s"] == 10.0
+
+
 def test_create_keeps_the_checked_machine_check_in_the_run_folder(tmp_path: Path) -> None:
     session = _create(tmp_path)
     source = session.job.machine_check
@@ -1083,6 +1221,23 @@ def test_load_does_not_change_metadata_or_append_event(tmp_path: Path) -> None:
     assert loaded.run_dir == session.run_dir
     assert metadata_path.read_bytes() == before
     assert (session.run_dir / "run-events.jsonl").read_bytes() == events_before
+
+
+def test_load_preserves_the_job_file_paths(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+
+    loaded = RunSession.load(session.run_dir, {"MODEL_KEY": "configured"})
+
+    assert loaded.job.path == session.job.path
+    assert loaded.job.machine_check == session.job.machine_check
+
+
+def test_stopping_an_unstarted_session_is_safe(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+
+    session.stop_services()
+
+    assert session.proxy_alive() is False
 
 
 def test_resume_keeps_absolute_task_path_from_stored_job(tmp_path: Path) -> None:
