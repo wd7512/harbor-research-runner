@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -40,42 +41,31 @@ def proc_rss_mb(
     *,
     read_text: Callable[[Path], str] = lambda path: path.read_text(encoding="utf-8"),
     list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
+    readlink: Callable[[Path], str] = os.readlink,
 ) -> tuple[float, str]:
-    pending = [pid]
-    seen: set[int] = set()
+    init_namespace = readlink(Path(f"/proc/{pid}/ns/pid"))
     total_kb = 0
     used_rss = False
-    while pending:
-        current = pending.pop()
-        if current in seen:
+    for process_dir in list_dir(Path("/proc")):
+        if not process_dir.name.isdecimal():
             continue
-        seen.add(current)
-        task_dir = Path(f"/proc/{current}/task")
         try:
-            tids = [int(path.name) for path in list_dir(task_dir)]
+            namespace = readlink(process_dir / "ns/pid")
         except OSError:
-            if current == pid:
-                raise
+            continue
+        if namespace != init_namespace:
             continue
         try:
-            smaps = read_text(Path(f"/proc/{current}/smaps_rollup"))
+            smaps = read_text(process_dir / "smaps_rollup")
         except OSError:
             try:
-                status = read_text(Path(f"/proc/{current}/status"))
+                status = read_text(process_dir / "status")
             except OSError:
-                if current == pid:
-                    raise
                 continue
             total_kb += _memory_kb(status, "VmRSS:")
             used_rss = True
         else:
             total_kb += _memory_kb(smaps, "Pss:")
-        for tid in tids:
-            try:
-                children = read_text(Path(f"/proc/{current}/task/{tid}/children"))
-            except OSError:
-                continue
-            pending.extend(int(child) for child in children.split())
     return total_kb / 1024, "proc_rss" if used_rss else "proc_pss"
 
 
@@ -134,10 +124,11 @@ def proc_container_memory(
     run: Callable = _run,
     read_text=Path.read_text,
     list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
+    readlink: Callable[[Path], str] = os.readlink,
 ) -> tuple[float, str]:
     result = run(["docker", "inspect", "--format", "{{json .State}}", container_id])
     state = json.loads(result.stdout)
     pid = state.get("Pid")
     if type(pid) is not int or pid <= 0:
         raise ValueError(f"container {container_id!r} has no process")
-    return proc_rss_mb(pid, read_text=read_text, list_dir=list_dir)
+    return proc_rss_mb(pid, read_text=read_text, list_dir=list_dir, readlink=readlink)
