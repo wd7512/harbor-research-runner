@@ -15,7 +15,7 @@ from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.run.checks import CheckResult
 from harbor_research_runner.run.loop import RunSession
 from harbor_research_runner.run.tool_identity import ToolIdentity
-from tests.support.docker_stub import _stub_docker_dir
+from tests.support.docker_stub import stub_docker_dir
 from tests.support.fake_upstream import FakeUpstream
 
 
@@ -141,7 +141,7 @@ def test_services_start_sample_and_stop(tmp_path: Path, monkeypatch: pytest.Monk
     session = _session(tmp_path, upstream_url)
     docker_calls = tmp_path / "docker-calls.txt"
     monkeypatch.setenv(
-        "PATH", f"{_stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
     )
     try:
         session.start_services(restart=False)

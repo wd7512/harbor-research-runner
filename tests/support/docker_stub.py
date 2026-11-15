@@ -4,7 +4,7 @@ import shlex
 from pathlib import Path
 
 
-def _stub_docker_dir(tmp_path: Path, calls_path: Path) -> Path:
+def stub_docker_dir(tmp_path: Path, calls_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     docker = bin_dir / "docker"

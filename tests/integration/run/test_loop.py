@@ -20,7 +20,7 @@ from harbor_research_runner.records.resource_stats import Sample
 from harbor_research_runner.run.checks import CheckDeps
 from harbor_research_runner.run.loop import RunDeps, run_job
 from harbor_research_runner.run.tool_identity import ToolIdentity
-from tests.support.docker_stub import _stub_docker_dir
+from tests.support.docker_stub import stub_docker_dir
 from tests.support.fake_upstream import FakeUpstream
 
 _PROFILE = {
@@ -194,7 +194,7 @@ def test_run_job_refuses_failed_checks_without_starting_services(
     job_path, manifest_path, runs_dir, deps, port = _run_deps(tmp_path, upstream_url, harbor_calls)
     docker_calls = tmp_path / "docker-calls.txt"
     monkeypatch.setenv(
-        "PATH", f"{_stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
     )
     holder = HostLock(tmp_path / "host.lock")
     holder.acquire()
@@ -240,7 +240,7 @@ def test_run_job_records_nonzero_canary_exit_and_stops_services(
     )
     docker_calls = tmp_path / "docker-calls.txt"
     monkeypatch.setenv(
-        "PATH", f"{_stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
     )
     try:
         result = run_job(job_path, runs_dir, manifest_path, {}, deps)
@@ -312,7 +312,7 @@ def test_run_job_rejects_successful_canary_without_a_trial(
     )
     docker_calls = tmp_path / "docker-calls.txt"
     monkeypatch.setenv(
-        "PATH", f"{_stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
     )
     try:
         result = run_job(job_path, runs_dir, manifest_path, {}, deps)
@@ -349,7 +349,7 @@ def test_run_job_stops_services_and_releases_the_lock_when_harbor_start_raises(
     )
     docker_calls = tmp_path / "docker-calls.txt"
     monkeypatch.setenv(
-        "PATH", f"{_stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
     )
     try:
         result = run_job(job_path, runs_dir, manifest_path, {}, deps)
@@ -408,7 +408,7 @@ def test_run_job_records_path_and_git_task_references(
     )
     docker_calls = tmp_path / "docker-calls.txt"
     monkeypatch.setenv(
-        "PATH", f"{_stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
     )
     try:
         result = run_job(job_path, runs_dir, manifest_path, {}, deps)
