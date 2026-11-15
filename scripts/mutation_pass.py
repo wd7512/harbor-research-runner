@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tomllib
 from pathlib import Path
 
 import pytest
 
+_BUDGET_BREACH = re.compile(r"of (?:cpu|wall) time, over the \d+(?:\.\d+)?s budget")
+
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
-    if report.failed and "of cpu time, over the" in str(report.longrepr):
+    if report.failed and _BUDGET_BREACH.search(str(report.longrepr)):
         mutant = os.environ.get("MUTANT_UNDER_TEST")
         if mutant:
             marker_dir = Path.cwd().parent / ".agent" / "mutation-timeouts"
@@ -27,6 +30,20 @@ def main() -> int:
 
     environment = os.environ.copy()
     environment["UV_PROJECT_ENVIRONMENT"] = str(root / ".venv")
+    sync = subprocess.run(
+        ["uv", "sync", "--all-extras", "--group", "mutation", "--locked"],
+        check=False,
+        env=environment,
+    )
+    if sync.returncode != 0:
+        return sync.returncode
+
+    environment["UV_NO_SYNC"] = "1"
+    mutated_sources = str(root / "mutants" / "src")
+    existing_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [mutated_sources, *([existing_pythonpath] if existing_pythonpath else [])]
+    )
     process = subprocess.run(["uv", "run", "mutmut", "run"], check=False, env=environment)
     if process.returncode != 0:
         return process.returncode
