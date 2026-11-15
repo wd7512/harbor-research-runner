@@ -38,6 +38,7 @@ def _trial_verdict(
     resources = resource_tail.read()
     oom_path = session.run_dir / "docker-oom-events.jsonl"
     oom_events = jsonl.read_rows(oom_path).rows if oom_path.exists() else []
+    memory_path = session.run_dir / "memory-watch.jsonl"
     events = _read_events(session.run_dir)
     earlier = set_aside.earlier_reasons(events, facts.task, facts.arm)
     result = verdict.judge_trial(
@@ -48,12 +49,10 @@ def _trial_verdict(
         session.limits,
         earlier,
         oom_events,
-        jsonl.read_rows(session.run_dir / "memory-watch.jsonl").rows
-        if (session.run_dir / "memory-watch.jsonl").exists()
-        else [],
+        jsonl.read_rows(memory_path).rows if memory_path.exists() else [],
     )
     telemetry_missing = any(event.get("type") == "harbor_start" for event in events) and (
-        not oom_path.exists() or not (session.run_dir / "memory-watch.jsonl").exists()
+        not oom_path.exists() or not memory_path.exists()
     )
     boundaries = {row.get("type") for row in ledger.rows if row.get("trial") == facts.trial} & {
         "open",
