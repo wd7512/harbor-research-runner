@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -12,9 +13,12 @@ from pathlib import Path
 from harbor_research_runner.evidence_bundle.report import render_report
 from harbor_research_runner.evidence_bundle.secret_scan import key_values, scan
 from harbor_research_runner.evidence_bundle.trials import build_trial_rows
+from harbor_research_runner.evidence_bundle.verify import verify
 from harbor_research_runner.records.jsonl import append_row, read_rows
 from harbor_research_runner.records.machine_check import read as read_machine_check
 from harbor_research_runner.records.manifest import write_manifest
+
+logger = logging.getLogger(__name__)
 
 
 def merged_requests(ledger_rows: list[dict]) -> list[dict]:
@@ -147,4 +151,9 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
             shutil.rmtree(temporary)
         if backup.exists():
             shutil.rmtree(backup)
+    problems = verify(out_dir)
+    if problems:
+        for problem in problems:
+            logger.error("evidence verification failed: %s", problem)
+        return 5
     return 0

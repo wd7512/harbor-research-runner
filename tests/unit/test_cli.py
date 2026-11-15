@@ -24,6 +24,7 @@ def test_cli_path_arguments_are_absolute_with_relative_values_and_defaults() -> 
         "check-machine": ["--job", "job.yaml", "--out", "check.json"],
         "run": ["study.yaml", "--no-evidence"],
         "build-evidence": ["run-1"],
+        "verify-evidence": ["bundle"],
         "explore": [],
         "clean-docker": [],
     }
@@ -38,7 +39,7 @@ def test_cli_path_arguments_are_absolute_with_relative_values_and_defaults() -> 
             value = "relative-path"
             if action.option_strings:
                 argv.extend([action.option_strings[0], value])
-            elif command_name == "run":
+            elif command_name in {"run", "verify-evidence"}:
                 argv[1] = value
             else:
                 argv.append(value)
@@ -117,6 +118,10 @@ def test_build_harness_forwards_architecture_to_builder(tmp_path: Path) -> None:
         == 0
     )
     assert calls == [("opencode", "abc", tmp_path / "manifest.toml", "amd64")]
+
+
+def test_verify_evidence_returns_two_for_an_unreadable_bundle(tmp_path: Path) -> None:
+    assert cli.main(["verify-evidence", str(tmp_path / "missing")]) == 2
 
 
 def test_check_machine_parses_options_and_calls_checker(tmp_path: Path) -> None:

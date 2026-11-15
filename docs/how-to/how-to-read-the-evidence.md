@@ -2,6 +2,23 @@
 
 An evidence bundle is a plain directory produced from a run folder. Start with `manifest.json` to check the bundle files and `report.md` for the summary.
 
+## Verify a bundle
+
+Run `hrr verify-evidence BUNDLE_DIR` to check these documented invariants (the evidence record and bundle rules in `docs/architecture.md` sections 4.7, 6, 9, and the set-aside rule in D11):
+
+- The manifest covers every bundle file.
+- Trial ids are unique, each trial has exactly one verdict event, and verdict fields agree.
+- Set-aside trials are invalid; canary trials do not count toward slots.
+- Non-canary tasks and all arms belong to the metadata task and arm sets; the task set is non-empty.
+- Report slot and unmeasured counts agree with the trial rows and metadata.
+- Finish counts agree with recomputed slot completeness; exit code 0 has no incomplete slots.
+- Set-aside events stay within the effective per-slot cap, excluding deferred events.
+- Trial memory peaks equal the maximum recorded sample.
+- Trial request and token totals agree with proxy request rows. Before a `finish` event, distinct request trial ids absent from `trials.jsonl` are counted as unjudged, as unfinished run folders may not have a verdict yet. After `finish`, each proxy request must identify an evidence trial or a documented non-trial id.
+- Measured trials have no unfinished proxy requests.
+
+The command exits 0 when the bundle is consistent, 1 when it finds invariant problems, and 2 when the bundle cannot be read. `hrr build-evidence` runs the same checks after writing; it exits 5 when the bundle was written but has invariant problems.
+
 1. **Check the manifest and report.** `manifest.json` lists each file's byte length and SHA-256 digest. `report.md` summarizes completeness, pass rates, paired results, usage, labels, set-aside reasons, and halt/resume history.
 
 2. **Inspect the source records.** The run metadata and event log preserve the job, pinned model and task sources, machine information, launch checks, Harbor passes, trial verdicts, halts, resumes, and finish status.
