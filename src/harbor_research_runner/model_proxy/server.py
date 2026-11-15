@@ -19,7 +19,7 @@ import httpx
 from harbor_research_runner.local_http import LocalHTTPServer
 from harbor_research_runner.model_proxy.adapters import UnsupportedAdapterPair, select_adapter
 from harbor_research_runner.model_proxy.bodies import BodyStore
-from harbor_research_runner.model_proxy.control import TrialRegistry
+from harbor_research_runner.model_proxy.control import TrialClosed, TrialRegistry
 from harbor_research_runner.model_proxy.keys import KeyProvider, ModelCardView
 from harbor_research_runner.model_proxy.ledger import LedgerUnavailable, LedgerWriter
 from harbor_research_runner.model_proxy.pacing import Pacer
@@ -199,7 +199,11 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 trial,
                 self.state.relay_deps,
                 adapter,
+                self.state.registry.admit,
             )
+        except TrialClosed:
+            self._send(CLOSED_BODY.encode(), 410)
+            return
         except LedgerUnavailable as exc:
             self.state.fail_ledger(exc)
             self._send(_UNAVAILABLE_BODY, 503)

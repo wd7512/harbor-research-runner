@@ -10,10 +10,15 @@ from harbor_research_runner.records.proxy_ledger import (
     Close,
     Open,
     Refused,
+    RequestStart,
     parse_row,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class TrialClosed(RuntimeError):
+    pass
 
 
 class TrialRegistry:
@@ -69,10 +74,12 @@ class TrialRegistry:
             self._open.discard(message.trial)
             return 200
 
-    def admit(self, trial: str) -> bool:
+    def admit(self, trial: str, request_start: RequestStart | None = None) -> bool:
         with self._lock:
             self._ledger.ensure_available()
             if trial in self._open and trial not in self._closed:
+                if request_start is not None:
+                    self._ledger.write(request_start)
                 return True
             reason = "closed" if trial in self._closed else "not_open"
             self._ledger.write(Refused(0, 0.0, trial, reason))
