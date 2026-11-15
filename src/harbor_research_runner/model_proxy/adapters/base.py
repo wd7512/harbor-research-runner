@@ -66,7 +66,7 @@ class StreamTranslator:
         raise NotImplementedError
 
     def end_event(self) -> None:
-        """called after the lines of one transport event"""
+        """Called after the lines of one transport event."""
 
     @property
     def finished(self) -> bool:
