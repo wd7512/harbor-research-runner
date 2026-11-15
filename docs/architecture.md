@@ -137,13 +137,15 @@ Every row has `seq` (integer, starts at 1, +1 per row, never reused across proxy
 | `quota_exhausted` | The provider says the account quota is used up | yes |
 | `server_error` | 5xx reached the harness | yes |
 | `stalled` | The proxy cut the request: no first chunk within `first_chunk_max_s`, a gap over `inter_chunk_gap_max_s`, or total over `request_latency_max_s` | yes |
-| `truncated` | The stream ended without its terminator | yes |
+| `truncated` | The stream ended without a terminal-OK event | yes |
 | `transport_error` | Connection to the upstream failed | yes |
 | `upstream_auth` | 401, 402 or 403 from the upstream: the proxy's own key, billing or account was refused | yes |
 | `client_error` | Other 4xx (except 401, 402, 403 and 429): the harness sent a bad request | no |
 | `client_disconnect` | The harness closed the connection first | no |
 
 A failover that the proxy absorbed (a later key or endpoint answered) is an `ok` row with `failovers > 0`.
+
+A Responses body, including the response carried by a `response.completed` stream event, must have a terminal-OK `status` (`completed` or `incomplete`) and an `output` list. Missing or invalid fields are decode failures and are recorded as `truncated`. In identity streams, only `response.completed` or `response.incomplete` events with a status in that set terminate successfully; `response.failed` and other statuses count as unsuccessful termination.
 
 Write policy: flush after every row; `fsync` after every `close` row and at least every 5 seconds, from a background thread. If a write or flush fails, the proxy stops serving (every later request gets HTTP 503 with body `proxy ledger unavailable`) and exits with code 70.
 

@@ -529,6 +529,7 @@ def test_finish_reemits_missed_text(translator: ResponsesStreamTranslator) -> No
         {
             "type": "response.completed",
             "response": {
+                "status": "completed",
                 "output": [
                     {
                         "type": "message",

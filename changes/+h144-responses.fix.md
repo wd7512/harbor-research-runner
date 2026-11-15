@@ -1,0 +1,1 @@
+Reject malformed Responses replies, count failed terminal events as unsuccessful, and account for multiline SSE data. Flush the final event remainder so unterminated final separators do not hide completion or usage.
