@@ -5,7 +5,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from harbor_research_runner.records.jsonl import read_rows
@@ -171,19 +171,35 @@ class EvidenceStore:
         return [row for row in self._load(run_id)["requests"] if row.get("trial") == trial]
 
     def compare(self, run_ids: list[str], arm_a: str, arm_b: str, view: str) -> dict:
-        rows = [row for run_id in run_ids for row in self._load(run_id)["rows"]]
+        side_a = [
+            replace(row, arm="__selected_a__")
+            for row in self._load(run_ids[0])["rows"]
+            if row.arm == arm_a
+        ]
+        side_b = [
+            replace(row, arm="__selected_b__")
+            for row in self._load(run_ids[1])["rows"]
+            if row.arm == arm_b
+        ]
+        rows = side_a + side_b
         table = task_arm_table(rows, view)
-        tasks = sorted({task for task, arm in table if arm in {arm_a, arm_b}})
+        tasks = sorted({task for task, _arm in table})
         return {
             "tasks": [
                 {
                     "task": task,
-                    "arm_a": list(table[(task, arm_a)]) if (task, arm_a) in table else None,
-                    "arm_b": list(table[(task, arm_b)]) if (task, arm_b) in table else None,
+                    "arm_a": list(table[(task, "__selected_a__")])
+                    if (task, "__selected_a__") in table
+                    else None,
+                    "arm_b": list(table[(task, "__selected_b__")])
+                    if (task, "__selected_b__") in table
+                    else None,
                 }
                 for task in tasks
             ],
-            "paired_difference": asdict(paired_difference(rows, view, arm_a, arm_b)),
+            "paired_difference": asdict(
+                paired_difference(rows, view, "__selected_a__", "__selected_b__")
+            ),
         }
 
     def over_time(self, run_id: str) -> dict:
