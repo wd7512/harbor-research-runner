@@ -125,6 +125,8 @@ Every row has `seq` (integer, starts at 1, +1 per row, never reused across proxy
 | `refused` | A request arrives for a trial that is closed or was never opened | `trial`, `reason` (`closed` or `not_open`) |
 | `close` | On `POST /control/close` | `trial` |
 
+`prompt_tokens` and `completion_tokens` are null when the upstream omits the corresponding counter, reports null, or provides a non-numeric value. A wholly absent usage object records null for all token counters. An `ok` request with either prompt or completion tokens unknown makes its trial unmeasured with reason `usage_incomplete`.
+
 `upstream_status` is one of:
 
 | Value | Meaning | Counts against the trial |
@@ -302,13 +304,13 @@ Rules, first match wins:
 | 6 | any resource sample between `agent` start and `verifier` finish (or `agent` finish if the verifier never started) breaches a host limit, or has `docker_ok` false | invalid, `host_fault`, host |
 | 7 | the trial's last `request_end` (highest `seq`) has a status that counts against the trial | invalid, `upstream_terminal_error`, proxy |
 | 8 | counted errors > max(`tolerated_errors`, floor(`tolerated_error_fraction` x N)), where N is the trial's `request_end` rows excluding `client_disconnect` | invalid, `upstream_errors`, proxy |
-| 9 | the trial has at least one `ok` row with `completion_tokens > 0`, and total completion tokens / total `duration_s` over `ok` rows < `trial_output_rate_min` | invalid, `upstream_slow`, proxy |
+| 9 | every `ok` row has a known completion token count, the trial has at least one `ok` row with `completion_tokens > 0`, and total completion tokens / total `duration_s` over `ok` rows < `trial_output_rate_min` | invalid, `upstream_slow`, proxy |
 | 10 | `reward` is null and the failed phase is not `verifier` | invalid, `no_verdict`, harbor |
 | 11 | otherwise | valid |
 
 Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`).
 
-`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); or the trial made requests but has no `open` row (`no_open_row`). An unmeasured trial is not re-run; it stops the run from exiting 0.
+`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); the trial made requests but has no `open` row (`no_open_row`); or any `ok` request has a null prompt or completion token count (`usage_incomplete`). An unmeasured trial is not re-run; it stops the run from exiting 0.
 
 Validity never reads `reward`, except rule 10, which reads only whether a reward exists.
 

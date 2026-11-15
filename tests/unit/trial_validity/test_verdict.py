@@ -905,20 +905,15 @@ def test_globally_malformed_row_inside_open_interval_marks_trial_unmeasured():
     assert verdict.unmeasured_reason == "ledger_damaged"
 
 
-def test_nullable_token_values_are_allowed():
+def test_ok_request_with_unknown_usage_is_unmeasured():
     rows = _clean_ledger()
-    rows[-2].update(
-        {
-            "prompt_tokens": None,
-            "completion_tokens": None,
-            "cached_read_tokens": None,
-        }
-    )
+    rows[-2]["completion_tokens"] = None
 
     verdict = _judge(rows=rows)
 
     assert verdict.valid
-    assert verdict.measured
+    assert not verdict.measured
+    assert verdict.unmeasured_reason == "usage_incomplete"
 
 
 def test_malformed_row_is_skipped_for_status_classification():

@@ -41,6 +41,18 @@ def test_normalize_usage_responses_shape() -> None:
     assert usage.normalize_usage(_responses_envelope()) == _CANONICAL
 
 
+def test_missing_response_output_tokens_remain_unknown() -> None:
+    result = usage.normalize_usage({"usage": {"input_tokens": 10}})
+
+    assert result == {
+        "prompt_tokens": 10,
+        "completion_tokens": None,
+        "cached_read_tokens": 0,
+        "prompt_chars": 0,
+        "completion_chars": 0,
+    }
+
+
 def test_normalize_usage_canonical_keys_win() -> None:
     assert usage.normalize_usage(
         {"usage": {"prompt_tokens": 10, "input_tokens": 99, "completion_tokens": 4}}
@@ -71,10 +83,10 @@ def test_normalize_usage_absent_is_none(obj: object) -> None:
 
 
 @pytest.mark.parametrize("raw", [{}, "bad", None, 0])
-def test_normalize_usage_dict_garbage_is_zeros(raw: object) -> None:
+def test_normalize_usage_dict_garbage_has_unknown_token_counts(raw: object) -> None:
     assert usage.normalize_usage_dict(raw) == {
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
+        "prompt_tokens": None,
+        "completion_tokens": None,
         "cached_read_tokens": 0,
         "prompt_chars": 0,
         "completion_chars": 0,
@@ -85,7 +97,7 @@ def test_normalize_usage_dict_coerces_values() -> None:
     assert usage.normalize_usage_dict(
         {"prompt_tokens": None, "completion_tokens": "7", "cached_read_tokens": "bad"}
     ) == {
-        "prompt_tokens": 0,
+        "prompt_tokens": None,
         "completion_tokens": 7,
         "cached_read_tokens": 0,
         "prompt_chars": 0,
@@ -95,19 +107,19 @@ def test_normalize_usage_dict_coerces_values() -> None:
 
 def test_normalize_usage_dict_preserves_char_counts() -> None:
     assert usage.normalize_usage_dict({"prompt_chars": 12, "completion_chars": "5"}) == {
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
+        "prompt_tokens": None,
+        "completion_tokens": None,
         "cached_read_tokens": 0,
         "prompt_chars": 12,
         "completion_chars": 5,
     }
 
 
-def test_normalize_usage_dict_infinite_value_is_zero(caplog) -> None:
+def test_normalize_usage_dict_infinite_token_value_is_unknown(caplog) -> None:
     with caplog.at_level("WARNING", logger="harbor_research_runner.model_proxy.usage"):
         result = usage.normalize_usage_dict({"prompt_tokens": float("inf")})
 
-    assert result["prompt_tokens"] == 0
+    assert result["prompt_tokens"] is None
     assert "non-numeric usage value" in caplog.text
 
 
