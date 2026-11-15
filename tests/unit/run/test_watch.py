@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,25 @@ from harbor_research_runner.trial_validity.run_health import should_halt
 
 
 def _session(run_dir: Path):
+    resource_path = run_dir / "resource-stats.jsonl"
+    if resource_path.exists() and not resource_path.read_bytes():
+        phase_start = datetime(2026, 11, 12, 0, 0, 2, tzinfo=UTC).timestamp()
+        fields = {
+            "type": "sample",
+            "mem_available_mb": 8192,
+            "swapped_out_pages": 0,
+            "disk_free_gb": 100,
+            "load1": 0.5,
+            "trial_containers": 1,
+            "docker_ok": True,
+        }
+        resource_path.write_text(
+            "".join(
+                json.dumps({**fields, "t": timestamp}, sort_keys=True) + "\n"
+                for timestamp in (phase_start - 1, phase_start + 4)
+            ),
+            encoding="utf-8",
+        )
     return SimpleNamespace(
         run_dir=run_dir,
         limits=Limits(max_set_asides_per_slot=2, verifier_timeout_multiplier=1.0),
@@ -145,6 +165,47 @@ def test_missing_memory_telemetry_marks_trial_unmeasured(tmp_path: Path) -> None
     assert event["valid"] is True
     assert event["measured"] is False
     assert event["unmeasured_reason"] == "telemetry_missing"
+
+
+def test_malformed_host_sample_reaches_trial_verdict(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    trial_dir = _trial(job_dir, "trial-a")
+    phase_start = datetime(2026, 11, 12, 0, 0, 2, tzinfo=UTC).timestamp()
+    sample_fields = (
+        '"mem_available_mb":8192,"swapped_out_pages":0,"disk_free_gb":100,'
+        '"load1":0.5,"trial_containers":1,"docker_ok":true'
+    )
+    (run_dir / "resource-stats.jsonl").write_text(
+        f'{{"type":"sample","t":{phase_start - 1},{sample_fields}}}\n'
+        '{"type":"sample","t":\n'
+        f'{{"type":"sample","t":{phase_start + 4},{sample_fields}}}\n',
+        encoding="utf-8",
+    )
+    (run_dir / "proxy-ledger.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "open",
+                "seq": 1,
+                "t": phase_start,
+                "trial": trial_dir.name,
+                "task": "terminal-bench/task-a",
+                "arm": "arm-a",
+            }
+        )
+        + "\n"
+        + json.dumps({"type": "close", "seq": 2, "t": phase_start + 3, "trial": trial_dir.name})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    judge_finished(_session(run_dir), job_dir, set(), 10.0)
+
+    event = json.loads((run_dir / "run-events.jsonl").read_text(encoding="utf-8"))
+    assert event["measured"] is False
+    assert event["unmeasured_reason"] == "host_samples_damaged"
 
 
 def test_finished_trial_is_judged_once(tmp_path: Path) -> None:

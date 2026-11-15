@@ -166,9 +166,12 @@ def _judge(
     problems=None,
     oom_events=(),
     memory_watch_events=(),
+    resource_problems=None,
 ):
     facts = _facts() if facts is None else facts
     rows = _clean_ledger() if rows is None else rows
+    if samples is None and resource_problems is None:
+        samples = [_sample(0.0), _sample(10.0)]
     if problems is None:
         problems = ReadResult(list(rows), False, [])
     return judge_trial(
@@ -180,6 +183,8 @@ def _judge(
         earlier,
         oom_events,
         memory_watch_events,
+        resource_problems=resource_problems,
+        sampler_interval_s=10,
     )
 
 
@@ -459,6 +464,65 @@ def test_host_breach_in_agent_window_invalidates_trial():
     samples = [_sample(4.0, mem_available_mb=100)]
 
     verdict = _judge(samples=samples)
+
+    _assert_invalid(verdict, "host_fault", "host")
+
+
+def test_bad_host_sample_line_overlapping_trial_window_makes_trial_unmeasured():
+    samples = ReadResult([_sample(2.0), _sample(6.0)], False, [2])
+
+    verdict = judge_trial(
+        _facts(),
+        [_open_row(1), _close_row(2)],
+        ReadResult([], False, []),
+        samples.rows,
+        DEFAULT_LIMITS,
+        (),
+        resource_problems=samples,
+        sampler_interval_s=10,
+    )
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_gap_over_three_intervals_makes_trial_unmeasured():
+    samples = [_sample(0.0), _sample(40.0)]
+
+    verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_gap_of_two_intervals_keeps_trial_measured():
+    samples = [_sample(0.0), _sample(20.0)]
+
+    verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is True
+
+
+def test_missing_host_samples_make_trial_unmeasured():
+    verdict = _judge(samples=[], resource_problems=ReadResult([], False, []))
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_breach_wins_over_damaged_host_sample_line():
+    samples = ReadResult([_sample(4.0, mem_available_mb=100)], False, [2])
+
+    verdict = judge_trial(
+        _facts(),
+        [],
+        ReadResult([], False, []),
+        samples.rows,
+        DEFAULT_LIMITS,
+        (),
+        resource_problems=samples,
+        sampler_interval_s=10,
+    )
 
     _assert_invalid(verdict, "host_fault", "host")
 

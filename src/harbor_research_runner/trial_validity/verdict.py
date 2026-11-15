@@ -189,6 +189,58 @@ def _host_fault(facts: TrialFacts, resource_rows: list[dict], limits: Limits) ->
     return False
 
 
+def _host_samples_damaged(
+    facts: TrialFacts,
+    problems: ReadResult,
+    interval_s: float,
+) -> bool:
+    start = facts.phase_started.get("agent")
+    end = (
+        facts.phase_finished.get("verifier")
+        if facts.phase_started.get("verifier") is not None
+        else facts.phase_finished.get("agent")
+    )
+    if start is None or end is None:
+        return False
+    threshold = 3 * interval_s
+    samples = sorted(
+        (
+            row
+            for row in problems.rows
+            if row.get("type") == "sample"
+            and isinstance(row.get("t"), (int, float))
+            and not isinstance(row.get("t"), bool)
+        ),
+        key=lambda row: row["t"],
+    )
+    sample_times = [float(row["t"]) for row in samples]
+    if not sample_times:
+        return True
+    for previous, current in zip(sample_times, sample_times[1:]):
+        if current - previous > threshold and previous <= end and current >= start:
+            return True
+    for edge in (start, end):
+        if sample_times and min(abs(edge - timestamp) for timestamp in sample_times) > threshold:
+            return True
+    positions = _physical_positions(problems)
+    entries = list(zip(problems.rows, positions, strict=False))
+    bad_lines = list(problems.bad_lines)
+    if problems.torn_last_line:
+        bad_lines.append(len(problems.rows) + len(problems.bad_lines) + 1)
+    for bad_line in bad_lines:
+        before = [row.get("t") for row, position in entries if position < bad_line]
+        after = [row.get("t") for row, position in entries if position > bad_line]
+        before_times = [
+            t for t in before if isinstance(t, (int, float)) and not isinstance(t, bool)
+        ]
+        after_times = [t for t in after if isinstance(t, (int, float)) and not isinstance(t, bool)]
+        span_start = max(before_times) if before_times else float("-inf")
+        span_end = min(after_times) if after_times else float("inf")
+        if span_start <= end and span_end >= start:
+            return True
+    return False
+
+
 def _labels(
     facts: TrialFacts,
     phase: str | None,
@@ -227,6 +279,9 @@ def judge_trial(
     earlier_set_aside_reasons: tuple[str, ...],
     oom_events: list[dict] | tuple[()] = (),
     memory_watch_events: list[dict] | tuple[()] = (),
+    *,
+    resource_problems: ReadResult | None = None,
+    sampler_interval_s: float = 10.0,
 ) -> Verdict:
     """Decide one trial's validity, applying rules 1 to 11 in order."""
     phase = failed_phase(facts)
@@ -235,6 +290,12 @@ def judge_trial(
     measured, unmeasured_reason = _measurement(
         facts.trial, trial_rows, ledger_problems, facts.has_result
     )
+    if (
+        measured
+        and resource_problems is not None
+        and _host_samples_damaged(facts, resource_problems, sampler_interval_s)
+    ):
+        measured, unmeasured_reason = False, "host_samples_damaged"
     start = facts.phase_started.get("agent")
     end = (
         facts.phase_finished.get("verifier")

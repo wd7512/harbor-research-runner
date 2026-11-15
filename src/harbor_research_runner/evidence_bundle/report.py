@@ -62,6 +62,7 @@ def render_report(
     *,
     machine_check: MachineCheck,
     unjudged_trials: int,
+    malformed_resource_samples: int = 0,
 ) -> str:
     arms = [arm["label"] for arm in metadata["arms"]]
     task_names = sorted({task for task, _arm in planned_slots})
@@ -112,6 +113,7 @@ def render_report(
             f"| Valid trials | {complete.trials_valid} |",
             f"| Trials not yet judged | {unjudged_trials} |",
             f"| Unmeasured trials | {complete.trials_unmeasured} |",
+            f"| Malformed resource samples | {malformed_resource_samples} |",
             f"| Tokens spent on set-aside trials | {complete.set_aside_tokens} |",
             "",
             "Set aside by reason:",

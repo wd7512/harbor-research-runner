@@ -65,6 +65,8 @@ def sampler_command(run_dir: Path, lifeline_fd: int) -> list[str]:
         "python",
         "-m",
         "harbor_research_runner.docker_host.sampler",
+        "--interval",
+        str(run_metadata.SAMPLER_INTERVAL_S),
         "--out",
         str(run_dir / "resource-stats.jsonl"),
         "--lifeline-fd",
@@ -182,6 +184,7 @@ class RunSession:
             host=dict(host),
             proxy={"host": job.proxy_host, "port": job.proxy_port},
             limits=limits.to_row(),
+            sampler_interval_s=run_metadata.SAMPLER_INTERVAL_S,
         )
         run_metadata.write_new_file(run_dir / "machine-check.json", machine_check_bytes)
         run_metadata.write_once(run_dir / "run-metadata.json", metadata)

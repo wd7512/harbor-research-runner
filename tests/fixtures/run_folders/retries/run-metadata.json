@@ -31,6 +31,7 @@
   },
   "proxy": {},
   "run_id": "retries",
+  "sampler_interval_s": 10.0,
   "task_set": {
     "ref": "fixture",
     "tasks": [

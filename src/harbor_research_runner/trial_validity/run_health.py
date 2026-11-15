@@ -21,6 +21,7 @@ class RunSnapshot:
     harbor_timeout_multiplier: float
     stop_launching_at: float | None = None
     in_flight_trials: int = 0
+    resource_bad_lines: list[int] | tuple[()] = ()
 
 
 def inactivity_limit_s(snapshot: RunSnapshot, limits: Limits) -> float:

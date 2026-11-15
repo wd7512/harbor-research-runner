@@ -49,6 +49,7 @@ def test_sampler_command_writes_inside_the_run_directory(tmp_path: Path) -> None
     command = sampler_command(run_dir, 42)
 
     assert command[command.index("--out") + 1] == str(run_dir / "resource-stats.jsonl")
+    assert command[command.index("--interval") + 1] == "10.0"
 
 
 _PROFILE = {

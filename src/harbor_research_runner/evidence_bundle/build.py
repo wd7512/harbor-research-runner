@@ -16,7 +16,7 @@ from harbor_research_runner.evidence_bundle.trials import (
     build_trial_rows,
     unjudged_trial_names,
 )
-from harbor_research_runner.evidence_bundle.verify import verify
+from harbor_research_runner.evidence_bundle.verify import malformed_jsonl_count, verify
 from harbor_research_runner.records.jsonl import append_row, read_rows
 from harbor_research_runner.records.machine_check import read as read_machine_check
 from harbor_research_runner.records.manifest import write_manifest
@@ -103,6 +103,8 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
     events = read_rows(events_path).rows
     repetitions = metadata["job"]["repetitions"]
     planned_slots = _planned_slots(metadata, rows)
+    resource_path = run_dir / "resource-stats.jsonl"
+    resource_data = resource_path.read_bytes() if resource_path.exists() else b""
     report = render_report(
         rows,
         metadata,
@@ -111,9 +113,9 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
         repetitions,
         machine_check=machine_check,
         unjudged_trials=len(unjudged_trial_names(run_dir)),
+        malformed_resource_samples=malformed_jsonl_count(resource_data),
     )
     ledger_rows = read_rows(run_dir / "proxy-ledger.jsonl").rows
-    resource_path = run_dir / "resource-stats.jsonl"
     oom_path = run_dir / "docker-oom-events.jsonl"
     memory_path = run_dir / "memory-watch.jsonl"
     files = {
@@ -124,7 +126,7 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
         "report.md": (report + "\n").encode("utf-8"),
     }
     if resource_path.exists():
-        files["resource-stats.jsonl.gz"] = _gzip(resource_path.read_bytes())
+        files["resource-stats.jsonl.gz"] = _gzip(resource_data)
     if oom_path.exists():
         files["docker-oom-events.jsonl"] = oom_path.read_bytes()
     if memory_path.exists():
