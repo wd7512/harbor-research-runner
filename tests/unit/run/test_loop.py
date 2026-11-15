@@ -36,10 +36,20 @@ from harbor_research_runner.run.loop import (
     make_read_only,
     resume_run,
     run_job,
+    sampler_command,
     slots_status,
 )
 from harbor_research_runner.run.tool_identity import ToolIdentity
 from harbor_research_runner.run.watch import WatchResult
+
+
+def test_sampler_command_writes_inside_the_run_directory(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+
+    command = sampler_command(run_dir, 42)
+
+    assert command[command.index("--out") + 1] == str(run_dir / "resource-stats.jsonl")
+
 
 _PROFILE = {
     "arch": "arm64",
@@ -311,7 +321,7 @@ def dependencies(
     return RunDeps(
         checks=CheckDeps(
             select_adapter=lambda *_args: None,
-            measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
+            measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
             inventory=lambda: None,
             live_run=lambda _path: None,
             host_lock=HostLock(tmp_path / "host.lock"),
@@ -348,7 +358,7 @@ def _resume_dependencies(
     return RunDeps(
         checks=CheckDeps(
             select_adapter=lambda *_args: object(),
-            measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
+            measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
             inventory=lambda: Inventory(True, "ok", (), ()),
             live_run=lambda _path: None,
             host_lock=HostLock(tmp_path / "resume-host.lock"),
@@ -552,7 +562,7 @@ def _launch_with_machine_check(
     started: list[bool] = []
     checks = CheckDeps(
         select_adapter=lambda *_args: object(),
-        measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
+        measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
         inventory=lambda: Inventory(True, "ok", (), ()),
         live_run=lambda _path: None,
         host_lock=HostLock(tmp_path / "host.lock"),

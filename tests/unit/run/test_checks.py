@@ -134,7 +134,7 @@ def _sample(
 def _deps(
     tmp_path: Path,
     *,
-    measure=lambda: (_sample(), 0),
+    measure=lambda **_kwargs: (_sample(), 0),
     inventory=lambda: Inventory(True, "ok", (), (), (), ()),
     live_run=lambda _runs_dir: None,
     host_lock: HostLock | None = None,
@@ -634,7 +634,7 @@ def test_single_run_check_passes_and_keeps_lock_held(tmp_path: Path) -> None:
 
 
 def test_host_resources_check_fails_when_host_breaches_limits(tmp_path: Path) -> None:
-    deps = _deps(tmp_path, measure=lambda: (_sample(mem_available_mb=1024), 0))
+    deps = _deps(tmp_path, measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0))
     result = _by_name(_run(tmp_path, deps=deps), "host_resources")
 
     assert not result.ok
@@ -647,7 +647,17 @@ def test_host_resources_check_passes_when_host_is_within_limits(tmp_path: Path) 
     assert result.ok
 
 
+def test_host_resources_check_measures_runs_directory(tmp_path: Path) -> None:
+    paths = []
+    deps = _deps(tmp_path, measure=lambda *, disk_path: (paths.append(disk_path) or _sample(), 0))
+
+    _run(tmp_path, deps=deps)
+
+    assert paths == [tmp_path / "runs"]
+
+
 def test_host_resources_check_ignores_swapouts_before_launch(tmp_path: Path) -> None:
+    (tmp_path / "runs").mkdir()
     vm_stat = (Path(__file__).parents[2] / "fixtures" / "vm_stat-macos.txt").read_text(
         encoding="utf-8"
     )
@@ -666,7 +676,7 @@ def test_host_resources_check_ignores_swapouts_before_launch(tmp_path: Path) -> 
 
     deps = _deps(
         tmp_path,
-        measure=lambda: measure_host(run=run, read_text=read_text, disk_path=tmp_path),
+        measure=lambda **kwargs: measure_host(run=run, read_text=read_text, **kwargs),
     )
     result = _by_name(_run(tmp_path, deps=deps), "host_resources")
 
@@ -869,7 +879,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
     deps = _deps(
         tmp_path,
         inventory=lambda: Inventory(True, "ok", ("trial__env-main-1",), (), (), ()),
-        measure=lambda: _sample(mem_available_mb=1024),
+        measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0),
     )
     results = _run(tmp_path, card=_card(withdrawn=True), deps=deps)
 
@@ -931,7 +941,7 @@ def test_machine_check_launch_checks_reports_each_failure(tmp_path: Path) -> Non
     deps = _deps(
         tmp_path,
         inventory=lambda: Inventory(True, "ok", ("residue",), (), (), ()),
-        measure=lambda: _sample(mem_available_mb=1024),
+        measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0),
     )
 
     results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
