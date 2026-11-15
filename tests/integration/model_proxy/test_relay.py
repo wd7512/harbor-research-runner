@@ -15,6 +15,7 @@ from harbor_research_runner.model_proxy.control import TrialClosed, TrialRegistr
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
 from harbor_research_runner.model_proxy.pacing import Pacer
 from harbor_research_runner.model_proxy.relay import RelayDeps, Route, relay
+from harbor_research_runner.model_proxy.server import ProxyHTTPServer, _ProxyState
 from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.proxy_control import CloseMessage, OpenMessage
@@ -102,18 +103,66 @@ def test_pacing_wait_is_recorded_before_each_request_start(tmp_path):
     assert [row["paced_wait_s"] for row in starts] == [2.5, 60.0]
 
 
+def test_closed_trial_is_refused_before_pacing(tmp_path):
+    waits = []
+
+    class CountingPacer:
+        def wait_for(self, estimated_tokens):
+            waits.append(estimated_tokens)
+            return 0.0, None
+
+        def record(self, reservation, actual_tokens):
+            return None
+
+    upstream = FakeUpstream(["ok"], model="served-model")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(
+        tmp_path, base_url, card={**_CARD, "api": "chat"}, pacer=CountingPacer()
+    )
+    registry = TrialRegistry(ledger)
+    registry.open(OpenMessage("trial-1", "task", "arm"))
+    registry.close(CloseMessage("trial-1"))
+    server = ProxyHTTPServer(("127.0.0.1", 0), _ProxyState(ledger, registry, deps, BodyStore(None)))
+    serving = Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    try:
+        response = httpx.post(
+            f"http://127.0.0.1:{server.server_port}/trial/trial-1/v1/chat/completions",
+            content=_request_body(True),
+            timeout=2,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        serving.join(2)
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    assert response.status_code == 410
+    assert waits == []
+    assert upstream.requests == []
+    assert [(row["type"], row.get("reason")) for row in _rows(tmp_path)][-1] == (
+        "refused",
+        "closed",
+    )
+
+
 def test_request_waiting_in_pacer_is_refused_after_trial_closes(tmp_path):
     entered_wait = Event()
     release_wait = Event()
+
+    reservation = object()
+    recorded = []
 
     class GatePacer:
         def wait_for(self, estimated_tokens):
             entered_wait.set()
             assert release_wait.wait(2)
-            return 0.0
+            return 0.0, reservation
 
-        def record(self, actual_tokens):
-            return None
+        def record(self, held, actual_tokens):
+            recorded.append((held, actual_tokens))
 
     upstream = FakeUpstream(["ok"], model="served-model")
     base_url = upstream.start()
@@ -143,6 +192,7 @@ def test_request_waiting_in_pacer_is_refused_after_trial_closes(tmp_path):
         assert not worker.is_alive()
         assert outcome == ["closed"]
         assert upstream.requests == []
+        assert recorded == [(reservation, 0)]
     finally:
         release_wait.set()
         worker.join(2)

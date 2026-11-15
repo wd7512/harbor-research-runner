@@ -190,6 +190,9 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             self._send(_INVALID_BODY, 400)
             return
         try:
+            if not self.state.registry.admit(trial):
+                self._send(CLOSED_BODY.encode(), 410)
+                return
             response = relay(
                 body,
                 {key.lower(): value for key, value in self.headers.items()},

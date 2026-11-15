@@ -420,15 +420,19 @@ def relay(
         paced_wait_s,
     )
     try:
-        if admit is not None:
-            if not admit(trial, request_start):
-                raise TrialClosed("trial closed")
-        else:
+        if admit is None:
             deps.ledger.write(request_start)
+            admitted = True
+        else:
+            admitted = admit(trial, request_start)
     except BaseException:
         if deps.pacer is not None:
             deps.pacer.record(reservation, estimated_tokens)
         raise
+    if not admitted:
+        if deps.pacer is not None:
+            deps.pacer.record(reservation, 0)
+        raise TrialClosed("trial closed")
 
     routes = list(deps.routes())
     if not routes:
