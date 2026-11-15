@@ -341,7 +341,7 @@ Harbor's exception labels are never an input to a halt rule.
 7. When Harbor exits on its own: judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
 8. Finish: stop the proxy and sampler, write `finish`, make the run folder read-only, exit 0 or 3.
 
-Resume (`hrr run --resume RUN_ID`): acquire the host lock, read the run metadata, repeat the launch checks, start the sampler and the proxy (same host and port, `restart: true`, then wait `restart_cooldown_s`), write `resume`, judge and set aside, then continue from step 7. A refused resume appends nothing. The canary is not repeated.
+Resume (`hrr run --resume RUN_ID`): acquire the host lock, read the run metadata, repeat the launch checks, start the sampler and the proxy (same host and port, `restart: true`, then wait `restart_cooldown_s`), write `resume`, judge and set aside, then continue from step 7. A refused resume appends nothing. The canary is not repeated. A run with no main-pass `harbor_start` is refused: it never started its main work, so it is restarted as a new run.
 
 `hrr clean-docker --apply` treats a run as live while its runner pid is alive or any process command line names the run folder. It refuses cleanup and logs the run id while a run is live.
 

@@ -523,6 +523,15 @@ def resume_run(
         if events and events[-1].get("type") == "finish":
             logger.error("resume refused because run %s is already finished", run_id)
             return RunOutcome(1, run_dir)
+        if not any(
+            row.get("type") == "harbor_start" and row.get("job") == "main" for row in events
+        ):
+            logger.error(
+                "resume refused because run %s stopped before its first main pass; "
+                "start a new run with hrr run <job file>",
+                run_id,
+            )
+            return RunOutcome(1, run_dir)
         manifest = load_manifest(manifest_path)
         host = deps.host()
         recorded_profile = session.metadata.host.get("host_profile")
