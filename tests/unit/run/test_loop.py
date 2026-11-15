@@ -11,7 +11,7 @@ import pytest
 
 from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
-from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
+from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource, load_job
 from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.records import jsonl
 from harbor_research_runner.records.limits import Limits
@@ -753,8 +753,11 @@ def _inputs(tmp_path: Path):
     return job, card, manifest_path, machine_check
 
 
-def _create(tmp_path: Path, check_results: list[CheckResult] | None = None) -> RunSession:
-    job, card, manifest_path, machine_check = _inputs(tmp_path)
+def _create(
+    tmp_path: Path, check_results: list[CheckResult] | None = None, job: Job | None = None
+) -> RunSession:
+    default_job, card, manifest_path, machine_check = _inputs(tmp_path)
+    job = job or default_job
     return RunSession.create(
         job=job,
         card=card,
@@ -833,6 +836,29 @@ def test_load_does_not_change_metadata_or_append_event(tmp_path: Path) -> None:
     assert loaded.run_dir == session.run_dir
     assert metadata_path.read_bytes() == before
     assert (session.run_dir / "run-events.jsonl").read_bytes() == events_before
+
+
+def test_resume_keeps_absolute_task_path_from_stored_job(tmp_path: Path) -> None:
+    study = tmp_path / "a"
+    study.mkdir()
+    task_path = tmp_path / "tasks"
+    (task_path / "example-task").mkdir(parents=True)
+    job_path = study / "job.yaml"
+    job_path.write_text(
+        "name: study\nmodel: provider/model\nrepetitions: 1\nconcurrency: 1\n"
+        "task_order: as_listed\ntasks: {path: ../tasks}\n"
+        "machine_check: ../machine-check.json\n"
+        "arms: [{label: arm-a, harness: fake, commit: " + "a" * 40 + "}]\n"
+        "proxy: {host: 127.0.0.1, port: 8766, container_host: host.docker.internal}\n"
+        "limits: {}\n",
+        encoding="utf-8",
+    )
+    parsed_job = load_job(job_path)
+    session = _create(tmp_path, job=parsed_job)
+
+    resumed = RunSession.load(session.run_dir, {"MODEL_KEY": "configured"})
+
+    assert resumed.job.tasks.path == str(task_path.resolve())
 
 
 def test_mark_resumed_appends_resume_event(tmp_path: Path) -> None:
