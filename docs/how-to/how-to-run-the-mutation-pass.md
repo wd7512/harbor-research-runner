@@ -28,4 +28,20 @@ The source-inspection tests are excluded: `tests/unit/test_cli.py::test_cli_does
 
 For each survivor, write a test that detects the behavior or add its mutant name and equivalent-mutant rationale to the list below.
 
-Equivalent mutants: none recorded.
+## Equivalent mutants
+
+### harbor_research_runner.evidence_bundle.verify
+
+- `harbor_research_runner.evidence_bundle.verify.x__host_window_damaged__mutmut_9`: a valid trial record has named string keys, so looking up the `None` key cannot differ from the intended `verifier_started_t` lookup.
+- `harbor_research_runner.evidence_bundle.verify.x__host_window_damaged__mutmut_58`: `zip(..., strict=None)` has the same non-strict behavior as `strict=False`.
+- `harbor_research_runner.evidence_bundle.verify.x__host_window_damaged__mutmut_61`: omitting `strict` uses the same default non-strict behavior as `strict=False`.
+
+## Message-text mutants
+
+### harbor_research_runner.evidence_bundle.verify
+
+0 among the 32 survivors in the partial lane results.
+
+## Not unit-testable
+
+None among the 32 survivors in the partial lane results.

@@ -40,6 +40,61 @@ def _refresh_manifest(bundle: Path) -> None:
     write_manifest(bundle, manifest["tool_version"], manifest["tool_commit"], manifest["run_id"])
 
 
+def _host_sample_bundle(
+    tmp_path: Path,
+    samples: list[dict],
+    *,
+    start: object = 100,
+    end: object = 110,
+    verifier_started: object = 101,
+    verifier_finished: object = 110,
+) -> Path:
+    bundle = _bundle("clean", tmp_path)
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    trial = next(row for row in trials if row["location"] == "harbor-job")
+    for row in trials:
+        if row is trial:
+            row.update(
+                agent_started_t=start,
+                agent_finished_t=end,
+                verifier_started_t=verifier_started,
+                verifier_finished_t=verifier_finished,
+            )
+        else:
+            row.update(
+                agent_started_t=None,
+                agent_finished_t=None,
+                verifier_started_t=None,
+                verifier_finished_t=None,
+            )
+    _write_rows(trials_path, trials)
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    events.append({"type": "harbor_start", "t": 1, "pass": 0})
+    _write_rows(events_path, events)
+    resource_rows = [
+        {
+            "type": "sample",
+            "t": 100,
+            "mem_available_mb": 1024,
+            "swapped_out_pages": 0,
+            "disk_free_gb": 10.0,
+            "load1": 0.1,
+            "trial_containers": 1,
+            "docker_ok": True,
+            **sample,
+        }
+        for sample in samples
+    ]
+    resource_data = "".join(json.dumps(sample, sort_keys=True) + "\n" for sample in resource_rows)
+    (bundle / "resource-stats.jsonl.gz").write_bytes(
+        gzip.compress(resource_data.encode("utf-8"), mtime=0)
+    )
+    _refresh_manifest(bundle)
+    return bundle
+
+
 def _problem_ids(problems) -> list[str]:
     return [problem.invariant for problem in problems]
 
@@ -131,6 +186,117 @@ def test_sampler_interval_checks_trial_sample_gaps(tmp_path: Path) -> None:
     _refresh_manifest(bundle)
 
     assert "host_samples_damaged" in _problem_ids(verify(bundle))
+
+
+def test_agent_only_trial_uses_agent_end_for_host_samples(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 100}, {"type": "sample", "t": 140}],
+        verifier_started=None,
+        verifier_finished=None,
+    )
+
+    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+
+
+def test_host_samples_are_sorted_before_gap_check(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 140}, {"type": "sample", "t": 80}],
+    )
+
+    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+
+
+def test_host_sample_gap_at_three_intervals_is_accepted(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 90}, {"type": "sample", "t": 120}],
+    )
+
+    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+
+
+def test_host_sample_gap_before_trial_window_is_ignored(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 50}, {"type": "sample", "t": 90}],
+    )
+
+    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+
+
+def test_host_sample_gap_after_trial_window_is_ignored(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 120}, {"type": "sample", "t": 160}],
+    )
+
+    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+
+
+def test_host_sample_gap_overlapping_trial_end_is_damaged(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 110}, {"type": "sample", "t": 150}],
+    )
+
+    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+
+
+def test_host_sample_gap_overlapping_trial_start_is_damaged(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 60}, {"type": "sample", "t": 100}],
+    )
+
+    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+
+
+def test_host_samples_ignore_boolean_timestamps(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [
+            {"type": "sample", "t": 100},
+            {"type": "sample", "t": 110},
+            {"type": "sample", "t": True},
+        ],
+    )
+
+    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+
+
+def test_host_sample_rows_with_other_types_do_not_cover_the_window(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "event", "t": 100}, {"type": "event", "t": 110}],
+    )
+
+    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+
+
+def test_missing_host_samples_damage_measured_trial(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(tmp_path, [])
+
+    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+
+
+def test_invalid_trial_window_does_not_report_host_damage(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(tmp_path, [], start=True)
+
+    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+
+
+def test_invalid_trial_end_does_not_report_host_damage(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [],
+        end=True,
+        verifier_started=None,
+        verifier_finished=None,
+    )
+
+    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
 
 
 def test_trial_verdict_disagreement_is_reported(tmp_path: Path) -> None:
