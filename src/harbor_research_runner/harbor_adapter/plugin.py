@@ -197,8 +197,7 @@ class RunPlugin(BaseJobPlugin):
     @staticmethod
     def _task_dir(job: Job, config: TrialConfig) -> Path | None:
         task = config.task
-        is_git_task = getattr(task, "is_git_task", lambda: False)()
-        if task.path is not None and not is_git_task:
+        if task.path is not None and not task.is_git_task():
             return task.path
         try:
             task_id = task.get_task_id()
