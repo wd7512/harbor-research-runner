@@ -69,6 +69,18 @@ Equivalent mutants:
 - `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_47`: `float` accepts `-INF` as the same negative infinity value as `-inf`.
 - `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_52`: `float` accepts `INF` as the same positive infinity value as `inf`.
 
+### harbor_research_runner.evidence_bundle.verify
+
+- `harbor_research_runner.evidence_bundle.verify.x__host_window_damaged__mutmut_58`: `zip(..., strict=None)` has the same non-strict behavior as `strict=False`.
+- `harbor_research_runner.evidence_bundle.verify.x__host_window_damaged__mutmut_61`: omitting `strict` uses the same default non-strict behavior as `strict=False`.
+- `harbor_research_runner.evidence_bundle.verify.x__json__mutmut_5`: Python's codec lookup treats `UTF-8` and `utf-8` as the same encoding.
+- `harbor_research_runner.evidence_bundle.verify.x__jsonl_gzip__mutmut_13`: Python's codec lookup treats `UTF-8` and `utf-8` as the same encoding.
+- `harbor_research_runner.evidence_bundle.verify.x__resource_rows__mutmut_19`: Python's codec lookup treats `UTF-8` and `utf-8` as the same encoding.
+- `harbor_research_runner.evidence_bundle.verify.x_malformed_jsonl_count__mutmut_16`: Python's codec lookup treats `UTF-8` and `utf-8` as the same encoding.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_83`: Python's codec lookup treats `UTF-8` and `utf-8` as the same encoding when reading the report.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_15`: omitting the split limit does not change the first split field.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_18`: a positive split limit of two does not change the first split field.
+
 Message-text mutants:
 
 ### harbor_research_runner.evidence_bundle.trials
@@ -78,6 +90,10 @@ Message-text mutants:
 ### harbor_research_runner.evidence_bundle.build
 
 6 mutants change only the digest-mismatch exception text, report whitespace, or verification log text.
+
+### harbor_research_runner.evidence_bundle.verify
+
+8: `x__json__mutmut_7`, `x__jsonl_gzip__mutmut_7`, `x__jsonl_gzip__mutmut_8`, `x__jsonl_gzip__mutmut_15`, `x_verify__mutmut_942`, `x_verify__mutmut_943`, `x_verify__mutmut_944`, `x_verify__mutmut_945`. These alter exception wording or a displayed JSONL line number only; no record, exit code or documented remedy depends on the wording.
 
 Not unit-testable:
 
@@ -91,6 +107,11 @@ Not unit-testable:
 - `harbor_research_runner.evidence_bundle.build.x_build__mutmut_168`, `harbor_research_runner.evidence_bundle.build.x_build__mutmut_169`, `harbor_research_runner.evidence_bundle.build.x_build__mutmut_170`, `harbor_research_runner.evidence_bundle.build.x_build__mutmut_171`, `harbor_research_runner.evidence_bundle.build.x_build__mutmut_172` and `harbor_research_runner.evidence_bundle.build.x_build__mutmut_173`: these affect only restoration after the temporary-directory rename fails; the public function has no filesystem-failure injection point, and inducing a rename race would make a unit test nondeterministic.
 - `harbor_research_runner.evidence_bundle.build.x_build__mutmut_175`: this affects temporary-directory cleanup after an earlier filesystem exception, which cannot be induced through the public inputs without patching the filesystem boundary.
 
+### harbor_research_runner.evidence_bundle.verify
+
+- `harbor_research_runner.evidence_bundle.verify.x__json__mutmut_3`: the default text encoding differs from UTF-8 only under a non-UTF-8 locale, which is not an injectable boundary for `verify`.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_78`: the default text encoding differs from UTF-8 only under a non-UTF-8 locale, which is not an injectable boundary for `verify`.
+
 Simplification candidates:
 
 ### harbor_research_runner.evidence_bundle.build
@@ -101,3 +122,9 @@ Simplification candidates:
 
 - `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_2`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_3`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_4`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_5`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_15`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_19`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_20`, and `harbor_research_runner.trial_validity.verdict.x__view__mutmut_6`, `harbor_research_runner.trial_validity.verdict.x__view__mutmut_9`, `harbor_research_runner.trial_validity.verdict.x__view__mutmut_10`: both lists have the same length by construction. `zip(..., strict=True)` plus a plain range of positions would make the length mutants raise; the orchestrator will make that source change separately.
 - `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_59`, `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_62`, and `harbor_research_runner.trial_validity.verdict.x__host_samples_damaged__mutmut_48`, `harbor_research_runner.trial_validity.verdict.x__host_samples_damaged__mutmut_51`: these change only `strict=False`; `itertools.pairwise` removes that argument.
+
+### harbor_research_runner.evidence_bundle.verify
+
+- `harbor_research_runner.evidence_bundle.verify.x__host_window_damaged__mutmut_73` and `x__host_window_damaged__mutmut_78`: the absent-resource fallback's `torn_last_line` value is unused; `bad_line_time_spans` only reads `rows` and `bad_lines`.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_52`, `x_verify__mutmut_57`, `x_verify__mutmut_61` and `x_verify__mutmut_66`: the absent OOM and memory fallbacks' `torn_last_line` value is unused by telemetry span checks.
+- `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_799` and `x_verify__mutmut_801`: an absent sample list defaults to either `None` or `[]`, and both are falsey before any `max` call.
