@@ -510,6 +510,24 @@ def test_resource_sample_gap_line_numbers_are_preserved(tmp_path: Path) -> None:
     _assert_host_sample_result(bundle, damaged=True)
 
 
+def test_window_edge_beyond_three_intervals_from_any_sample_is_damage(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 50}, {"type": "sample", "t": 55}, {"type": "sample", "t": 60}],
+    )
+
+    _assert_host_sample_result(bundle, damaged=True)
+
+
+def test_resource_row_that_is_not_an_object_is_a_bad_line(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 90}, b"[1]", {"type": "sample", "t": 120}],
+    )
+
+    _assert_host_sample_result(bundle, damaged=True)
+
+
 def test_one_second_sampler_interval_is_not_replaced_by_default(tmp_path: Path) -> None:
     bundle = _host_sample_bundle(
         tmp_path,
@@ -921,7 +939,9 @@ def test_boolean_trial_telemetry_times_do_not_mark_trial_damaged(
         verifier_finished_t=verifier_end,
     )
     _write_rows(trials_path, trials)
-    (bundle / "docker-oom-events.jsonl").write_text('{"type":\n', encoding="utf-8")
+    (bundle / "docker-oom-events.jsonl").write_text(
+        '{"type":\n{"timeNano":100000000000000000000}\n', encoding="utf-8"
+    )
     report_path = bundle / "report.md"
     report = report_path.read_text(encoding="utf-8")
     report_path.write_text(
