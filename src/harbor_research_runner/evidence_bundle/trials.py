@@ -10,7 +10,7 @@ from harbor_research_runner.harbor_adapter.job_folder import (
     read_trial_details,
     trial_folders,
 )
-from harbor_research_runner.records.jsonl import read_rows
+from harbor_research_runner.records.jsonl import bad_line_time_spans, read_rows
 from harbor_research_runner.records.proxy_ledger import (
     COUNTS_AGAINST_TRIAL,
     is_valid_row,
@@ -43,7 +43,9 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
         row for row in read_rows(run_dir / "proxy-ledger.jsonl").rows if is_valid_row(row)
     ]
     memory_path = run_dir / "memory-watch.jsonl"
-    memory_rows = read_rows(memory_path).rows if memory_path.exists() else []
+    memory_result = read_rows(memory_path)
+    memory_rows = memory_result.rows
+    memory_bad_spans = bad_line_time_spans(memory_result)
     memory_peaks = {}
     memory_limits = {}
     for sample in memory_rows:
@@ -93,6 +95,19 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
             first_contents = [
                 row["first_content_s"] for row in ok_ends if row["first_content_s"] is not None
             ]
+            agent_start = facts.phase_started.get("agent")
+            trial_end = (
+                facts.phase_finished.get("verifier")
+                if facts.phase_started.get("verifier") is not None
+                else facts.phase_finished.get("agent")
+            )
+            memory_damaged = (
+                agent_start is not None
+                and trial_end is not None
+                and any(
+                    start <= trial_end and end >= agent_start for start, end in memory_bad_spans
+                )
+            )
             row = TrialRow(
                 trial=facts.trial,
                 task=facts.task,
@@ -122,7 +137,9 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 measured=verdict["measured"],
                 unmeasured_reason=verdict["unmeasured_reason"],
                 oom_source=verdict.get("oom_source"),
-                peak_memory_mb=memory_peaks.get((sample_location, facts.trial)),
+                peak_memory_mb=(
+                    None if memory_damaged else memory_peaks.get((sample_location, facts.trial))
+                ),
                 memory_limit_mb=(
                     memory_limits.get((sample_location, facts.trial))
                     if sample_location == "canary-job"

@@ -63,6 +63,8 @@ def render_report(
     machine_check: MachineCheck,
     unjudged_trials: int,
     malformed_resource_samples: int = 0,
+    malformed_oom_events: int | None = None,
+    malformed_memory_watch_samples: int | None = None,
 ) -> str:
     arms = [arm["label"] for arm in metadata["arms"]]
     task_names = sorted({task for task, _arm in planned_slots})
@@ -105,15 +107,22 @@ def render_report(
         "|---|---:|",
     ]
     complete = completeness(rows, planned_slots, repetitions)
+    counts = [
+        f"| Slots planned | {complete.slots_planned} |",
+        f"| Slots complete | {complete.slots_complete} |",
+        f"| Slots incomplete | {complete.slots_incomplete} |",
+        f"| Valid trials | {complete.trials_valid} |",
+        f"| Trials not yet judged | {unjudged_trials} |",
+        f"| Unmeasured trials | {complete.trials_unmeasured} |",
+        f"| Malformed resource samples | {malformed_resource_samples} |",
+    ]
+    if malformed_oom_events is not None:
+        counts.append(f"| Malformed Docker OOM events | {malformed_oom_events} |")
+    if malformed_memory_watch_samples is not None:
+        counts.append(f"| Malformed memory-watch samples | {malformed_memory_watch_samples} |")
     report.extend(
         [
-            f"| Slots planned | {complete.slots_planned} |",
-            f"| Slots complete | {complete.slots_complete} |",
-            f"| Slots incomplete | {complete.slots_incomplete} |",
-            f"| Valid trials | {complete.trials_valid} |",
-            f"| Trials not yet judged | {unjudged_trials} |",
-            f"| Unmeasured trials | {complete.trials_unmeasured} |",
-            f"| Malformed resource samples | {malformed_resource_samples} |",
+            *counts,
             f"| Tokens spent on set-aside trials | {complete.set_aside_tokens} |",
             "",
             "Set aside by reason:",
