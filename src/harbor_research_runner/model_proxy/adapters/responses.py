@@ -168,7 +168,7 @@ def _args_to_string(arguments: Any) -> str:
     return json.dumps(arguments)
 
 
-_TERMINAL_OK = frozenset({"completed", "incomplete"})
+TERMINAL_OK = frozenset({"completed", "incomplete"})
 
 _SUCCESS_TERMINAL_EVENTS = frozenset({"response.completed", "response.incomplete"})
 
@@ -204,7 +204,7 @@ def _stream_error_message(obj: dict[str, Any]) -> str:
 
 
 def _check_status(status: Any) -> None:
-    if status not in _TERMINAL_OK:
+    if status not in TERMINAL_OK:
         raise UpstreamDecodeError(f"upstream response status {status!r} is not usable")
 
 
@@ -345,7 +345,7 @@ def _response_tool_calls(output: Any) -> list[dict[str, Any]]:
 
 def responses_to_chat(body: dict[str, Any], model: str) -> dict[str, Any]:
     status = body.get("status")
-    if status not in _TERMINAL_OK:
+    if status not in TERMINAL_OK:
         raw_usage = body.get("usage")
         failed_usage: dict[str, int] | None = None
         if isinstance(raw_usage, dict):

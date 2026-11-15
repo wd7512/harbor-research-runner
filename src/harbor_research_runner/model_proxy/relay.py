@@ -747,6 +747,7 @@ def _stream_chunks(
                 translated: list[str] = []
                 for line in raw.decode("utf-8", "replace").splitlines():
                     translated.extend(translator.feed_line(line))
+                translator.end_event()
                 observation.usage = ledger_usage or translator.usage
                 observation.served_model = translator.served_model
                 observation.completion_chars = translator.completion_chars

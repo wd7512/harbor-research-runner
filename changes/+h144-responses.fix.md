@@ -1,1 +1,1 @@
-Reject Responses replies without a terminal success status or output list, including completed stream events. The proxy records malformed replies as truncated upstream responses.
+Reject malformed Responses replies, count failed terminal events as unsuccessful, and account for multiline SSE data. Flush the final event remainder so unterminated final separators do not hide completion or usage.

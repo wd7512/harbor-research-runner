@@ -65,6 +65,9 @@ class StreamTranslator:
         """Decode one transport line into zero or more client-visible lines."""
         raise NotImplementedError
 
+    def end_event(self) -> None:
+        """called after the lines of one transport event"""
+
     @property
     def finished(self) -> bool:
         """True once the upstream terminator has been seen and no line is buffered."""

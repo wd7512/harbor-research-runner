@@ -131,6 +131,112 @@ def test_chat_stream_to_responses_records_cached_read_tokens(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("event_type", "status"),
+    [("response.failed", "failed"), ("response.completed", "failed")],
+    ids=["failed-event", "non-ok-status"],
+)
+def test_responses_identity_failed_event_counts_as_non_ok(tmp_path, event_type, status):
+    raw = [
+        (
+            f"event: {event_type}\r\ndata: "
+            f'{{"type":"{event_type}","response":{{"status":"{status}",'
+            '"model":"served-model"}}\r\n\r\n'
+        ).encode(),
+        b'event: response.completed\r\ndata: {"type":"response.completed","response":{"status":"completed","model":"served-model"}}\r\n\r\n',
+    ]
+    upstream = FakeUpstream([RawResponse(raw)], model="served-model")
+    upstream_url = upstream.start()
+    ledger, client, deps, adapter = _relay(tmp_path, upstream_url, "responses", "/v1/responses")
+    try:
+        response = relay(_request(), {}, "trial-1", deps, adapter)
+        response_chunks = list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = read_rows(tmp_path / "proxy-ledger.jsonl").rows[-1]
+    assert b"".join(response_chunks) == b"".join(raw)
+    assert end["upstream_status"] != "ok"
+
+
+def test_responses_identity_multiline_sse_records_completion_usage_and_model(tmp_path):
+    raw = [
+        b'event: response.output_text.delta\r\ndata: {"type":"response.output_text.delta",\r\ndata: "delta":"hello",\r\ndata: "model":"served-model"}\r\n\r\n',
+        b'event: response.completed\r\ndata: {"type":"response.completed",\r\ndata: "response":{"status":"completed",\r\ndata: "model":"served-model","output":[],\r\ndata: "usage":{"input_tokens":4,"output_tokens":2,"input_tokens_details":{"cached_tokens":1}}}}\r\n\r\n',
+    ]
+    upstream = FakeUpstream([RawResponse(raw)], model="served-model")
+    upstream_url = upstream.start()
+    ledger, client, deps, adapter = _relay(tmp_path, upstream_url, "responses", "/v1/responses")
+    try:
+        response = relay(_request(), {}, "trial-1", deps, adapter)
+        chunks = list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = read_rows(tmp_path / "proxy-ledger.jsonl").rows[-1]
+    assert b"".join(chunks) == b"".join(raw)
+    assert end["completion_chars"] == 5
+    assert (end["prompt_tokens"], end["completion_tokens"], end["cached_read_tokens"]) == (
+        4,
+        2,
+        1,
+    )
+    assert end["served_model"] == "served-model"
+
+
+@pytest.mark.parametrize(
+    "terminator",
+    [b"data: [DONE]", b"data: [DONE]\n"],
+    ids=["without-newline", "with-newline"],
+)
+def test_chat_identity_final_done_remainder_records_ok_and_usage(tmp_path, terminator):
+    raw = [
+        b'data: {"model":"served-model","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}\n\n',
+        terminator,
+    ]
+    upstream = FakeUpstream([RawResponse(raw)], model="served-model")
+    upstream_url = upstream.start()
+    ledger, client, deps, adapter = _relay(tmp_path, upstream_url, "chat", "/v1/chat/completions")
+    try:
+        response = relay(_request(), {}, "trial-1", deps, adapter)
+        chunks = list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = read_rows(tmp_path / "proxy-ledger.jsonl").rows[-1]
+    assert b"".join(chunks) == b"".join(raw)
+    assert end["upstream_status"] == "ok"
+    assert (end["prompt_tokens"], end["completion_tokens"]) == (4, 2)
+
+
+def test_responses_identity_multiline_final_remainder_records_usage_and_model(tmp_path):
+    raw = [
+        b'event: response.completed\r\ndata: {"type":"response.completed",\r\ndata: "response":{"status":"completed",\r\ndata: "model":"served-model","output":[],\r\ndata: "usage":{"input_tokens":6,"output_tokens":2}}}'
+    ]
+    upstream = FakeUpstream([RawResponse(raw)], model="served-model")
+    upstream_url = upstream.start()
+    ledger, client, deps, adapter = _relay(tmp_path, upstream_url, "responses", "/v1/responses")
+    try:
+        response = relay(_request(), {}, "trial-1", deps, adapter)
+        chunks = list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = read_rows(tmp_path / "proxy-ledger.jsonl").rows[-1]
+    assert b"".join(chunks) == b"".join(raw)
+    assert end["upstream_status"] == "ok"
+    assert (end["prompt_tokens"], end["completion_tokens"]) == (6, 2)
+    assert end["served_model"] == "served-model"
+
+
+@pytest.mark.parametrize(
     "body",
     [{}, {"status": "completed"}],
     ids=["missing-status-and-output", "missing-output"],
@@ -165,11 +271,7 @@ def test_responses_completed_event_missing_required_fields_counts_as_truncated(
     tmp_path, response_body
 ):
     event = {"type": "response.completed", "response": response_body}
-    raw = [
-        b"event: response.completed\r\ndata: "
-        + json.dumps(event).encode()
-        + b"\r\n\r\n"
-    ]
+    raw = [b"event: response.completed\r\ndata: " + json.dumps(event).encode() + b"\r\n\r\n"]
     upstream = FakeUpstream(
         [RawResponse(raw, content_type="text/event-stream")], model="served-model"
     )
