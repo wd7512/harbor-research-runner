@@ -432,7 +432,7 @@ def test_harbor_failure_without_trial_folder_halts_resumably(tmp_path: Path) -> 
     events = jsonl.read_rows(session.run_dir / "run-events.jsonl").rows
     halt = next(row for row in events if row["type"] == "halt")
     assert result == 2
-    assert halt["reason"] == "harbor_exit_1"
+    assert halt["reason"] == "harbor_exit"
     assert "code 1" in halt["detail"]
     assert not any(row["type"] == "finish" for row in events)
     assert stat.S_IMODE(session.run_dir.stat().st_mode) & stat.S_IWUSR

@@ -642,7 +642,7 @@ def _pass_loop(
         if not status.to_set_aside:
             if returncode != 0 or _trials_left(session, status, planned):
                 detail = f"Harbor exited with code {returncode}; planned trials remain"
-                session.event(Halt(deps.now(), f"harbor_exit_{returncode}", detail))
+                session.event(Halt(deps.now(), "harbor_exit", detail))
                 deps.stop_services(session)
                 return 2
             return _finish(session, status, deps)
