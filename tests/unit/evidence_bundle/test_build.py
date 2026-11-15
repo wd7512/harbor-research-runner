@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from harbor_research_runner.evidence_bundle.build import _gzip, build, merged_requests
+from harbor_research_runner.evidence_bundle.build import build, merged_requests
 from harbor_research_runner.records.proxy_ledger import RequestEnd, RequestStart
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "run_folders"
@@ -265,10 +265,16 @@ def test_merged_request_preserves_end_fields_and_time() -> None:
     ]
 
 
-def test_gzip_has_zero_mtime() -> None:
-    compressed = _gzip(b"evidence")
+def test_compressed_bundle_files_record_zero_mtime(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    output = tmp_path / "bundle"
 
-    assert int.from_bytes(compressed[4:8], "little") == 0
+    assert build(run_dir, output, {}) == 0
+
+    compressed = sorted(output.glob("*.gz"))
+    assert compressed
+    for path in compressed:
+        assert int.from_bytes(path.read_bytes()[4:8], "little") == 0
 
 
 def test_build_creates_missing_output_parent(tmp_path: Path) -> None:
