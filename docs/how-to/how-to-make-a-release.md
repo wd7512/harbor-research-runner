@@ -1,6 +1,6 @@
 # How to make a release
 
-This repository is prepared for `0.1.0`; the owner makes the release after the first paid study passes. This guide describes the release steps without performing them.
+This repository is prepared for `0.1.0`. The owner makes the release after the free-model pilot and the halt-and-resume drill pass on the study machine, and before the first paid study, so that study runs from a tagged release. This guide describes the release steps without performing them. The release pull request into `main` stays open until the owner has examined it; the owner merges and tags.
 
 ## Align the version
 
@@ -38,7 +38,7 @@ Use the release version in both towncrier commands. That pull request only delet
 
 ## Merge and verify CI
 
-After the paid study passes, create a release branch from `main` and merge `dev` into it with a normal merge commit:
+After the pilot and the drill pass, create a release branch from `main` and merge `dev` into it with a normal merge commit:
 
 ```sh
 git fetch origin
