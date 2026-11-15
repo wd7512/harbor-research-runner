@@ -1,0 +1,27 @@
+{
+  "id": "opencodego/mimo-v2.5",
+  "upstream_model": "mimo-v2.5",
+  "api": "chat",
+  "endpoints": [
+    "https://opencode.ai/zen/go/v1/chat/completions"
+  ],
+  "key_env": [
+    "OPENCODE_GO_API_KEY"
+  ],
+  "tokens_per_minute": null,
+  "pricing": {
+    "input": 0.14,
+    "output": 0.28,
+    "cached_read": 0.0028
+  },
+  "variants": {},
+  "default_variant": null,
+  "withdrawn": false,
+  "reason": null,
+  "request": {
+    "session_header": "x-opencode-session",
+    "headers": {
+      "User-Agent": "OpenAI/Python 1.x"
+    }
+  }
+}

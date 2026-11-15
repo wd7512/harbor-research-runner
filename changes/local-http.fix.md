@@ -1,0 +1,1 @@
+The results explorer no longer does a reverse DNS lookup of its bind address at startup, which stalled about 35 s on hosts with slow reverse DNS; it now shares one loopback server base with the model proxy.

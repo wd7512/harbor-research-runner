@@ -1,0 +1,8 @@
+{"prompt_chars":17,"request_id":"a-alpha-trial-r1","seq":1,"t":10,"trial":"a-alpha-trial","type":"request_start"}
+{"cached_read_tokens":2,"completion_chars":20,"completion_tokens":4,"duration_s":2.0,"first_content_s":0.5,"prompt_tokens":10,"request_id":"a-alpha-trial-r1","seq":2,"t":11,"trial":"a-alpha-trial","type":"request_end","upstream_status":"ok"}
+{"prompt_chars":17,"request_id":"b-beta-trial-r1","seq":3,"t":11,"trial":"b-beta-trial","type":"request_start"}
+{"cached_read_tokens":2,"completion_chars":20,"completion_tokens":4,"duration_s":2.0,"first_content_s":0.5,"prompt_tokens":10,"request_id":"b-beta-trial-r1","seq":4,"t":12,"trial":"b-beta-trial","type":"request_end","upstream_status":"ok"}
+{"prompt_chars":17,"request_id":"a-alpha-old-r1","seq":5,"t":2,"trial":"a-alpha-old","type":"request_start"}
+{"cached_read_tokens":2,"completion_chars":20,"completion_tokens":4,"duration_s":2.0,"first_content_s":0.5,"prompt_tokens":10,"request_id":"a-alpha-old-r1","seq":6,"t":3,"trial":"a-alpha-old","type":"request_end","upstream_status":"ok"}
+{"prompt_chars":17,"request_id":"unfinished-r1","seq":7,"t":7,"trial":"unfinished","type":"request_start"}
+{"cached_read_tokens":2,"completion_chars":20,"completion_tokens":4,"duration_s":2.0,"first_content_s":0.5,"prompt_tokens":10,"request_id":"unfinished-r1","seq":8,"t":8,"trial":"unfinished","type":"request_end","upstream_status":"ok"}

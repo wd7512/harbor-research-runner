@@ -132,3 +132,4 @@ def _no_sleep_process_or_network(request: pytest.FixtureRequest, monkeypatch: py
     monkeypatch.setattr(subprocess, "Popen", _banned("subprocess.Popen"))
     monkeypatch.setattr(os, "fork", _banned("os.fork"))
     monkeypatch.setattr(socket.socket, "connect", _banned("socket connect"))
+    monkeypatch.setattr(socket.socket, "bind", _banned("socket bind"))

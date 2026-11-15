@@ -34,10 +34,13 @@ build-backend = "hatchling.build"
 required-version = "==0.12.13"
 
 [tool.uv.sources]
-wills-agentic-tools = { git = "https://github.com/wd7512/wills-agentic-tools", tag = "v0.1.0" }
+wills-agentic-tools = { git = "https://github.com/wd7512/wills-agentic-tools", tag = "v0.2.1" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/harbor_research_runner"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.agent"]
 
 [tool.ruff]
 line-length = 100
@@ -58,6 +61,7 @@ timeout = 600
 markers = [
     "live: real OpenCode, a real model, one real task; run before a release by the owner",
     "contract: an end-to-end test that pins one Harbor behaviour we rely on",
+    "replay: replays the new rules on OLD's committed evidence; needs HRR_OLD_REPO, not in the gate",
 ]
 
 [tool.devtools.gate]
@@ -69,14 +73,25 @@ e2e = ["tests/e2e"]
 source_package = "src/harbor_research_runner"
 unit_tests = "tests/unit"
 tests_dir = "tests"
-mirror_exceptions = ["tests/unit/test_skeleton.py"]
+mirror_exceptions = [
+    "tests/unit/test_skeleton.py",
+    "tests/unit/test_import_rule.py",
+    "tests/integration/test_import_rule.py",
+    "src/harbor_research_runner/cli.py",
+    "src/harbor_research_runner/run/harbor_guard.py",
+    "src/harbor_research_runner/docker_host/sampler.py",
+    "src/harbor_research_runner/local_http.py",
+    "src/harbor_research_runner/model_proxy/__main__.py",
+    "src/harbor_research_runner/model_proxy/server.py",
+    "src/harbor_research_runner/results_explorer/server.py",
+]
 untracked_paths = ["runs/"]
 changelog_dir = "changes"
-changelog_exempt = ["docs/"]
+changelog_exempt = ["docs/", "changes/", "CHANGELOG.md"]
 base = "origin/dev"
 
 [tool.devtools.delegate]
-gate_command = "uv run gate"
+gate_command = "sh -c 'uv run gate && uv run check --checks test-names,test-layout,filename-portability,secrets,untracked-paths'"
 base = "origin/dev"
 extra_rules = [
     "Read `AGENTS.md`, `docs/architecture.md` and your brief before anything else. If they disagree, or the brief is wrong about OLD code, stop and report.",
