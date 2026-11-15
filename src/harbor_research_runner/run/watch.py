@@ -315,8 +315,8 @@ def watch(
         halt = run_health.should_halt(snapshot, session.limits, poll_s)
         if halt is not None:
             reason, detail = halt
-            process_group.stop_group(harbor_process, grace_s=process_group.HARBOR_STOP_GRACE_S)
             session.event(Halt(current_t, reason, detail))
+            process_group.stop_group(harbor_process, grace_s=process_group.HARBOR_STOP_GRACE_S)
             return WatchResult("halted", None, reason, detail)
         returncode = harbor_process.poll()
         if returncode is not None:

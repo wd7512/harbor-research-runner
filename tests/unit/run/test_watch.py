@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.run.watch import (
     build_snapshot,
     judge_all_remaining,
     judge_finished,
+    watch,
 )
 from harbor_research_runner.trial_validity.run_health import should_halt
 
@@ -590,3 +595,63 @@ def test_snapshot_requires_agent_budget_for_each_selected_task(tmp_path: Path) -
         assert "bn-fit" in str(exc)
     else:
         raise AssertionError("missing agent_budget_s should be rejected")
+
+
+def test_halt_reason_is_recorded_before_harbor_group_is_signalled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _write_machine_check(
+        run_dir / "machine-check.json",
+        [{"name": "task-a", "agent_budget_s": 10, "verifier_budget_s": 10}],
+    )
+    session = _snapshot_session(run_dir, ["task-a"])
+    session.event = lambda event: _append_event(run_dir, event)
+    session.proxy_alive = lambda: False
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    (run_dir / "run-events.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "proxy-ledger.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+
+    class HarborProcess:
+        pid = 42424
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def send_signal(self, sig):
+            raise AssertionError("the Harbor process group should be signalled")
+
+        def kill(self):
+            raise AssertionError("the fake Harbor process must not be killed directly")
+
+    process = HarborProcess()
+    signal_observations = []
+
+    def killpg(pgid: int, sig: int) -> None:
+        if sig == signal.SIGINT:
+            signal_observations.append(any(row["type"] == "halt" for row in _events(run_dir)))
+            process.returncode = 0
+        elif sig == 0:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(os, "killpg", killpg)
+
+    result = watch(
+        session,
+        process,
+        job_dir,
+        pass_started_t=1.0,
+        poll_s=1.0,
+        now=lambda: 2.0,
+        sleep=lambda _seconds: None,
+    )
+
+    assert result.kind == "halted"
+    assert signal_observations == [True]
