@@ -30,6 +30,19 @@ Run the pass on a case-sensitive filesystem: Linux, or on macOS a case-sensitive
 
 For each survivor, write a test that detects the behavior through the public API, or list it below with its reason. A survivor that only a private helper, a private attribute or a patch could kill is a simplification candidate: it marks code the public behaviour does not need.
 
+Run-loop coverage added for the case-sensitive pass (expected kills; mutmut was not rerun):
+
+- `test_run_job_records_nonzero_canary_exit_and_stops_services` checks `_agent_configs` and `_arm_rows`, expected `x__agent_configs__mutmut_{2,4,13,22,23}` and `x__arm_rows__mutmut_{2,3}`.
+- `test_run_job_records_path_and_git_task_references` checks task references through `run_job`, expected `x__task_ref__mutmut_{7,8,9,10,13,14,15,16,17}`.
+- The slot tests check unrelated event filtering, exempt set-asides and cap boundaries, expected `x_slots_status__mutmut_{4,20,21,22,31,43,72,81,82}`.
+- The nested read-only test checks symlink traversal and preserved modes, expected `x_make_read_only__mutmut_{12,17,36}`.
+- The creation and load assertions check recorded identity and resume refusal outcomes, expected `xǁRunSessionǁcreate__mutmut_{43,76,132,140}`, `xǁRunSessionǁload__mutmut_25` and `x_resume_run__mutmut_{8,9,10,11}`.
+- The set-aside recovery test reaches repair through `resume_run`, expected `x_resume_run__mutmut_{172,173}`; its observable stop marker and the finish timestamp assertion expect `x__finish__mutmut_{1,9}`.
+
+These assertions target 41 of the 306 original survivors. The six exit-33 liveness cases now have public-method coverage; the exit -24 timeout is counted as killed.
+
+Expected survivor disposition after those 41 test kills: 265 total = 20 equivalent + 89 message-text + 152 end-to-end-only + 4 simplification candidates.
+
 Equivalent mutants:
 
 ### harbor_research_runner.evidence_bundle.trials
@@ -57,6 +70,9 @@ Equivalent mutants:
 - `x__attach_run_log__mutmut_14`: Python's codec lookup treats `"UTF-8"` and `"utf-8"` as the same encoding.
 - `x_run_job__mutmut_4`, `x_run_job__mutmut_195`, `x_run_job__mutmut_243`, `x_resume_run__mutmut_14`, `x_resume_run__mutmut_230`, `x_resume_run__mutmut_261`: each changes a `services_started` value from `False` to `None`; the value is only used as a truthiness guard and is set to `True` after services start, so both values select the same cleanup behavior.
 - `x_run_job__mutmut_196`: the canary-failure branch has already stopped services, and the `finally` cleanup is idempotent, so retaining the started flag only repeats that cleanup without changing observable output.
+- `x__attach_run_log__mutmut_{4,7}`: the local runtime's default text encoding is UTF-8, matching the explicit encoding or its omission.
+- `x__task_ref__mutmut_{1,11,12}`: parsed `Job` values always carry exactly one complete task-source variant, so these alternate boolean expressions have the same result for every valid job.
+- `x_make_read_only__mutmut_{3,4,6,7,11}`: changing traversal sort options does not change the final file modes; chmod of child entries does not require parent write permission.
 
 Message-text mutants:
 
@@ -70,7 +86,7 @@ Message-text mutants:
 
 ### harbor_research_runner.run.loop
 
-47 survivors change only human-readable exception or log text. They do not alter records, return values, or a documented remedy.
+42 additional survivors in the case-sensitive pass change only human-readable exception or log text. Together with the 47 already recorded, 89 run-loop mutants change no record, return value, or documented remedy: `x_make_read_only__mutmut_{28,31}`, `x_resume_run__mutmut_{2,3,4,5,6,7,44,46,47,73,75,91,93,94,112,115,117,145,146,147,148,149,150,151,152,267,268,269}`, `x_run_job__mutmut_{187,191,253,255,259,266,267,268}`, `xǁRefusedToStartǁ__init____mutmut_1` and `xǁRunSessionǁcreate__mutmut_{64,68,69}`.
 
 Not unit-testable:
 
@@ -86,10 +102,13 @@ Not unit-testable:
 
 ### harbor_research_runner.run.loop
 
-`RunSession.start_services` has no injected process, socket, or clock dependencies. Its survivors require spawning the proxy/watch processes, passing file descriptors, binding a loopback socket, or waiting on the health endpoint, which unit and integration tests prohibit or would only exercise through those fakes. The following 71 mutants are therefore reserved for the Docker end-to-end tier:
+`tests/integration/run/test_loop.py` starts the real proxy and sampler services, and mutmut runs integration tests. The remaining `RunSession.start_services` survivors require process, file-descriptor, socket, or health-endpoint behavior that is covered by the Docker end-to-end lifecycle tier:
 
-- `xǁRunSessionǁstart_services__mutmut_{5,8,9,47,51,53,54,57,58,59,64,66,68,69,72,73,74,76,77,78,79,80,81,82,83,84,85,86,87,89,91,92,93,99,101,103,104,107,108,109,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,130,132,133,136,137,138,140,144,157,158,164,166,167,171}`.
-- `x_run_job__mutmut_{182,183,184,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,244,245,246,247,248}`: these paths require a canary that passes with Harbor-shaped trial output; they run only after a passing canary and are covered by the e2e lifecycle scenarios, which mutmut does not run.
+- `xǁRunSessionǁstart_services__mutmut_{57,68,69,72,73,74,81,83,84,85,87}`.
+- `x_run_job__mutmut_{174,182,183,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,244,245,246,247,248}`: these paths require a Harbor canary trial or a passing canary, and are covered by the e2e lifecycle scenarios, which mutmut does not run.
+- `x__canary_passed__mutmut_{3,61,62,65,69,70,71}` and `x__pass_loop__mutmut_{26,39,79,110,125}`: these paths also require a successful Harbor canary and are covered by e2e lifecycle scenarios.
+- `x__set_aside_trials__mutmut_{21,22}`: this helper runs in the main pass after a successful canary; mutation tests need the e2e lifecycle path.
+- `x__pass_loop__mutmut_{2,4,5,10,11,16,17,18,19,21,22,23,24,25,30,31,32,34,35,36,37,38,40,41,42,43,44,45,46,47,48,51,57,59,70,71,72,78,83,84,85,86,91,92,94,95,96,100,101,102,107,109,111,118,124,140,148,162,163,164}`: the public run path reaches these changes only after a passing Harbor canary.
 - `x_resume_run__mutmut_{187,238,239,240,241,242,243,244,245,246,247,248,249,259,260,262,277,278,279}`: these paths resume main work after a passing canary and are covered by the e2e lifecycle scenarios, which mutmut does not run.
 
 Simplification candidates:
@@ -100,69 +119,7 @@ Simplification candidates:
 
 ### harbor_research_runner.run.loop
 
-These mutations are reachable only through private helpers or active lifecycle state that public entry points cannot supply with the permitted fakes:
+`_deadline_timestamp` is private state setup; no public outcome or record depends on its internal epoch value.
+- `x__task_ref__mutmut_{18,19,20}`: these change only the private helper's error wording for an incomplete `Job`; the public job parser refuses incomplete task sources before this helper is reached.
 
 - `x__deadline_timestamp__mutmut_2`: its internal timestamp is observable only after a pass loop begins with lifecycle state unavailable to the public fake setup.
-- `xǁRunSessionǁstop_services__mutmut_21`: active sampler cleanup requires private process state installed by `start_services`.
-- `xǁRunSessionǁstop_services__mutmut_30`: active proxy cleanup requires private process state installed by `start_services`.
-- `x__pass_loop__mutmut_2`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_4`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_5`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_10`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_11`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_16`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_17`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_18`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_19`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_21`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_22`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_23`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_24`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_25`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_30`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_31`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_32`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_34`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_35`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_36`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_37`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_38`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_40`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_41`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_42`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_43`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_44`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_45`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_46`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_47`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_48`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_51`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_52`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_57`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_59`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_70`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_71`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_72`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_78`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_83`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_84`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_85`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_86`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_91`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_92`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_94`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_95`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_96`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_100`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_101`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_102`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_107`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_109`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_111`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_118`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_124`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_140`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_148`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_162`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_163`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-- `x__pass_loop__mutmut_164`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.

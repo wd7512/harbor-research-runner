@@ -14,6 +14,7 @@ import yaml
 
 from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
+from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
 from harbor_research_runner.run.checks import CheckDeps
@@ -21,7 +22,6 @@ from harbor_research_runner.run.loop import RunDeps, run_job
 from harbor_research_runner.run.tool_identity import ToolIdentity
 from tests.support.docker_stub import _stub_docker_dir
 from tests.support.fake_upstream import FakeUpstream
-
 
 _PROFILE = {
     "arch": "arm64",
@@ -58,6 +58,9 @@ def _run_deps(
     *,
     returncode: int = 0,
     start_error: Exception | None = None,
+    tasks_yaml: str = "tasks: {dataset: bench/tasks}\n",
+    task_source: dict | None = None,
+    task_digest: str = "sha256:task",
 ) -> tuple[Path, Path, Path, RunDeps, int]:
     port = _free_port()
     machine_check_path = tmp_path / "machine-check.json"
@@ -68,9 +71,7 @@ def _run_deps(
         "model: provider/model\n"
         "repetitions: 1\n"
         "concurrency: 1\n"
-        "task_order: as_listed\n"
-        "tasks: {dataset: bench/tasks}\n"
-        "machine_check: machine-check.json\n"
+        "task_order: as_listed\n" + tasks_yaml + "machine_check: machine-check.json\n"
         "arms: [{label: arm-a, harness: fake, commit: " + "a" * 40 + ", fake: {}}]\n"
         "proxy: {host: 127.0.0.1, port: " + str(port) + ", container_host: 127.0.0.1}\n"
         "limits: {}\n",
@@ -103,9 +104,9 @@ def _run_deps(
         harbor_version="0.23.0",
         host_fingerprint="fingerprint",
         host_profile=_PROFILE,
-        task_source={"dataset": "bench/tasks"},
+        task_source=task_source or {"dataset": "bench/tasks"},
         concurrency=1,
-        tasks=[{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}],
+        tasks=[{"name": "task-a", "digest": task_digest, "memory_mb": 512}],
         included=["task-a"],
         verifier_timeout_multiplier=1.0,
     )
@@ -162,6 +163,29 @@ def _assert_proxy_stopped(port: int) -> None:
         urllib.request.urlopen(f"http://127.0.0.1:{port}/control/health", timeout=0.5)
 
 
+def _expected_canary_argv(run_dir: Path, port: int) -> list[str]:
+    return [
+        "uv",
+        "run",
+        "harbor",
+        "run",
+        "--config",
+        str(run_dir / "canary-job-config.yaml"),
+        "--jobs-dir",
+        str(run_dir),
+        "--job-name",
+        "canary-job",
+        "--plugin",
+        "harbor_research_runner.harbor_adapter.plugin:RunPlugin",
+        "--pk",
+        f"proxy_url=http://127.0.0.1:{port}",
+        "--pk",
+        f"limits_file={run_dir / 'proxy-config.json'}",
+        "--pk",
+        "task_order=as_listed",
+    ]
+
+
 def test_run_job_refuses_failed_checks_without_starting_services(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -205,6 +229,15 @@ def test_run_job_records_nonzero_canary_exit_and_stops_services(
     job_path, manifest_path, runs_dir, deps, port = _run_deps(
         tmp_path, upstream_url, harbor_calls, returncode=7
     )
+    manifest_path.write_text(
+        '[fake."' + "a" * 40 + '"]\n'
+        'version = "fixture"\nwithdrawn = false\n'
+        '[fake."' + "a" * 40 + '".images.arm64]\n'
+        'ref = "hrr/fake:test"\n'
+        'digest = "sha256:' + "0" * 64 + '"\n'
+        'build_method = "source"\nbuilt_at = "2026-11-15"\n',
+        encoding="utf-8",
+    )
     docker_calls = tmp_path / "docker-calls.txt"
     monkeypatch.setenv(
         "PATH", f"{_stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
@@ -218,6 +251,7 @@ def test_run_job_records_nonzero_canary_exit_and_stops_services(
     assert result.run_dir is not None
     assert len(harbor_calls) == 1
     argv, cwd, lifeline_fd = harbor_calls[0]
+    assert argv == _expected_canary_argv(result.run_dir, port)
     assert cwd == result.run_dir
     assert f"proxy_url=http://127.0.0.1:{port}" in argv
     assert "task_order=as_listed" in argv
@@ -244,6 +278,22 @@ def test_run_job_records_nonzero_canary_exit_and_stops_services(
         (result.run_dir / "canary-job-config.yaml").read_text(encoding="utf-8")
     )
     assert canary_config["job_name"] == "canary-job"
+    assert canary_config["n_attempts"] == 1
+    assert canary_config["verifier_timeout_multiplier"] == 1.0
+    assert canary_config["datasets"][0]["task_names"] == ["say-hello"]
+    agent = canary_config["agents"][0]
+    assert agent["import_path"] == "harbor_research_runner.harness.fake:FakeHarnessAgent"
+    assert agent["kwargs"]["arm_label"] == "arm-a"
+    assert agent["kwargs"]["harness"] == "fake"
+    assert agent["kwargs"]["commit"] == "a" * 40
+    assert agent["kwargs"]["manifest_path"] == str(manifest_path)
+    assert agent["kwargs"]["container_host"] == "127.0.0.1"
+    assert agent["kwargs"]["proxy_port"] == port
+    assert agent["kwargs"]["fake"] == {}
+    metadata = json.loads((result.run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+    assert metadata["arms"][0]["image_ref"] == "hrr/fake:test"
+    assert metadata["arms"][0]["image_digest"] == "sha256:" + "0" * 64
+    assert metadata["task_set"]["ref"] == "bench/tasks"
     assert (result.run_dir / "compose-host-network.yaml").is_file()
     compose = yaml.safe_load(
         (result.run_dir / "compose-host-network.yaml").read_text(encoding="utf-8")
@@ -310,6 +360,7 @@ def test_run_job_stops_services_and_releases_the_lock_when_harbor_start_raises(
     assert result.run_dir is not None
     assert len(harbor_calls) == 1
     argv, cwd, lifeline_fd = harbor_calls[0]
+    assert argv == _expected_canary_argv(result.run_dir, port)
     assert f"proxy_url=http://127.0.0.1:{port}" in argv
     assert "task_order=as_listed" in argv
     assert cwd == result.run_dir
@@ -321,3 +372,50 @@ def test_run_job_stops_services_and_releases_the_lock_when_harbor_start_raises(
     logging.getLogger("harbor_research_runner.run.loop").warning("after run")
     assert log_path.read_bytes() == before
     _assert_proxy_stopped(port)
+
+
+@pytest.mark.parametrize("source_kind", ["path", "git"])
+def test_run_job_records_path_and_git_task_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+) -> None:
+    if source_kind == "path":
+        task_root = tmp_path / "tasks"
+        task_dir = task_root / "task-a"
+        task_dir.mkdir(parents=True)
+        (task_dir / "task.toml").write_text('version = "1.0"\n', encoding="utf-8")
+        task_digest = task_content_hash(task_dir)
+        tasks_yaml = f"tasks: {{path: {task_root}}}\n"
+        task_source = {"path": str(task_root)}
+        expected_ref = str(task_root)
+    else:
+        commit = "a" * 40
+        url = "https://example.invalid/tasks.git"
+        task_digest = "sha256:task"
+        tasks_yaml = f"tasks: {{git: {{url: {url}, commit: {commit}}}}}\n"
+        task_source = {"git": {"url": url, "commit": commit}}
+        expected_ref = f"{url}@{commit}"
+
+    upstream, upstream_url = _start_upstream()
+    harbor_calls: list[tuple[list[str], Path, int]] = []
+    job_path, manifest_path, runs_dir, deps, _port = _run_deps(
+        tmp_path,
+        upstream_url,
+        harbor_calls,
+        returncode=7,
+        tasks_yaml=tasks_yaml,
+        task_source=task_source,
+        task_digest=task_digest,
+    )
+    docker_calls = tmp_path / "docker-calls.txt"
+    monkeypatch.setenv(
+        "PATH", f"{_stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+    )
+    try:
+        result = run_job(job_path, runs_dir, manifest_path, {}, deps)
+    finally:
+        upstream.stop()
+
+    assert result.exit_code == 1
+    assert result.run_dir is not None
+    metadata = json.loads((result.run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+    assert metadata["task_set"]["ref"] == expected_ref
