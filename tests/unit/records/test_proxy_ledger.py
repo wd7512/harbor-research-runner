@@ -191,6 +191,7 @@ def test_upstream_status_contract():
         "stalled",
         "truncated",
         "transport_error",
+        "upstream_auth",
         "client_error",
         "client_disconnect",
     )
@@ -203,6 +204,7 @@ def test_upstream_status_contract():
                 "stalled",
                 "truncated",
                 "transport_error",
+                "upstream_auth",
             }
         )
         == COUNTS_AGAINST_TRIAL

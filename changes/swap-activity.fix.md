@@ -1,1 +1,0 @@
-Host swap limits now detect pages swapped out during each sampling interval, so stale occupied swap no longer blocks launch or invalidates work. The resource and limits readers retain compatibility with older records.

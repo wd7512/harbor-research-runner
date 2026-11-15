@@ -31,6 +31,7 @@ def _trial_verdict(
     now: float,
     ledger_tail: JsonlTail,
     resource_tail: JsonlTail,
+    halt_reason: str | None = None,
 ) -> dict:
     facts = job_folder.read_trial(trial_dir)
     ledger = ledger_tail.read()
@@ -51,14 +52,21 @@ def _trial_verdict(
         if (session.run_dir / "memory-watch.jsonl").exists()
         else [],
     )
+    deferred = (
+        halt_reason == "deadline"
+        and not (trial_dir / "result.json").exists()
+        and not any(
+            row.get("type") == "open" and row.get("trial") == facts.trial for row in ledger.rows
+        )
+    )
     event = TrialVerdict(
         t=now,
         trial=facts.trial,
         task=facts.task,
         arm=facts.arm,
         valid=result.valid,
-        reason=result.reason,
-        instrument=result.instrument,
+        reason="deferred" if deferred else result.reason,
+        instrument=None if deferred else result.instrument,
         labels=list(result.labels),
         measured=result.measured,
         unmeasured_reason=result.unmeasured_reason,
@@ -105,7 +113,13 @@ def _judge_finished(
     return newly_judged
 
 
-def judge_all_remaining(session, job_dir: Path, judged: set[str], now: float) -> list[str]:
+def judge_all_remaining(
+    session,
+    job_dir: Path,
+    judged: set[str],
+    now: float,
+    halt_reason: str | None = None,
+) -> list[str]:
     return _judge_all_remaining(
         session,
         job_dir,
@@ -113,6 +127,7 @@ def judge_all_remaining(session, job_dir: Path, judged: set[str], now: float) ->
         now,
         JsonlTail(session.run_dir / "proxy-ledger.jsonl"),
         JsonlTail(session.run_dir / "resource-stats.jsonl"),
+        halt_reason,
     )
 
 
@@ -123,12 +138,13 @@ def _judge_all_remaining(
     now: float,
     ledger_tail: JsonlTail,
     resource_tail: JsonlTail,
+    halt_reason: str | None = None,
 ) -> list[str]:
     newly_judged = []
     for trial_dir in job_folder.trial_folders(job_dir):
         if trial_dir.name in judged:
             continue
-        _trial_verdict(session, trial_dir, now, ledger_tail, resource_tail)
+        _trial_verdict(session, trial_dir, now, ledger_tail, resource_tail, halt_reason)
         judged.add(trial_dir.name)
         newly_judged.append(trial_dir.name)
     return newly_judged
@@ -196,8 +212,15 @@ def _build_snapshot(
         if (timestamp := _timestamp(row)) is not None and timestamp >= pass_started_t
     ]
     events = _read_events(session.run_dir)
-    verdicts = [row for row in events if row.get("type") == "trial_verdict"]
-    judged = {row["trial"] for row in verdicts if isinstance(row.get("trial"), str)}
+    latest_resume = max(
+        (index for index, row in enumerate(events) if row.get("type") == "resume"),
+        default=-1,
+    )
+    verdict_rows = [
+        (index, row) for index, row in enumerate(events) if row.get("type") == "trial_verdict"
+    ]
+    verdicts_since_resume = [row for index, row in verdict_rows if index > latest_resume]
+    judged = {row["trial"] for _index, row in verdict_rows if isinstance(row.get("trial"), str)}
     opens: set[str] = set()
     closed: set[str] = set()
     for row in rows:
@@ -230,7 +253,7 @@ def _build_snapshot(
     return run_health.RunSnapshot(
         now=now,
         ledger_rows_since_pass_start=rows,
-        verdicts=verdicts,
+        verdicts=verdicts_since_resume,
         open_trials=len(opens - closed),
         proxy_alive=proxy_alive,
         oom_watch_alive=session.oom_watch_alive(),

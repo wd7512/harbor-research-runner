@@ -36,3 +36,13 @@ def test_completeness_never_counts_canary_trials():
 
     assert result.trials_valid == 1
     assert result.trials_unmeasured == 0
+
+
+def test_completeness_reports_deferred_set_asides_separately():
+    deferred = _row(
+        "deferred", "task-a", "arm-a", "set-aside-trials", False, False, 0.0, reason="deferred"
+    )
+
+    result = completeness([deferred], [("task-a", "arm-a")], 1)
+
+    assert result.set_aside_by_reason == {"deferred": 1}

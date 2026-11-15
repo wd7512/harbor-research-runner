@@ -11,11 +11,14 @@ import pytest
 from harbor_research_runner.job_config.model_cards import load_card
 from harbor_research_runner.model_proxy.adapters.chat import ChatAdapter
 from harbor_research_runner.model_proxy.bodies import BodyStore
+from harbor_research_runner.model_proxy.control import TrialClosed, TrialRegistry
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
 from harbor_research_runner.model_proxy.pacing import Pacer
 from harbor_research_runner.model_proxy.relay import RelayDeps, Route, relay
+from harbor_research_runner.model_proxy.server import ProxyHTTPServer, _ProxyState
 from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.limits import Limits
+from harbor_research_runner.records.proxy_control import CloseMessage, OpenMessage
 from tests.support.fake_upstream import FakeUpstream, RawResponse
 
 _CARD = {"id": "card/model", "upstream_model": "served-model"}
@@ -100,6 +103,115 @@ def test_pacing_wait_is_recorded_before_each_request_start(tmp_path):
     assert [row["paced_wait_s"] for row in starts] == [2.5, 60.0]
 
 
+def test_closed_trial_is_refused_before_pacing(tmp_path):
+    waits = []
+
+    class CountingPacer:
+        def wait_for(self, estimated_tokens):
+            waits.append(estimated_tokens)
+            return 0.0, None
+
+        def record(self, reservation, actual_tokens):
+            return None
+
+    upstream = FakeUpstream(["ok"], model="served-model")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(
+        tmp_path, base_url, card={**_CARD, "api": "chat"}, pacer=CountingPacer()
+    )
+    registry = TrialRegistry(ledger)
+    registry.open(OpenMessage("trial-1", "task", "arm"))
+    registry.close(CloseMessage("trial-1"))
+    server = ProxyHTTPServer(("127.0.0.1", 0), _ProxyState(ledger, registry, deps, BodyStore(None)))
+    serving = Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    try:
+        response = httpx.post(
+            f"http://127.0.0.1:{server.server_port}/trial/trial-1/v1/chat/completions",
+            content=_request_body(True),
+            timeout=2,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        serving.join(2)
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    assert response.status_code == 410
+    assert waits == []
+    assert upstream.requests == []
+    assert [(row["type"], row.get("reason")) for row in _rows(tmp_path)][-1] == (
+        "refused",
+        "closed",
+    )
+
+
+def test_request_waiting_in_pacer_is_refused_after_trial_closes(tmp_path):
+    entered_wait = Event()
+    release_wait = Event()
+
+    reservation = object()
+    recorded = []
+
+    class GatePacer:
+        def wait_for(self, estimated_tokens):
+            entered_wait.set()
+            assert release_wait.wait(2)
+            return 0.0, reservation
+
+        def record(self, held, actual_tokens):
+            recorded.append((held, actual_tokens))
+
+    upstream = FakeUpstream(["ok"], model="served-model")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(tmp_path, base_url, pacer=GatePacer())
+    registry = TrialRegistry(ledger)
+    registry.open(OpenMessage("trial-1", "task", "arm"))
+    outcome = []
+
+    def send_request():
+        assert registry.admit("trial-1")
+        try:
+            response = relay(
+                _request_body(True), {}, "trial-1", deps, ChatAdapter(), registry.admit
+            )
+        except TrialClosed:
+            outcome.append("closed")
+        else:
+            outcome.append(b"".join(response.chunks))
+
+    worker = Thread(target=send_request)
+    try:
+        worker.start()
+        assert entered_wait.wait(2)
+        registry.close(CloseMessage("trial-1"))
+        release_wait.set()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert outcome == ["closed"]
+        assert upstream.requests == []
+        assert recorded == [(reservation, 0)]
+    finally:
+        release_wait.set()
+        worker.join(2)
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    rows = _rows(tmp_path)
+    close_seq = next(row["seq"] for row in rows if row["type"] == "close")
+    assert not [
+        row
+        for row in rows
+        if row["type"] == "request_start" and row["trial"] == "trial-1" and row["seq"] > close_seq
+    ]
+    assert [(row["type"], row.get("reason")) for row in rows if row["type"] == "refused"] == [
+        ("refused", "closed")
+    ]
+
+
 def test_body_store_records_the_response_bytes_sent_to_the_harness(tmp_path):
     upstream = FakeUpstream(["ok"], model="served-model")
     base_url = upstream.start()
@@ -134,7 +246,7 @@ def test_relay_shapes_groq_request_before_pacing_and_body_capture(tmp_path):
 
     clock = Clock()
     pacer = Pacer(100, clock.now, clock.sleep)
-    assert pacer.wait_for(40) == 0.0
+    assert pacer.wait_for(40)[0] == 0.0
     upstream = FakeUpstream(["ok"], model="served-model")
     base_url = upstream.start()
     card = {
@@ -263,7 +375,7 @@ def test_relay_pacing_estimate_uses_card_cap_without_payload_limit(tmp_path):
 
     clock = Clock()
     pacer = Pacer(80, clock.now, clock.sleep)
-    assert pacer.wait_for(50) == 0.0
+    assert pacer.wait_for(50)[0] == 0.0
     upstream = FakeUpstream(["ok"], model="served-model")
     base_url = upstream.start()
     card = {**_CARD, "request": {"max_tokens_cap": 40}}
@@ -405,7 +517,7 @@ def test_non_streaming_request_records_start_and_end_rows(tmp_path):
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
         response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
-        assert not [row for row in _rows(tmp_path) if row["type"] == "request_end"]
+        assert [row for row in _rows(tmp_path) if row["type"] == "request_end"]
 
         chunks = list(response.chunks)
     finally:
@@ -431,6 +543,30 @@ def test_non_streaming_request_records_start_and_end_rows(tmp_path):
     )
     assert end["completion_chars"] == len("hello")
     assert upstream.requests[0]["body"]["model"] == "served-model"
+
+
+def test_non_streaming_gap_returns_retryable_status_and_matching_ledger_status(tmp_path):
+    upstream = FakeUpstream(["gap:0.2"], model="served-model")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(tmp_path, base_url)
+    deps.limits = Limits.from_dict(
+        {"inter_chunk_gap_max_s": 0.05}, repetitions=1, verifier_timeout_multiplier=1.0
+    )
+    try:
+        response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
+        chunks = list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = _rows(tmp_path)[-1]
+    assert response.http_status == 504
+    assert chunks == [
+        b'{"error": {"message": "upstream unavailable", "type": "upstream_unavailable"}}'
+    ]
+    assert end["upstream_status"] == "stalled"
+    assert end["http_status"] == response.http_status
 
 
 def test_truncated_stream_is_recorded_as_truncated(tmp_path):
@@ -600,32 +736,31 @@ def test_nonstream_first_chunk_is_stamped_before_the_body_completes(tmp_path):
     base_url = upstream.start()
     clock = _Clock([0.0, 5.0, 9.0, 12.0])
     deps, ledger, client = _deps(tmp_path, base_url, now=clock)
-    response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
-    chunks = []
-    received = Event()
+    responses = []
+    completed = Event()
 
-    def consume():
-        chunks.append(next(response.chunks))
-        received.set()
+    def request():
+        responses.append(relay(_request_body(False), {}, "trial-1", deps, ChatAdapter()))
+        completed.set()
 
-    thread = Thread(target=consume, daemon=True)
+    thread = Thread(target=request, daemon=True)
     thread.start()
-    rest = []
+    chunks = []
     try:
         assert clock.first_mark.wait(timeout=1.0)
-        assert not received.is_set()
+        assert not completed.is_set()
         assert not [row for row in _rows(tmp_path) if row["type"] == "request_end"]
     finally:
         gate.set()
         thread.join(timeout=2)
-        if not thread.is_alive():
-            rest.extend(response.chunks)
-        response.close()
+        if responses:
+            chunks = list(responses[0].chunks)
         ledger.close()
         client.close()
         upstream.stop()
 
-    assert chunks + rest == [body]
+    assert len(responses) == 1
+    assert chunks == [body]
     end = _rows(tmp_path)[-1]
     assert end["first_chunk_s"] == 5.0
     assert end["first_content_s"] == 9.0

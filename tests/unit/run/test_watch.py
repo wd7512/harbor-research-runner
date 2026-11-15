@@ -10,6 +10,7 @@ from harbor_research_runner.run.watch import (
     judge_all_remaining,
     judge_finished,
 )
+from harbor_research_runner.trial_validity.run_health import should_halt
 
 
 def _session(run_dir: Path):
@@ -127,6 +128,42 @@ def test_resultless_trial_is_judged_as_never_finished(tmp_path: Path) -> None:
     assert _events(run_dir)[0]["reason"] == "never_finished"
 
 
+def test_deadline_deferred_trial_has_deferred_verdict(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    _trial(job_dir, "trial-a", result=False)
+    (run_dir / "proxy-ledger.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+    _append_event(run_dir, SimpleNamespace(to_row=lambda: {"type": "halt", "reason": "deadline"}))
+
+    judge_all_remaining(_session(run_dir), job_dir, set(), 10.0, halt_reason="deadline")
+
+    event = _events(run_dir)[-1]
+    assert event["valid"] is False
+    assert event["reason"] == "deferred"
+    assert event["instrument"] is None
+
+
+def test_deadline_trial_opened_at_proxy_keeps_never_finished_verdict(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    _trial(job_dir, "trial-a", result=False)
+    (run_dir / "proxy-ledger.jsonl").write_text(
+        json.dumps({"type": "open", "trial": "trial-a"}) + "\n", encoding="utf-8"
+    )
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+
+    judge_all_remaining(_session(run_dir), job_dir, set(), 10.0, halt_reason="deadline")
+
+    event = _events(run_dir)[0]
+    assert event["reason"] == "never_finished"
+    assert event["instrument"] == "harbor"
+
+
 def test_rebuilt_judged_set_prevents_rejudging(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -180,6 +217,112 @@ def test_open_trial_remains_in_flight_until_verdict_after_close(tmp_path: Path) 
     judged_snapshot = build_snapshot(session, job_dir, 1, 102, True, 100)
 
     assert judged_snapshot.in_flight_trials == 0
+
+
+def test_resume_resets_upstream_invalid_streak_window(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    machine_check = run_dir / "machine-check.json"
+    _write_machine_check(
+        machine_check, [{"name": "task-a", "agent_budget_s": 60, "verifier_budget_s": 10}]
+    )
+    (run_dir / "proxy-ledger.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "resource-stats.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "sample",
+                "t": 100,
+                "mem_available_mb": 8192,
+                "swapped_out_pages": 0,
+                "disk_free_gb": 100,
+                "load1": 0.5,
+                "trial_containers": 0,
+                "docker_ok": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    events = [
+        {
+            "type": "trial_verdict",
+            "t": float(index),
+            "trial": f"trial-{index}",
+            "task": "task-a",
+            "arm": "arm-a",
+            "valid": False,
+            "reason": "upstream_errors",
+            "instrument": "proxy",
+            "labels": [],
+            "measured": True,
+            "unmeasured_reason": None,
+            "oom_source": None,
+        }
+        for index in range(5)
+    ]
+    events.extend(
+        [
+            {
+                "type": "halt",
+                "t": 5.0,
+                "reason": "upstream_invalid_streak",
+                "detail": "5 consecutive proxy-invalid trial verdicts",
+            },
+            {
+                "type": "resume",
+                "t": 6.0,
+                "tool_version": "0.1.0",
+                "tool_commit": "a" * 40,
+                "pid": 123,
+            },
+        ]
+    )
+    (run_dir / "run-events.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    session = SimpleNamespace(
+        oom_watch_alive=lambda: True,
+        memory_watch_alive=lambda: True,
+        run_dir=run_dir,
+        job=SimpleNamespace(machine_check=machine_check),
+        metadata=SimpleNamespace(task_set={"tasks": [{"name": "task-a"}]}),
+        limits=Limits(max_set_asides_per_slot=2, verifier_timeout_multiplier=1.0),
+    )
+
+    snapshot = build_snapshot(session, job_dir, 1, 101, True, 100)
+
+    assert snapshot.verdicts == []
+    assert should_halt(snapshot, session.limits) is None
+
+    with (run_dir / "run-events.jsonl").open("a", encoding="utf-8") as stream:
+        for index in range(5, 10):
+            stream.write(
+                json.dumps(
+                    {
+                        "type": "trial_verdict",
+                        "t": float(index + 7),
+                        "trial": f"trial-{index}",
+                        "task": "task-a",
+                        "arm": "arm-a",
+                        "valid": False,
+                        "reason": "upstream_errors",
+                        "instrument": "proxy",
+                        "labels": [],
+                        "measured": True,
+                        "unmeasured_reason": None,
+                        "oom_source": None,
+                    }
+                )
+                + "\n"
+            )
+
+    snapshot = build_snapshot(session, job_dir, 1, 102, True, 100)
+    assert [row["trial"] for row in snapshot.verdicts] == [
+        f"trial-{index}" for index in range(5, 10)
+    ]
+    assert should_halt(snapshot, session.limits)[0] == "upstream_invalid_streak"
 
 
 def test_repeated_agent_setup_failure_is_valid_after_set_aside(tmp_path: Path) -> None:

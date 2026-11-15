@@ -30,6 +30,7 @@ from harbor_research_runner.harbor_adapter.commands import (
     run_command,
     write_job_config,
 )
+from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.harness.agents import agent_settings
 from harbor_research_runner.job_config.job_file import load_job
 from harbor_research_runner.job_config.model_cards import ModelCard
@@ -603,6 +604,42 @@ class E2ERun:
         )
 
 
+def collect_run_diagnostics(run_dir: Path) -> str:
+    files = (
+        ("run-events.jsonl", 40),
+        ("runner.log", 60),
+        ("proxy-ledger.jsonl", 20),
+    )
+    sections = []
+    for name, limit in files:
+        path = run_dir / name
+        lines = (
+            path.read_text(encoding="utf-8").splitlines()[-limit:]
+            if path.is_file()
+            else ["<file missing>"]
+        )
+        sections.append(f"{name} (last {limit} lines):\n" + "\n".join(lines))
+    return "\n\n".join(sections)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
+    report = yield
+    if report.failed:
+        e2e_run = item.funcargs.get("e2e_run")
+        if isinstance(e2e_run, E2ERun) and e2e_run.runs_dir.is_dir():
+            run_dirs = sorted(
+                path
+                for path in e2e_run.runs_dir.iterdir()
+                if path.is_dir() and (path / "run-metadata.json").is_file()
+            )
+            for run_dir in run_dirs:
+                report.sections.append(
+                    (f"Run diagnostics: {run_dir.name}", collect_run_diagnostics(run_dir))
+                )
+    return report
+
+
 def _free_port() -> int:
     with socket.socket() as reserve:
         reserve.bind(("127.0.0.1", 0))
@@ -762,7 +799,7 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
                 tasks=[
                     {
                         "name": study_task.name,
-                        "digest": "0" * 64,
+                        "digest": task_content_hash(study_task),
                         "memory_mb": 512,
                         "oracle_reward": 1.0,
                         "agent_s": 1.0,

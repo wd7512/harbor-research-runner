@@ -15,7 +15,7 @@ Contract tests are end-to-end tests marked `@pytest.mark.contract`. Each pins on
 
 The gate is `uv run gate` (format, lint, types, unit and integration tests, lock file). End-to-end is `uv run gate --only e2e`. Never pipe a gate through `tail` or `head`; quote its exit code.
 
-CI runs e2e in four file-list shards: lifecycle, lifecycle resume, Harbor contract with machine-check and service-lifetime, and upstream/refusals with how-to commands. E2e shards are skipped for pull requests that change only `docs/**`, `changes/**`, root `*.md` files, or `roadmap.*`; the gate matrix still runs.
+CI runs e2e in five file-list shards: lifecycle, lifecycle resume, stop-launching-at, Harbor contract with machine-check and service-lifetime, and upstream/refusals with how-to commands. E2e shards are skipped for pull requests that change only `docs/**`, `changes/**`, root `*.md` files, or `roadmap.*`; the gate matrix still runs.
 
 ## Rules for every test
 
@@ -36,7 +36,7 @@ CI runs e2e in four file-list shards: lifecycle, lifecycle resume, Harbor contra
 4. Do not add a dependency, a command-line flag, an environment variable, a file format field or a module that the brief does not name.
 5. Do not touch a module the brief does not name. If your change seems to need it, stop and report.
 6. No comments in code unless the brief asks. Docstrings on public functions are fine. Log with `logging`; never `print` in the package.
-7. Add one changelog fragment: `changes/<step number>.<feature|fix|doc|misc>.md`, one or two sentences.
+7. Add one changelog fragment, one or two sentences: `changes/<issue or PR number>.<feature|fix|doc|misc>.md`, rendered as a link to that number. A second fragment of the same number and type takes a counter, `changes/<number>.<type>.<n>.md`. A change with no issue uses `changes/+<slug>.<type>.md`, rendered without a reference.
 8. Finish by running the brief's acceptance command and `uv run gate`, unpiped. Report both exit codes and the red-first output.
 
 ## How to write a test at each tier

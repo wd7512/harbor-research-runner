@@ -107,7 +107,7 @@ directory = "changes"
 filename = "CHANGELOG.md"
 package = "harbor_research_runner"
 title_format = "## {version} ({project_date})"
-issue_format = "step {issue}"
+issue_format = "[#{issue}](https://github.com/wd7512/harbor-research-runner/issues/{issue})"
 underlines = ["", "", ""]
 
 [[tool.towncrier.type]]
