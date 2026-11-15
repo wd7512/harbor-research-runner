@@ -1,0 +1,1 @@
+Give the request latency integration test a two-second header delivery margin before its scripted stream gap. This removes a scheduling race between the proxy's header timeout and the fake upstream's delayed body.
