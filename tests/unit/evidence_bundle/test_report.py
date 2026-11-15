@@ -9,7 +9,7 @@ from harbor_research_runner.records.machine_check import read
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "run_folders"
 
 
-def _render(folder: str) -> str:
+def _render(folder: str, extra_events: list[dict] | None = None) -> str:
     run_dir = FIXTURES / folder
     rows = build_trial_rows(run_dir)
     metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
@@ -17,6 +17,7 @@ def _render(folder: str) -> str:
         json.loads(line)
         for line in (run_dir / "run-events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
+    events.extend(extra_events or [])
     tasks = sorted({row.task for row in rows if row.location != "canary-job"})
     arms = [arm["label"] for arm in metadata["arms"]]
     planned_slots = list(product(tasks, arms))
@@ -51,6 +52,25 @@ def test_report_lists_machine_check_exclusions():
     report = _render("clean")
 
     assert "2 excluded by the machine check (task/d, task/e)" in report
+
+
+def test_report_includes_tool_commit_for_resume():
+    commit = "c" * 40
+    report = _render(
+        "clean",
+        [
+            {
+                "type": "resume",
+                "t": 2,
+                "tool_version": "0",
+                "tool_commit": commit,
+                "pid": 1,
+            }
+        ],
+    )
+
+    assert f"- Tool version: 0 (commit 0)" in report
+    assert f"resume — 0 (commit {commit})" in report
 
 
 def test_report_includes_host_memory_cap_and_rootless_status():

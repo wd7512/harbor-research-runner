@@ -126,7 +126,12 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
     backup = temporary.with_name(temporary.name + ".previous")
     try:
         _write_files(temporary, files)
-        write_manifest(temporary, metadata["tool_version"], metadata["run_id"])
+        write_manifest(
+            temporary,
+            metadata["tool_version"],
+            metadata["tool_commit"],
+            metadata["run_id"],
+        )
         if out_dir.exists():
             os.rename(out_dir, backup)
         try:
