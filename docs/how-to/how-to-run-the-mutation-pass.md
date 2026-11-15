@@ -51,6 +51,24 @@ Equivalent mutants:
 - `harbor_research_runner.evidence_bundle.build.x_build__mutmut_134` and `harbor_research_runner.evidence_bundle.build.x_build__mutmut_136`: the temporary directory prefix is not part of the bundle or any returned value.
 - `harbor_research_runner.evidence_bundle.build.x_build__mutmut_140` and `harbor_research_runner.evidence_bundle.build.x_build__mutmut_141`: the backup directory suffix is internal and is removed after a successful replacement.
 
+### harbor_research_runner.trial_validity.verdict
+
+- `harbor_research_runner.trial_validity.verdict.x__boundary__mutmut_8`: with `or`, the trial's first row becomes the open entry until its open row replaces it; the two differ only for a trial with two open rows, which the proxy never writes because `TrialRegistry.open` returns early for a trial already open.
+- `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_19`: `damaged` starts as `None` instead of `False`; it is only read as a condition, where both are false.
+- `harbor_research_runner.trial_validity.verdict.x__position_within__mutmut_2`, `harbor_research_runner.trial_validity.verdict.x__position_within__mutmut_3`, `harbor_research_runner.trial_validity.verdict.x__position_within__mutmut_4`: an invalid row at the open or close position is the trial's own row, and the trial-row check already marks it damaged.
+- `harbor_research_runner.trial_validity.verdict.x__positive_seq__mutmut_8`: sequence zero is rejected by `records.proxy_ledger.is_valid_row`; the invalid trial row already marks measurement damaged, so treating its sequence as positive cannot change the public verdict.
+- `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_159`, `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_217`: omitting the explicit `None` for `oom_source` uses the `Verdict` field's default `None`.
+- `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_220`: in the repeated-setup branch the phase is never `agent` or `verifier`, the only values `_labels` reads, so passing `None` gives the same labels.
+- `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_223`, `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_288`: a `False` flag passed to `_labels` becomes `None`; `_labels` only reads it as a condition.
+
+### harbor_research_runner.records.jsonl
+
+- `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_15`: the extra position is truncated by the zip against the rows.
+- `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_21`, `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_24`, `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_25`: the positions list has one entry per row, so `strict=None`, omitted `strict`, and `strict=True` produce the same entries.
+- `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_30`, `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_33`: no entry has a position equal to a bad line, so changing `<` to `<=` or `>` to `>=` does not change either neighbor list.
+- `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_47`: `float` accepts `-INF` as the same negative infinity value as `-inf`.
+- `harbor_research_runner.records.jsonl.x_bad_line_time_spans__mutmut_52`: `float` accepts `INF` as the same positive infinity value as `inf`.
+
 ### harbor_research_runner.run.checks
 
 - `x__bind_port__mutmut_4`: omitting the socket type uses Python's default `SOCK_STREAM`.
@@ -98,6 +116,10 @@ Simplification candidates:
 
 - `harbor_research_runner.evidence_bundle.build.x_build__mutmut_176`: after a successful replace, `build` deletes the backup folder and the `finally` block deletes it again, so the `finally` deletion runs only on the error path. Removing the first deletion leaves one cleanup that the replace test covers.
 
+### harbor_research_runner.trial_validity.verdict
+
+- `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_2`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_3`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_4`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_5`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_15`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_19`, `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_20`, and `harbor_research_runner.trial_validity.verdict.x__view__mutmut_6`, `harbor_research_runner.trial_validity.verdict.x__view__mutmut_9`, `harbor_research_runner.trial_validity.verdict.x__view__mutmut_10`: both lists have the same length by construction. `zip(..., strict=True)` plus a plain range of positions would make the length mutants raise; the orchestrator will make that source change separately.
+- `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_59`, `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_62`, and `harbor_research_runner.trial_validity.verdict.x__host_samples_damaged__mutmut_48`, `harbor_research_runner.trial_validity.verdict.x__host_samples_damaged__mutmut_51`: these change only `strict=False`; `itertools.pairwise` removes that argument.
 
 ### harbor_research_runner.run.checks
 
