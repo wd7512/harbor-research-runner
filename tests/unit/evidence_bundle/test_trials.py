@@ -31,6 +31,43 @@ def test_set_aside_and_unmeasured_trial_rows_match_expected() -> None:
     assert [row.to_row() for row in build_trial_rows(folder)] == _expected(folder)
 
 
+def test_trial_usage_sums_known_tokens_and_preserves_incomplete_reason(tmp_path: Path) -> None:
+    folder = tmp_path / "clean"
+    shutil.copytree(FIXTURES / "clean", folder)
+    ledger_path = folder / "proxy-ledger.jsonl"
+    ledger = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()]
+    end = next(
+        row
+        for row in ledger
+        if row.get("type") == "request_end" and row.get("trial") == "a-alpha-trial"
+    )
+    end["prompt_tokens"] = None
+    end["cached_read_tokens"] = None
+    ledger_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in ledger),
+        encoding="utf-8",
+    )
+    events_path = folder / "run-events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    verdict = next(
+        row
+        for row in events
+        if row.get("type") == "trial_verdict" and row.get("trial") == "a-alpha-trial"
+    )
+    verdict.update(measured=False, unmeasured_reason="usage_incomplete")
+    events_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in events),
+        encoding="utf-8",
+    )
+
+    row = next(row for row in build_trial_rows(folder) if row.trial == "a-alpha-trial")
+
+    assert row.prompt_tokens == 0
+    assert row.completion_tokens == 4
+    assert not row.measured
+    assert row.unmeasured_reason == "usage_incomplete"
+
+
 def test_set_aside_trial_uses_memory_sample_from_harbor_job(tmp_path: Path) -> None:
     folder = tmp_path / "retries"
     shutil.copytree(FIXTURES / "retries", folder)
