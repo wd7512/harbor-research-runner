@@ -32,11 +32,12 @@ For each survivor, write a test that detects the behavior or add its mutant name
 
 - `harbor_research_runner.trial_validity.verdict.x__physical_positions__mutmut_20`: the changed `continue` is reached only for the final torn line, so `break` also ends the loop without changing the result.
 - `harbor_research_runner.trial_validity.verdict.x__view__mutmut_6`, `harbor_research_runner.trial_validity.verdict.x__view__mutmut_9`, `harbor_research_runner.trial_validity.verdict.x__view__mutmut_10`: the positions list always has one entry per row, so `strict=None`, omitted `strict`, and `strict=True` produce the same view.
-- `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_19`, `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_23`, `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_24`: a damaged trial row is also present in `ledger_problems.rows`, where the later view check detects it; valid runner inputs cannot make the initial flag the only evidence of damage.
-- `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_25`, `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_39`: the alternate condition only changes whether the damage scan runs after damage is already known; it cannot clear the damaged result.
+- `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_19`: `damaged` starts as `None` instead of `False`; it is only read as a condition, where both are false.
 - `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_59`, `harbor_research_runner.trial_validity.verdict.x__measurement__mutmut_62`: the first sequence list and its one-element-shorter tail are intentionally paired with non-strict zip; `None` and omitted `strict` have the same behavior.
 - `harbor_research_runner.trial_validity.verdict.x__host_samples_damaged__mutmut_48`, `harbor_research_runner.trial_validity.verdict.x__host_samples_damaged__mutmut_51`: the timestamp list and its one-element-shorter tail are intentionally paired with non-strict zip; `None` and omitted `strict` have the same behavior.
 - `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_159`, `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_217`: omitting the explicit `None` for `oom_source` uses the `Verdict` field's default `None`.
+- `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_220`: in the repeated-setup branch the phase is never `agent` or `verifier`, the only values `_labels` reads, so passing `None` gives the same labels.
+- `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_223`, `harbor_research_runner.trial_validity.verdict.x_judge_trial__mutmut_288`: a `False` flag passed to `_labels` becomes `None`; `_labels` only reads it as a condition.
 
 ### `records.jsonl`
 

@@ -209,6 +209,29 @@ def _judge(
     )
 
 
+def test_malformed_trial_row_without_an_open_row_is_ledger_damage():
+    malformed_start = _request_start(1, "r0")
+    del malformed_start["request_id"]
+
+    verdict = _judge(rows=[malformed_start])
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "ledger_damaged"
+
+
+def test_other_trials_damage_does_not_change_a_trial_without_an_open_row(tmp_path):
+    other_start = _request_start(1, "r0", trial="other-trial")
+    del other_start["request_id"]
+    problems = _write_ledger(
+        tmp_path, [other_start, "{not json", _open_row(3, trial="other-trial")]
+    )
+
+    verdict = _judge(rows=[], problems=problems)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "no_open_row"
+
+
 def _fixture_oom_facts(name):
     fixture = Path(__file__).parents[2] / "fixtures" / "oom" / f"{name}-result.json"
     result = json.loads(fixture.read_text())
