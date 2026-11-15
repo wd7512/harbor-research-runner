@@ -29,8 +29,10 @@ def build_argv(
     ref: str,
     dockerfile: str,
     context: str,
+    *,
+    use_host_network: bool = False,
 ) -> list[str]:
-    return [
+    args = [
         "docker",
         "build",
         "--platform",
@@ -45,6 +47,9 @@ def build_argv(
         dockerfile,
         context,
     ]
+    if use_host_network:
+        args[2:2] = ["--network", "host"]
+    return args
 
 
 def build_image(
@@ -55,8 +60,21 @@ def build_image(
     dockerfile: str,
     context: str,
     run: ExternalRunner,
+    *,
+    use_host_network: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    return _run(build_argv(arch, node_base, commit, ref, dockerfile, context), run)
+    return _run(
+        build_argv(
+            arch,
+            node_base,
+            commit,
+            ref,
+            dockerfile,
+            context,
+            use_host_network=use_host_network,
+        ),
+        run,
+    )
 
 
 def inspect_image(
@@ -79,10 +97,17 @@ def image_architecture(ref: str, run: ExternalRunner) -> subprocess.CompletedPro
     return inspect_image(ref, "{{.Architecture}}", run)
 
 
-def run_version(ref: str, arch: str, run: ExternalRunner) -> subprocess.CompletedProcess[str]:
-    return _run(
-        ["docker", "run", "--rm", "--platform", f"linux/{arch}", ref, "opencode", "--version"], run
-    )
+def run_version(
+    ref: str,
+    arch: str,
+    run: ExternalRunner,
+    *,
+    use_host_network: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    args = ["docker", "run", "--rm", "--platform", f"linux/{arch}", ref, "opencode", "--version"]
+    if use_host_network:
+        args[2:2] = ["--network", "host"]
+    return _run(args, run)
 
 
 def create(
