@@ -1,0 +1,1 @@
+Kill trial-validity and JSONL mutation survivors through `judge_trial` tests, and list the equivalent and simplification-candidate survivors in the mutation guide ([#146](https://github.com/wd7512/harbor-research-runner/issues/146)).
