@@ -69,7 +69,7 @@ def test_report_includes_tool_commit_for_resume():
         ],
     )
 
-    assert f"- Tool version: 0 (commit 0)" in report
+    assert "- Tool version: 0 (commit 0)" in report
     assert f"resume — 0 (commit {commit})" in report
 
 
