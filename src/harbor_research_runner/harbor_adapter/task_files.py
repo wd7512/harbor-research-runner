@@ -8,12 +8,18 @@ from typing import Any
 from harbor.constants import CACHE_DIR
 from harbor.models.task.id import GitTaskId, LocalTaskId, PackageTaskId
 from harbor.models.trial.config import TaskConfig
+from harbor.publisher.packager import Packager
 
 from harbor_research_runner.harbor_adapter.folders import HarborFolderError, trial_folders
 
 
 def task_id(task_data: Mapping[str, Any]) -> GitTaskId | LocalTaskId | PackageTaskId:
     return TaskConfig.model_validate(task_data).get_task_id()
+
+
+def task_content_hash(task_dir: Path) -> str:
+    """The task digest as Harbor records it in a trial's lock.json."""
+    return f"sha256:{Packager.compute_content_hash(task_dir)[0]}"
 
 
 def task_tomls(job_dir: Path, cache_root: Path | None = None) -> dict[str, str]:
