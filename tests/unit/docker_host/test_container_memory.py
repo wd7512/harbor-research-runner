@@ -24,67 +24,63 @@ def test_mem_usage_parses_supported_units(value, expected):
     assert parse_mem_usage(f"{value} / 256MiB") == pytest.approx(expected)
 
 
-def test_proc_memory_sums_pss_over_process_tree_and_skips_disappeared_process():
+def _in_container_namespace(path) -> str:
+    return "pid:[4026531836]" if str(path) == "/proc/self/ns/pid" else "pid:[4026532001]"
+
+
+def test_proc_memory_sums_pss_for_every_process_in_container_pid_namespace():
     def run(_command):
-        return SimpleNamespace(
-            stdout=(FIXTURES / "docker-inspect-state.json").read_text(encoding="utf-8")
-        )
+        return SimpleNamespace(stdout=json.dumps({"Pid": 100}))
 
     def read_text(path):
         path = str(path)
-        if path.endswith("/618/smaps_rollup"):
-            return (FIXTURES / "proc-smaps-rollup.txt").read_text(encoding="utf-8")
-        if path.endswith("/618/task/618/children"):
-            return "8 "
-        if path.endswith("/8/smaps_rollup"):
-            return "Pss: 100 kB\n"
-        if path.endswith("/8/task/8/children"):
-            return "9 "
+        if path.endswith("/100/smaps_rollup"):
+            return "Pss: 2048 kB\n"
+        if path.endswith("/200/smaps_rollup"):
+            return "Pss: 307200 kB\n"
+        if path.endswith("/300/smaps_rollup"):
+            return "Pss: 999999 kB\n"
         raise FileNotFoundError(path)
 
     def list_dir(path):
-        path = str(path)
-        if path.endswith("/618/task"):
-            return [Path(path) / "618"]
-        if path.endswith("/8/task"):
-            return [Path(path) / "8"]
-        raise FileNotFoundError(path)
+        assert path == Path("/proc")
+        return [Path("/proc") / str(pid) for pid in (100, 200, 300)]
 
-    used_mb, reader = proc_container_memory("be3b8bd3cf84", run, read_text, list_dir)
+    def readlink(path):
+        links = {
+            "/proc/100/ns/pid": "pid:[4026532001]",
+            "/proc/200/ns/pid": "pid:[4026532001]",
+            "/proc/300/ns/pid": "pid:[4026531836]",
+            "/proc/self/ns/pid": "pid:[4026531836]",
+        }
+        return links[str(path)]
 
-    assert used_mb == pytest.approx((916 + 100) / 1024)
+    used_mb, reader = proc_container_memory("be3b8bd3cf84", run, read_text, list_dir, readlink)
+
+    assert used_mb == pytest.approx((2048 + 307200) / 1024)
     assert reader == "proc_pss"
 
 
 def test_proc_memory_falls_back_to_rss_for_a_process_refused_by_smaps():
     def run(_command):
-        return SimpleNamespace(
-            stdout=(FIXTURES / "docker-inspect-state.json").read_text(encoding="utf-8")
-        )
+        return SimpleNamespace(stdout=json.dumps({"Pid": 100}))
 
     def read_text(path):
         path = str(path)
-        if path.endswith("/618/smaps_rollup"):
-            return (FIXTURES / "proc-smaps-rollup.txt").read_text(encoding="utf-8")
-        if path.endswith("/618/task/618/children"):
-            return "8 "
-        if path.endswith("/8/smaps_rollup"):
+        if path.endswith("/100/smaps_rollup"):
+            return "Pss: 916 kB\n"
+        if path.endswith("/200/smaps_rollup"):
             raise PermissionError(path)
-        if path.endswith("/8/status"):
+        if path.endswith("/200/status"):
             return "VmRSS: 2048 kB\n"
-        if path.endswith("/8/task/8/children"):
-            return ""
         raise FileNotFoundError(path)
 
-    def list_dir(path):
-        path = str(path)
-        if path.endswith("/618/task"):
-            return [Path(path) / "618"]
-        if path.endswith("/8/task"):
-            return [Path(path) / "8"]
-        raise FileNotFoundError(path)
+    def list_dir(_path):
+        return [Path("/proc/100"), Path("/proc/200")]
 
-    used_mb, reader = proc_container_memory("be3b8bd3cf84", run, read_text, list_dir)
+    used_mb, reader = proc_container_memory(
+        "be3b8bd3cf84", run, read_text, list_dir, _in_container_namespace
+    )
 
     assert used_mb == pytest.approx((916 + 2048) / 1024)
     assert reader == "proc_rss"
@@ -92,22 +88,20 @@ def test_proc_memory_falls_back_to_rss_for_a_process_refused_by_smaps():
 
 def test_proc_memory_parses_pss_without_matching_pss_dirty():
     def run(_command):
-        return SimpleNamespace(
-            stdout=(FIXTURES / "docker-inspect-state.json").read_text(encoding="utf-8")
-        )
+        return SimpleNamespace(stdout=json.dumps({"Pid": 618}))
 
     def read_text(path):
         path = str(path)
         if path.endswith("/618/smaps_rollup"):
             return "Pss_Dirty: 999 kB\nPss: 412 kB\n"
-        if path.endswith("/618/task/618/children"):
-            return ""
         raise FileNotFoundError(path)
 
-    def list_dir(path):
-        return [Path(path) / "618"]
+    def list_dir(_path):
+        return [Path("/proc/618")]
 
-    used_mb, reader = proc_container_memory("be3b8bd3cf84", run, read_text, list_dir)
+    used_mb, reader = proc_container_memory(
+        "be3b8bd3cf84", run, read_text, list_dir, _in_container_namespace
+    )
 
     assert used_mb == pytest.approx(412 / 1024)
     assert reader == "proc_pss"
@@ -159,22 +153,35 @@ def test_compose_project_label_reads_formatted_docker_ps_label_string():
     assert compose_project_label(row) == "trial-a__abc__env"
 
 
-def test_proc_memory_skips_a_child_that_exits_after_its_tasks_were_listed():
+def test_proc_memory_skips_a_process_that_vanishes_mid_scan():
     def read_text(path):
         path = str(path)
         if path.endswith("/618/smaps_rollup"):
             return (FIXTURES / "proc-smaps-rollup.txt").read_text(encoding="utf-8")
-        if path.endswith("/618/task/618/children"):
-            return "8 "
         raise FileNotFoundError(path)
 
-    def list_dir(path):
-        return [Path(path) / Path(path).parent.name]
+    def list_dir(_path):
+        return [Path("/proc/618"), Path("/proc/619")]
 
-    used_mb, reader = proc_rss_mb(618, read_text=read_text, list_dir=list_dir)
+    def readlink(path):
+        if str(path) == "/proc/619/ns/pid":
+            raise FileNotFoundError(path)
+        if str(path) == "/proc/self/ns/pid":
+            return "pid:[4026531836]"
+        return "pid:[4026532001]"
+
+    used_mb, reader = proc_rss_mb(618, read_text=read_text, list_dir=list_dir, readlink=readlink)
 
     assert used_mb == pytest.approx(916 / 1024)
     assert reader == "proc_pss"
+
+
+def test_proc_memory_raises_when_init_namespace_cannot_be_read():
+    def readlink(_path):
+        raise PermissionError("unreadable namespace")
+
+    with pytest.raises(PermissionError, match="unreadable namespace"):
+        proc_rss_mb(100, readlink=readlink)
 
 
 def test_docker_stats_reader_matches_unfiltered_stats_rows_keyed_by_full_id():
@@ -186,3 +193,14 @@ def test_docker_stats_reader_matches_unfiltered_stats_rows_keyed_by_full_id():
     containers = [{"ID": "2abc7dd4e196", "Names": "hrr-fixture-mem"}]
 
     assert docker_stats_memory(run, containers) == {"2abc7dd4e196": pytest.approx(5.277)}
+
+
+def test_proc_memory_refuses_a_container_in_the_host_pid_namespace():
+    def readlink(_path):
+        return "pid:[4026531836]"
+
+    def list_dir(_path):
+        raise AssertionError("must not scan host processes")
+
+    with pytest.raises(ValueError, match="host PID namespace"):
+        proc_rss_mb(100, list_dir=list_dir, readlink=readlink)

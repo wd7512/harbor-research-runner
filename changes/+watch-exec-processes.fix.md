@@ -1,0 +1,1 @@
+The proc memory reader now sums processes in the container's PID namespace, including processes started with `docker exec`. It keeps the PSS to RSS fallback when an individual process cannot provide `smaps_rollup`.
