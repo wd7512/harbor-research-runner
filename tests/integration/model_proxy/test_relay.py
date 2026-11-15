@@ -11,11 +11,13 @@ import pytest
 from harbor_research_runner.job_config.model_cards import load_card
 from harbor_research_runner.model_proxy.adapters.chat import ChatAdapter
 from harbor_research_runner.model_proxy.bodies import BodyStore
+from harbor_research_runner.model_proxy.control import TrialClosed, TrialRegistry
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
 from harbor_research_runner.model_proxy.pacing import Pacer
 from harbor_research_runner.model_proxy.relay import RelayDeps, Route, relay
 from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.limits import Limits
+from harbor_research_runner.records.proxy_control import CloseMessage, OpenMessage
 from tests.support.fake_upstream import FakeUpstream, RawResponse
 
 _CARD = {"id": "card/model", "upstream_model": "served-model"}
@@ -98,6 +100,66 @@ def test_pacing_wait_is_recorded_before_each_request_start(tmp_path):
 
     starts = [row for row in _rows(tmp_path) if row["type"] == "request_start"]
     assert [row["paced_wait_s"] for row in starts] == [2.5, 60.0]
+
+
+def test_request_waiting_in_pacer_is_refused_after_trial_closes(tmp_path):
+    entered_wait = Event()
+    release_wait = Event()
+
+    class GatePacer:
+        def wait_for(self, estimated_tokens):
+            entered_wait.set()
+            assert release_wait.wait(2)
+            return 0.0
+
+        def record(self, actual_tokens):
+            return None
+
+    upstream = FakeUpstream(["ok"], model="served-model")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(tmp_path, base_url, pacer=GatePacer())
+    registry = TrialRegistry(ledger)
+    registry.open(OpenMessage("trial-1", "task", "arm"))
+    outcome = []
+
+    def send_request():
+        assert registry.admit("trial-1")
+        try:
+            response = relay(
+                _request_body(True), {}, "trial-1", deps, ChatAdapter(), registry.admit
+            )
+        except TrialClosed:
+            outcome.append("closed")
+        else:
+            outcome.append(b"".join(response.chunks))
+
+    worker = Thread(target=send_request)
+    try:
+        worker.start()
+        assert entered_wait.wait(2)
+        registry.close(CloseMessage("trial-1"))
+        release_wait.set()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert outcome == ["closed"]
+        assert upstream.requests == []
+    finally:
+        release_wait.set()
+        worker.join(2)
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    rows = _rows(tmp_path)
+    close_seq = next(row["seq"] for row in rows if row["type"] == "close")
+    assert not [
+        row
+        for row in rows
+        if row["type"] == "request_start" and row["trial"] == "trial-1" and row["seq"] > close_seq
+    ]
+    assert [(row["type"], row.get("reason")) for row in rows if row["type"] == "refused"] == [
+        ("refused", "closed")
+    ]
 
 
 def test_body_store_records_the_response_bytes_sent_to_the_harness(tmp_path):

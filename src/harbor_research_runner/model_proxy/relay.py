@@ -22,6 +22,7 @@ from harbor_research_runner.model_proxy.bodies import BodyStore
 from harbor_research_runner.model_proxy.chars import (
     prompt_chars_of_payload,
 )
+from harbor_research_runner.model_proxy.control import TrialClosed
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
 from harbor_research_runner.model_proxy.pacing import Pacer, estimate_request_tokens
 from harbor_research_runner.model_proxy.shaping import shape_request
@@ -383,6 +384,7 @@ def relay(
     trial: str,
     deps: RelayDeps,
     adapter: UpstreamAdapter,
+    admit: Callable[[str, RequestStart], bool] | None = None,
 ) -> RelayResponse:
     """Forward one adapted model request and record its ledger rows."""
     payload = json.loads(request_body)
@@ -404,19 +406,22 @@ def relay(
     request_id = uuid.uuid4().hex
     clock = StreamClock(deps.now)
 
+    request_start = RequestStart(
+        0,
+        0.0,
+        trial,
+        request_id,
+        model,
+        is_stream,
+        prompt_chars_of_payload(outbound),
+        paced_wait_s,
+    )
     try:
-        deps.ledger.write(
-            RequestStart(
-                0,
-                0.0,
-                trial,
-                request_id,
-                model,
-                is_stream,
-                prompt_chars_of_payload(outbound),
-                paced_wait_s,
-            )
-        )
+        if admit is not None:
+            if not admit(trial, request_start):
+                raise TrialClosed("trial closed")
+        else:
+            deps.ledger.write(request_start)
     except BaseException:
         if deps.pacer is not None:
             deps.pacer.record(estimated_tokens)
