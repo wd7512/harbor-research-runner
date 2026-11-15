@@ -41,7 +41,7 @@ def test_rolling_window_cases(limit, requests, expected_waits, expected_now) -> 
     clock = FakeClock()
     pacer = Pacer(limit, clock.now, clock.sleep)
 
-    assert [pacer.wait_for(tokens) for tokens in requests] == expected_waits
+    assert [pacer.wait_for(tokens)[0] for tokens in requests] == expected_waits
     assert clock.now() == expected_now
 
 
@@ -72,8 +72,8 @@ def test_second_request_waits_until_the_first_leaves_the_window() -> None:
     clock = FakeClock()
     pacer = Pacer(1000, clock.now, clock.sleep)
 
-    assert pacer.wait_for(600) == 0.0
-    assert pacer.wait_for(600) == 60.0
+    assert pacer.wait_for(600)[0] == 0.0
+    assert pacer.wait_for(600)[0] == 60.0
     assert clock.now() == 1060.0
 
 
@@ -81,18 +81,32 @@ def test_restart_cooldown_delays_only_the_first_request() -> None:
     clock = FakeClock()
     pacer = Pacer(1000, clock.now, clock.sleep, cooldown_until=1030.0)
 
-    assert pacer.wait_for(100) == 30.0
-    assert pacer.wait_for(100) == 0.0
+    assert pacer.wait_for(100)[0] == 30.0
+    assert pacer.wait_for(100)[0] == 0.0
 
 
 def test_record_replaces_the_estimate_with_actual_usage() -> None:
     clock = FakeClock()
     pacer = Pacer(1000, clock.now, clock.sleep)
 
-    pacer.wait_for(900)
-    pacer.record(100)
+    _, reservation = pacer.wait_for(900)
+    pacer.record(reservation, 100)
 
-    assert pacer.wait_for(900) == 0.0
+    assert pacer.wait_for(900)[0] == 0.0
+
+
+def test_out_of_order_completions_correct_their_own_reservations() -> None:
+    clock = FakeClock(now=0.0)
+    pacer = Pacer(1000, clock.now, clock.sleep)
+
+    _, reservation_a = pacer.wait_for(500)
+    clock.value = 30.0
+    _, reservation_b = pacer.wait_for(500)
+    pacer.record(reservation_b, 900)
+    pacer.record(reservation_a, 100)
+    clock.value = 60.0
+
+    assert pacer.wait_for(200)[0] == 30.0
 
 
 def test_concurrent_requests_share_the_rolling_window() -> None:
@@ -103,7 +117,7 @@ def test_concurrent_requests_share_the_rolling_window() -> None:
 
     def request() -> None:
         barrier.wait()
-        waits.append(pacer.wait_for(600))
+        waits.append(pacer.wait_for(600)[0])
 
     threads = [threading.Thread(target=request) for _ in range(2)]
     for thread in threads:
@@ -127,12 +141,12 @@ def test_record_does_not_wait_for_another_request_to_finish_pacing() -> None:
         clock[0] += seconds
 
     pacer = Pacer(1000, lambda: clock[0], blocking_sleep)
-    pacer.wait_for(1000)
+    _, reservation = pacer.wait_for(1000)
     waiting_request = threading.Thread(target=lambda: pacer.wait_for(1000))
     waiting_request.start()
     assert sleep_started.wait(1)
 
-    recording = threading.Thread(target=lambda: pacer.record(100))
+    recording = threading.Thread(target=lambda: pacer.record(reservation, 100))
     recording.start()
     recording.join(0.05)
     blocked = recording.is_alive()

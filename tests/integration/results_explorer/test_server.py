@@ -82,6 +82,12 @@ def test_api_routes_are_read_only_and_return_evidence(tmp_path: Path) -> None:
             assert exc.code == 404
         else:
             raise AssertionError("unknown run id must be rejected")
+        try:
+            urllib.request.urlopen(base + "/api/compare?run=clean&a=alpha&b=beta")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+        else:
+            raise AssertionError("compare with one run must be rejected")
     finally:
         httpd.shutdown()
         thread.join(timeout=5)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from dataclasses import asdict
 from pathlib import Path
 
 from harbor_research_runner.evidence_bundle.build import build
@@ -11,7 +10,6 @@ from harbor_research_runner.evidence_bundle.manifest import verify_manifest
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.results_explorer.loader import EvidenceStore, discover
 from harbor_research_runner.statistics.completeness import completeness
-from harbor_research_runner.statistics.paired import paired_difference
 from harbor_research_runner.statistics.rates import (
     arm_rates,
     pass_rate_over_time,
@@ -102,13 +100,42 @@ def test_compare_pairs_tasks_across_bundles_by_name(tmp_path: Path) -> None:
     store = EvidenceStore([clean, retries])
 
     result = store.compare(["clean", "retries"], "alpha", "beta", "final")
-    combined = [TrialRow.from_row(row) for row in store.trials("clean") + store.trials("retries")]
-    expected = paired_difference(combined, "final", "alpha", "beta")
 
-    assert result["paired_difference"] == asdict(expected)
-    assert result["paired_difference"]["per_task"] == tuple(
-        task.__dict__ for task in expected.per_task
+    assert result["tasks"] == [
+        {"task": "task/a", "arm_a": [1, 1], "arm_b": None},
+        {"task": "task/b", "arm_a": [1, 1], "arm_b": [1, 1]},
+    ]
+    assert result["paired_difference"]["tasks"] == 1
+    assert result["paired_difference"]["unpaired_tasks"] == 1
+    assert result["paired_difference"]["per_task"] == (
+        {"task": "task/b", "rate_a": 1.0, "rate_b": 1.0, "difference": 0.0},
     )
-    assert {row["task"] for row in result["tasks"]} == {
-        task for task, _arm in task_arm_table(combined, "final")
-    }
+
+
+def test_compare_uses_only_the_selected_bundle_and_arm(tmp_path: Path) -> None:
+    bundle_a = _bundle("clean", tmp_path)
+    bundle_b = tmp_path / "bundle-b"
+    shutil.copytree(bundle_a, bundle_b)
+    manifest_path = bundle_b / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["run_id"] = "bundle-b"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    trials_path = bundle_b / "trials.jsonl"
+    rows = [json.loads(line) for line in trials_path.read_text(encoding="utf-8").splitlines()]
+    for row in rows:
+        if row["location"] == "harbor-job":
+            row["reward"] = 0.0
+            row["is_pass"] = False
+    trials_path.write_text(
+        "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    store = EvidenceStore([bundle_a, bundle_b])
+
+    result = store.compare(["clean", "bundle-b"], "alpha", "beta", "final")
+
+    assert result["tasks"] == [
+        {"task": "task/a", "arm_a": [1, 1], "arm_b": [0, 1]},
+        {"task": "task/b", "arm_a": [1, 1], "arm_b": [0, 1]},
+    ]
+    assert result["paired_difference"]["mean_difference"] == 1.0

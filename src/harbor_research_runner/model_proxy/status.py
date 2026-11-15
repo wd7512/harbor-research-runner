@@ -64,6 +64,8 @@ def classify(outcome: UpstreamOutcome) -> str:
         return _classify_429(outcome.error_body, outcome.retry_after_s)
     if status is not None and 500 <= status <= 599:
         return "server_error"
+    if status in {401, 402, 403}:
+        return "upstream_auth"
     if status is not None and 400 <= status <= 499:
         return "client_error"
     if status == 200:

@@ -79,7 +79,7 @@ def estimate_request_tokens(body: dict, max_output_tokens: int | None) -> int:
 
 
 @dataclass
-class _Reservation:
+class Reservation:
     t: float
     tokens: int
 
@@ -96,11 +96,10 @@ class Pacer:
         self._now = now
         self._sleep = sleep
         self._cooldown_until = cooldown_until
-        self._reservations: deque[_Reservation] = deque()
-        self._unrecorded: deque[_Reservation] = deque()
+        self._reservations: deque[Reservation] = deque()
         self._lock = threading.Lock()
 
-    def wait_for(self, estimated_tokens: int) -> float:
+    def wait_for(self, estimated_tokens: int) -> tuple[float, Reservation | None]:
         """Pace a reservation; concurrent waiters are not guaranteed FIFO order."""
         waited = 0.0
         cost = min(max(0, int(estimated_tokens)), self._limit) if self._limit is not None else 0
@@ -113,23 +112,22 @@ class Pacer:
                 else:
                     self._cooldown_until = None
                     if self._limit is None:
-                        return waited
+                        return waited, None
                     self._discard_expired(now)
                     used = sum(item.tokens for item in self._reservations)
                     if used + cost <= self._limit:
-                        reservation = _Reservation(now, cost)
+                        reservation = Reservation(now, cost)
                         self._reservations.append(reservation)
-                        self._unrecorded.append(reservation)
-                        return waited
+                        return waited, reservation
                     delay = self._reservations[0].t + _WINDOW_S - now
             self._sleep(delay)
             waited += delay
 
-    def record(self, actual_tokens: int) -> None:
-        """Replace the oldest estimate with actual prompt plus completion usage; pairing is FIFO."""
+    def record(self, reservation: Reservation | None, actual_tokens: int) -> None:
+        """Replace an admitted request's estimate with actual prompt plus completion usage."""
         with self._lock:
-            if self._unrecorded:
-                self._unrecorded.popleft().tokens = max(0, int(actual_tokens))
+            if reservation is not None:
+                reservation.tokens = max(0, int(actual_tokens))
 
     def _discard_expired(self, now: float) -> None:
         while self._reservations and now - self._reservations[0].t >= _WINDOW_S:

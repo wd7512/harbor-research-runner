@@ -30,6 +30,7 @@ from harbor_research_runner.harbor_adapter.commands import (
     run_command,
     write_job_config,
 )
+from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.harness.agents import agent_settings
 from harbor_research_runner.job_config.job_file import load_job
 from harbor_research_runner.job_config.model_cards import ModelCard
@@ -762,7 +763,7 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
                 tasks=[
                     {
                         "name": study_task.name,
-                        "digest": "0" * 64,
+                        "digest": task_content_hash(study_task),
                         "memory_mb": 512,
                         "oracle_reward": 1.0,
                         "agent_s": 1.0,

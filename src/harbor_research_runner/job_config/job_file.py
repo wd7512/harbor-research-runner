@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -164,6 +164,10 @@ def load_job(path: Path) -> Job:
         raise JobFileError("task_order must be slowest_first or as_listed")
     task_order = task_order_value
     tasks = _task_source(_required(data, "tasks"))
+    if tasks.kind == "path" and tasks.path is not None:
+        task_path = Path(tasks.path)
+        if not task_path.is_absolute():
+            tasks = replace(tasks, path=str((path.parent / task_path).resolve()))
     machine_check = Path(_nonempty_string(_required(data, "machine_check"), "machine_check"))
     if not machine_check.is_absolute():
         machine_check = path.parent / machine_check

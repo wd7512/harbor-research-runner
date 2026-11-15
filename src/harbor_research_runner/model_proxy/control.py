@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 
 from harbor_research_runner.model_proxy.ledger import LedgerUnavailable, LedgerWriter
@@ -12,6 +13,8 @@ from harbor_research_runner.records.proxy_ledger import (
     RequestStart,
     parse_row,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TrialClosed(RuntimeError):
@@ -29,14 +32,19 @@ class TrialRegistry:
         self._replay(ledger.history())
 
     def _replay(self, history: jsonl.ReadResult) -> None:
-        if history.bad_lines or history.torn_last_line:
-            raise LedgerUnavailable("proxy ledger replay failed")
+        damaged_lines = list(history.bad_lines)
+        if history.torn_last_line:
+            damaged_lines.append(len(history.rows) + len(history.bad_lines) + 1)
+        if damaged_lines:
+            logger.warning(
+                "proxy ledger replay skipped %d damaged line(s): %s",
+                len(damaged_lines),
+                ", ".join(str(line) for line in sorted(damaged_lines)),
+            )
         try:
             rows = [parse_row(row) for row in history.rows]
         except ValueError as exc:
             raise LedgerUnavailable("proxy ledger replay failed") from exc
-        if [row.get("seq") for row in history.rows] != list(range(1, len(history.rows) + 1)):
-            raise LedgerUnavailable("proxy ledger replay failed")
         for parsed in rows:
             if isinstance(parsed, Open):
                 if parsed.trial not in self._closed:

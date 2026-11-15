@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from harbor.publisher.packager import Packager
 
 from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
@@ -725,6 +726,66 @@ def test_machine_check_matches_fails_when_check_differs(
 
 def test_machine_check_matches_passes_for_matching_check(tmp_path: Path) -> None:
     result = _by_name(_run(tmp_path), "machine_check_matches")
+
+    assert result.ok
+
+
+def test_machine_check_matches_refuses_when_path_task_content_changes(tmp_path: Path) -> None:
+    task_root = tmp_path / "tasks"
+    task_dir = task_root / "task-a"
+    task_dir.mkdir(parents=True)
+    instruction = task_dir / "instruction.md"
+    instruction.write_text("original instruction", encoding="utf-8")
+    digest, _ = Packager.compute_content_hash(task_dir)
+    check = _machine_check(
+        task_source={"path": str(task_root)},
+        included=["task-a"],
+        tasks=[{"name": "task-a", "memory_mb": 512, "digest": f"sha256:{digest}"}],
+    )
+    job = replace(
+        _job(include=("task-a",)),
+        tasks=TaskSource("path", None, str(task_root), None, None, ("task-a",), ()),
+    )
+    instruction.write_text("edited instruction", encoding="utf-8")
+
+    result = _by_name(
+        _run(
+            tmp_path,
+            job=job,
+            deps=_deps(tmp_path, read_machine_check=lambda _path: check),
+        ),
+        "machine_check_matches",
+    )
+
+    assert not result.ok
+    assert "task-a" in result.detail
+    assert "rerun `hrr check-machine`" in result.detail
+
+
+def test_machine_check_matches_passes_for_unchanged_path_task(tmp_path: Path) -> None:
+    task_root = tmp_path / "tasks"
+    task_dir = task_root / "task-a"
+    task_dir.mkdir(parents=True)
+    (task_dir / "instruction.md").write_text("original instruction", encoding="utf-8")
+    digest, _ = Packager.compute_content_hash(task_dir)
+    check = _machine_check(
+        task_source={"path": str(task_root)},
+        included=["task-a"],
+        tasks=[{"name": "task-a", "memory_mb": 512, "digest": f"sha256:{digest}"}],
+    )
+    job = replace(
+        _job(include=("task-a",)),
+        tasks=TaskSource("path", None, str(task_root), None, None, ("task-a",), ()),
+    )
+
+    result = _by_name(
+        _run(
+            tmp_path,
+            job=job,
+            deps=_deps(tmp_path, read_machine_check=lambda _path: check),
+        ),
+        "machine_check_matches",
+    )
 
     assert result.ok
 

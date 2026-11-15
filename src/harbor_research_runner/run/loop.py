@@ -27,6 +27,7 @@ from harbor_research_runner.records.proxy_control import ProxyConfig, session_id
 from harbor_research_runner.records.proxy_control import write as write_proxy_config
 from harbor_research_runner.records.run_events import (
     Finish,
+    Halt,
     HarborExit,
     HarborStart,
     Launch,
@@ -354,7 +355,7 @@ def slots_status(
     valid_counts: dict[tuple[str, str], int] = {}
     set_aside_counts: dict[tuple[str, str], int] = {}
     for event in set_aside_events:
-        if event.get("type") == "set_aside":
+        if event.get("type") == "set_aside" and event.get("reason") != "deferred":
             slot = (event["task"], event["arm"])
             set_aside_counts[slot] = set_aside_counts.get(slot, 0) + 1
 
@@ -516,12 +517,22 @@ def resume_run(
     try:
         run_dir = runs_dir / run_id
         session = RunSession.load(run_dir, environment)
+        session.tool = deps.tool
         session.stop_launching_at = stop_launching_at
         session.stop_launching_at_epoch = _deadline_timestamp(stop_launching_at)
         log_handler = _attach_run_log(run_dir)
         events = jsonl.read_rows(run_dir / "run-events.jsonl").rows
         if events and events[-1].get("type") == "finish":
             logger.error("resume refused because run %s is already finished", run_id)
+            return RunOutcome(1, run_dir)
+        if not any(
+            row.get("type") == "harbor_start" and row.get("job") == "main" for row in events
+        ):
+            logger.error(
+                "resume refused because run %s stopped before its first main pass; "
+                "start a new run with hrr run <job file>",
+                run_id,
+            )
             return RunOutcome(1, run_dir)
         manifest = load_manifest(manifest_path)
         host = deps.host()
@@ -564,9 +575,7 @@ def resume_run(
         status = _current_slots_status(session, planned)
         if status.to_set_aside:
             _set_aside_trials(session, status, deps.now)
-        trials_left = bool(status.incomplete) and len(job_folder.trial_folders(main_dir)) < (
-            len(planned) * session.job.repetitions
-        )
+        trials_left = _trials_left(session, status, planned)
         if not status.to_set_aside and not trials_left:
             result = _finish(session, status, deps)
             services_started = False
@@ -634,13 +643,24 @@ def _pass_loop(
         session.event(HarborExit(deps.now(), pass_number, returncode, "main"))
         if result.kind == "halted":
             judged = watch.judged_trials(session.run_dir)
-            watch.judge_all_remaining(session, session.run_dir / "harbor-job", judged, deps.now())
+            watch.judge_all_remaining(
+                session,
+                session.run_dir / "harbor-job",
+                judged,
+                deps.now(),
+                halt_reason=result.halt_reason,
+            )
             deps.stop_services(session)
             return 2
         judged = watch.judged_trials(session.run_dir)
         watch.judge_all_remaining(session, session.run_dir / "harbor-job", judged, deps.now())
         status = _current_slots_status(session, planned)
         if not status.to_set_aside:
+            if _trials_left(session, status, planned):
+                detail = f"Harbor exited with code {returncode}; planned trials remain"
+                session.event(Halt(deps.now(), "harbor_exit", detail))
+                deps.stop_services(session)
+                return 2
             return _finish(session, status, deps)
         _set_aside_trials(session, status, deps.now)
         pass_number += 1
@@ -656,6 +676,13 @@ def _current_slots_status(session, planned: list[tuple[str, str]]) -> SlotsStatu
         events,
         in_job,
         session.limits,
+    )
+
+
+def _trials_left(session, status: SlotsStatus, planned: list[tuple[str, str]]) -> bool:
+    main_dir = session.run_dir / "harbor-job"
+    return bool(status.incomplete) and len(job_folder.trial_folders(main_dir)) < (
+        len(planned) * session.job.repetitions
     )
 
 
