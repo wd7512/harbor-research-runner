@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 from harbor_research_runner.evidence_bundle.build import build
-from harbor_research_runner.evidence_bundle.verify import verify
+from harbor_research_runner.evidence_bundle.verify import Problem, verify
 from harbor_research_runner.records.manifest import write_manifest
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "run_folders"
@@ -42,7 +42,7 @@ def _refresh_manifest(bundle: Path) -> None:
 
 def _host_sample_bundle(
     tmp_path: Path,
-    samples: list[dict],
+    samples: list[dict | bytes],
     *,
     start: object = 100,
     end: object = 110,
@@ -73,30 +73,79 @@ def _host_sample_bundle(
     events = _rows(events_path)
     events.append({"type": "harbor_start", "t": 1, "pass": 0})
     _write_rows(events_path, events)
-    resource_rows = [
-        {
-            "type": "sample",
-            "t": 100,
-            "mem_available_mb": 1024,
-            "swapped_out_pages": 0,
-            "disk_free_gb": 10.0,
-            "load1": 0.1,
-            "trial_containers": 1,
-            "docker_ok": True,
-            **sample,
-        }
-        for sample in samples
-    ]
-    resource_data = "".join(json.dumps(sample, sort_keys=True) + "\n" for sample in resource_rows)
-    (bundle / "resource-stats.jsonl.gz").write_bytes(
-        gzip.compress(resource_data.encode("utf-8"), mtime=0)
+    (bundle / "docker-oom-events.jsonl").write_text("", encoding="utf-8")
+    (bundle / "memory-watch.jsonl").write_text("", encoding="utf-8")
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report_path.write_text(
+        report.replace(
+            "| Tokens spent on set-aside trials |",
+            "| Malformed Docker OOM events | 0 |\n"
+            "| Malformed memory-watch samples | 0 |\n"
+            "| Tokens spent on set-aside trials |",
+        ),
+        encoding="utf-8",
     )
+    resource_lines = []
+    malformed_lines = 0
+    for sample in samples:
+        if isinstance(sample, bytes):
+            resource_lines.append(sample)
+            malformed_lines += 1
+        else:
+            resource_lines.append(
+                json.dumps(
+                    {
+                        "type": "sample",
+                        "t": 100,
+                        "mem_available_mb": 1024,
+                        "swapped_out_pages": 0,
+                        "disk_free_gb": 10.0,
+                        "load1": 0.1,
+                        "trial_containers": 1,
+                        "docker_ok": True,
+                        **sample,
+                    },
+                    sort_keys=True,
+                ).encode("utf-8")
+            )
+    resource_data = b"\n".join(resource_lines) + (b"\n" if resource_lines else b"")
+    (bundle / "resource-stats.jsonl.gz").write_bytes(gzip.compress(resource_data, mtime=0))
+    if malformed_lines:
+        report_path = bundle / "report.md"
+        report = report_path.read_text(encoding="utf-8")
+        report_path.write_text(
+            report.replace(
+                "| Malformed resource samples | 0 |",
+                f"| Malformed resource samples | {malformed_lines} |",
+            ),
+            encoding="utf-8",
+        )
     _refresh_manifest(bundle)
     return bundle
 
 
 def _problem_ids(problems) -> list[str]:
     return [problem.invariant for problem in problems]
+
+
+def _assert_host_sample_result(bundle: Path, damaged: bool) -> None:
+    trials = _rows(bundle / "trials.jsonl")
+    trial = next(row["trial"] for row in trials if row["location"] == "harbor-job")
+    expected = (
+        [
+            Problem(
+                "host_samples_damaged",
+                trial,
+                {"measured": False, "unmeasured_reason": "host_samples_damaged"},
+                {"measured": True, "unmeasured_reason": None},
+            )
+        ]
+        if damaged
+        else []
+    )
+
+    assert verify(bundle) == expected
 
 
 def test_clean_and_retry_bundles_verify(tmp_path: Path) -> None:
@@ -174,18 +223,98 @@ def test_resource_sample_count_disagreement_is_reported(tmp_path: Path) -> None:
     assert "resource_samples" in _problem_ids(verify(bundle))
 
 
-def test_sampler_interval_checks_trial_sample_gaps(tmp_path: Path) -> None:
+def test_zero_sampler_interval_is_reported(tmp_path: Path) -> None:
     bundle = _bundle("clean", tmp_path)
-    (bundle / "resource-stats.jsonl.gz").write_bytes(
-        gzip.compress(b'{"type":"sample","t":1767225600}\n{"type":"sample","t":1767225640}\n')
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["sampler_interval_s"] = 0
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [
+        Problem("sampler_interval", "run-metadata.json", "positive number", 0)
+    ]
+
+
+def test_boolean_sampler_interval_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["sampler_interval_s"] = True
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [
+        Problem("sampler_interval", "run-metadata.json", "positive number", True)
+    ]
+
+
+def test_default_sampler_interval_controls_host_sample_gaps(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 90}, {"type": "sample", "t": 121}],
     )
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    del metadata["sampler_interval_s"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _refresh_manifest(bundle)
+
+    _assert_host_sample_result(bundle, damaged=True)
+
+
+def test_invalid_sampler_interval_uses_ten_second_fallback(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 90}, {"type": "sample", "t": 121}],
+    )
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["sampler_interval_s"] = 0
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _refresh_manifest(bundle)
+
+    problems = verify(bundle)
+    assert Problem("sampler_interval", "run-metadata.json", "positive number", 0) in problems
+    assert any(problem.invariant == "host_samples_damaged" for problem in problems)
+
+
+def test_harbor_start_reports_missing_telemetry_files(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
     events_path = bundle / "run-events.jsonl"
     events = _rows(events_path)
     events.append({"type": "harbor_start", "t": 1, "pass": 0})
     _write_rows(events_path, events)
+    missing = ["resource-stats.jsonl.gz", "docker-oom-events.jsonl", "memory-watch.jsonl"]
+    for name in missing:
+        (bundle / name).unlink(missing_ok=True)
     _refresh_manifest(bundle)
 
-    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+    assert verify(bundle) == [
+        Problem("telemetry_present", name, "present", "missing") for name in missing
+    ]
+
+
+def test_multiple_malformed_resource_rows_are_counted(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    (bundle / "resource-stats.jsonl.gz").write_bytes(gzip.compress(b"[]\n1\n", mtime=0))
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report_path.write_text(
+        report.replace("| Malformed resource samples | 0 |", "| Malformed resource samples | 2 |")
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
+
+
+def test_sampler_interval_checks_trial_sample_gaps(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [{"type": "sample", "t": 80}, {"type": "sample", "t": 140}],
+    )
+
+    _assert_host_sample_result(bundle, damaged=True)
 
 
 def test_agent_only_trial_uses_agent_end_for_host_samples(tmp_path: Path) -> None:
@@ -196,7 +325,43 @@ def test_agent_only_trial_uses_agent_end_for_host_samples(tmp_path: Path) -> Non
         verifier_finished=None,
     )
 
-    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=True)
+
+
+def test_verifier_phase_host_sample_gap_is_reported(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [
+            {"type": "sample", "t": 100},
+            {"type": "sample", "t": 105},
+            {"type": "sample", "t": 106},
+            {"type": "sample", "t": 140},
+        ],
+        end=105,
+        verifier_started=106,
+        verifier_finished=150,
+    )
+
+    _assert_host_sample_result(bundle, damaged=True)
+
+
+def test_verifier_phase_bad_host_sample_is_reported(tmp_path: Path) -> None:
+    bundle = _host_sample_bundle(
+        tmp_path,
+        [
+            {"type": "sample", "t": 100},
+            {"type": "sample", "t": 105},
+            {"type": "sample", "t": 106},
+            b'{"type":',
+            {"type": "sample", "t": 140},
+            {"type": "sample", "t": 150},
+        ],
+        end=105,
+        verifier_started=106,
+        verifier_finished=150,
+    )
+
+    _assert_host_sample_result(bundle, damaged=True)
 
 
 def test_host_samples_are_sorted_before_gap_check(tmp_path: Path) -> None:
@@ -205,7 +370,7 @@ def test_host_samples_are_sorted_before_gap_check(tmp_path: Path) -> None:
         [{"type": "sample", "t": 140}, {"type": "sample", "t": 80}],
     )
 
-    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=True)
 
 
 def test_host_sample_gap_at_three_intervals_is_accepted(tmp_path: Path) -> None:
@@ -214,7 +379,7 @@ def test_host_sample_gap_at_three_intervals_is_accepted(tmp_path: Path) -> None:
         [{"type": "sample", "t": 90}, {"type": "sample", "t": 120}],
     )
 
-    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=False)
 
 
 def test_host_sample_gap_before_trial_window_is_ignored(tmp_path: Path) -> None:
@@ -223,7 +388,7 @@ def test_host_sample_gap_before_trial_window_is_ignored(tmp_path: Path) -> None:
         [{"type": "sample", "t": 50}, {"type": "sample", "t": 90}],
     )
 
-    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=False)
 
 
 def test_host_sample_gap_after_trial_window_is_ignored(tmp_path: Path) -> None:
@@ -232,7 +397,7 @@ def test_host_sample_gap_after_trial_window_is_ignored(tmp_path: Path) -> None:
         [{"type": "sample", "t": 120}, {"type": "sample", "t": 160}],
     )
 
-    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=False)
 
 
 def test_host_sample_gap_overlapping_trial_end_is_damaged(tmp_path: Path) -> None:
@@ -241,7 +406,7 @@ def test_host_sample_gap_overlapping_trial_end_is_damaged(tmp_path: Path) -> Non
         [{"type": "sample", "t": 110}, {"type": "sample", "t": 150}],
     )
 
-    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=True)
 
 
 def test_host_sample_gap_overlapping_trial_start_is_damaged(tmp_path: Path) -> None:
@@ -250,7 +415,7 @@ def test_host_sample_gap_overlapping_trial_start_is_damaged(tmp_path: Path) -> N
         [{"type": "sample", "t": 60}, {"type": "sample", "t": 100}],
     )
 
-    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=True)
 
 
 def test_host_samples_ignore_boolean_timestamps(tmp_path: Path) -> None:
@@ -263,7 +428,7 @@ def test_host_samples_ignore_boolean_timestamps(tmp_path: Path) -> None:
         ],
     )
 
-    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=False)
 
 
 def test_host_sample_rows_with_other_types_do_not_cover_the_window(tmp_path: Path) -> None:
@@ -272,19 +437,19 @@ def test_host_sample_rows_with_other_types_do_not_cover_the_window(tmp_path: Pat
         [{"type": "event", "t": 100}, {"type": "event", "t": 110}],
     )
 
-    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=True)
 
 
 def test_missing_host_samples_damage_measured_trial(tmp_path: Path) -> None:
     bundle = _host_sample_bundle(tmp_path, [])
 
-    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=True)
 
 
 def test_invalid_trial_window_does_not_report_host_damage(tmp_path: Path) -> None:
     bundle = _host_sample_bundle(tmp_path, [], start=True)
 
-    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=False)
 
 
 def test_invalid_trial_end_does_not_report_host_damage(tmp_path: Path) -> None:
@@ -296,7 +461,7 @@ def test_invalid_trial_end_does_not_report_host_damage(tmp_path: Path) -> None:
         verifier_finished=None,
     )
 
-    assert "host_samples_damaged" not in _problem_ids(verify(bundle))
+    _assert_host_sample_result(bundle, damaged=False)
 
 
 def test_trial_verdict_disagreement_is_reported(tmp_path: Path) -> None:
@@ -304,8 +469,68 @@ def test_trial_verdict_disagreement_is_reported(tmp_path: Path) -> None:
     rows = _rows(bundle / "trials.jsonl")
     rows[0]["measured"] = False
     _write_rows(bundle / "trials.jsonl", rows)
+    verdict = next(
+        event
+        for event in _rows(bundle / "run-events.jsonl")
+        if event.get("type") == "trial_verdict" and event["trial"] == rows[0]["trial"]
+    )
+    fields = ("valid", "measured", "reason", "unmeasured_reason")
+    expected = {key: verdict.get(key) for key in fields}
+    actual = {key: rows[0].get(key) for key in fields}
     _refresh_manifest(bundle)
-    assert _problem_ids(verify(bundle)) == ["trial_identity"]
+    assert verify(bundle) == [Problem("trial_identity", rows[0]["trial"], expected, actual)]
+
+
+def test_duplicate_trial_row_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    rows = _rows(bundle / "trials.jsonl")
+    duplicate = dict(rows[0])
+    duplicate["valid"] = False
+    rows.append(duplicate)
+    _write_rows(bundle / "trials.jsonl", rows)
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [Problem("trial_identity", rows[0]["trial"], 1, 2)]
+
+
+def test_missing_trial_verdict_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    trial = _rows(bundle / "trials.jsonl")[0]["trial"]
+    events = _rows(bundle / "run-events.jsonl")
+    events = [
+        event
+        for event in events
+        if not (event.get("type") == "trial_verdict" and event["trial"] == trial)
+    ]
+    _write_rows(bundle / "run-events.jsonl", events)
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [Problem("trial_identity", trial, 1, 0)]
+
+
+def test_duplicate_trial_verdict_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    events = _rows(bundle / "run-events.jsonl")
+    verdict = next(event for event in events if event.get("type") == "trial_verdict")
+    events.append(dict(verdict))
+    _write_rows(bundle / "run-events.jsonl", events)
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [Problem("trial_identity", verdict["trial"], 1, 2)]
+
+
+def test_verdict_without_trial_row_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    events = _rows(bundle / "run-events.jsonl")
+    verdict = dict(next(event for event in events if event.get("type") == "trial_verdict"))
+    verdict["trial"] = "unknown-trial"
+    events.append(verdict)
+    _write_rows(bundle / "run-events.jsonl", events)
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [
+        Problem("trial_identity", "unknown-trial", "trial row", "verdict without trial row")
+    ]
 
 
 def test_telemetry_damage_and_null_peak_verify_from_memory_watch_copy(tmp_path: Path) -> None:
@@ -382,6 +607,69 @@ def test_telemetry_damage_and_null_peak_verify_from_memory_watch_copy(tmp_path: 
     assert verify(bundle) == []
 
 
+def test_malformed_oom_event_is_checked_against_trial_windows(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    harbor_trials = [row for row in trials if row["location"] == "harbor-job"]
+    assert len(harbor_trials) >= 4
+    windows = [
+        (90, 95, 96, 100),
+        (110, 105, 106, 120),
+        (110.00000005, 105, 106, 120),
+        (200, 205, 206, 210),
+    ]
+    damaged_trials = set()
+    for row in trials:
+        row.update(
+            agent_started_t=None,
+            agent_finished_t=None,
+            verifier_started_t=None,
+            verifier_finished_t=None,
+        )
+    for row, (start, agent_end, verifier_start, verifier_end) in zip(
+        harbor_trials, windows, strict=True
+    ):
+        row.update(
+            agent_started_t=start,
+            agent_finished_t=agent_end,
+            verifier_started_t=verifier_start,
+            verifier_finished_t=verifier_end,
+        )
+        if row is harbor_trials[0] or row is harbor_trials[1]:
+            row.update(measured=False, unmeasured_reason="telemetry_damaged", peak_memory_mb=None)
+            damaged_trials.add(row["trial"])
+    _write_rows(trials_path, trials)
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    for event in events:
+        if event.get("trial") in damaged_trials:
+            event.update(measured=False, unmeasured_reason="telemetry_damaged")
+    _write_rows(events_path, events)
+    oom_path = bundle / "docker-oom-events.jsonl"
+    oom_path.write_text(
+        json.dumps({"type": "oom", "timeNano": 100_000_000_000})
+        + '\n{"type":'
+        + "\n"
+        + json.dumps({"type": "oom", "timeNano": 110_000_000_000})
+        + "\n",
+        encoding="utf-8",
+    )
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report = report.replace("| Unmeasured trials | 0 |", "| Unmeasured trials | 2 |")
+    report_path.write_text(
+        report.replace(
+            "| Tokens spent on set-aside trials |",
+            "| Malformed Docker OOM events | 1 |\n| Tokens spent on set-aside trials |",
+        ),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
+
+
 def test_set_aside_trial_must_be_invalid(tmp_path: Path) -> None:
     bundle = _bundle("retries", tmp_path)
     rows = _rows(bundle / "trials.jsonl")
@@ -393,7 +681,7 @@ def test_set_aside_trial_must_be_invalid(tmp_path: Path) -> None:
     next(event for event in events if event.get("trial") == row["trial"])["valid"] = True
     _write_rows(events_path, events)
     _refresh_manifest(bundle)
-    assert _problem_ids(verify(bundle)) == ["locations"]
+    assert verify(bundle) == [Problem("locations", row["trial"], False, True)]
 
 
 def test_arm_outside_metadata_arms_is_reported(tmp_path: Path) -> None:
@@ -403,7 +691,9 @@ def test_arm_outside_metadata_arms_is_reported(tmp_path: Path) -> None:
     row["arm"] = "arm/missing"
     _write_rows(bundle / "trials.jsonl", rows)
     _refresh_manifest(bundle)
-    assert _problem_ids(verify(bundle)) == ["task_set"]
+    metadata = json.loads((bundle / "run-metadata.json").read_text(encoding="utf-8"))
+    arm_names = sorted(arm["label"] for arm in metadata["arms"])
+    assert verify(bundle) == [Problem("task_set", row["trial"], arm_names, "arm/missing")]
 
 
 def test_report_slot_counts_are_recomputed(tmp_path: Path) -> None:
@@ -426,7 +716,14 @@ def test_finish_counts_must_match_trials(tmp_path: Path) -> None:
     events.append({"type": "finish", "exit_code": 0, "slots_complete": 3, "slots_incomplete": 1})
     _write_rows(events_path, events)
     _refresh_manifest(bundle)
-    assert _problem_ids(verify(bundle)) == ["finish_agreement"]
+    assert verify(bundle) == [
+        Problem(
+            "finish_agreement",
+            "finish",
+            {"slots_complete": 4, "slots_incomplete": 0},
+            {"slots_complete": 3, "slots_incomplete": 1},
+        )
+    ]
 
 
 def test_set_aside_cap_excludes_deferred_events(tmp_path: Path) -> None:
@@ -457,7 +754,7 @@ def test_set_aside_cap_excludes_deferred_events(tmp_path: Path) -> None:
     )
     _write_rows(events_path, events)
     _refresh_manifest(bundle)
-    assert _problem_ids(verify(bundle)) == ["set_aside_cap"]
+    assert verify(bundle) == [Problem("set_aside_cap", "task/a/alpha", 0, 1)]
 
 
 def test_memory_peak_must_match_samples(tmp_path: Path) -> None:
@@ -473,7 +770,9 @@ def test_memory_peak_must_match_samples(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     _refresh_manifest(bundle)
-    assert set(_problem_ids(verify(bundle))) == {"report_agreement", "memory"}
+    problems = verify(bundle)
+    assert _problem_ids(problems) == ["report_agreement", "memory"]
+    assert Problem("memory", rows[0]["trial"], 42, None) in problems
 
 
 def test_proxy_usage_must_match_request_rows(tmp_path: Path) -> None:
@@ -482,7 +781,21 @@ def test_proxy_usage_must_match_request_rows(tmp_path: Path) -> None:
     rows[0]["requests"] += 1
     _write_rows(bundle / "trials.jsonl", rows)
     _refresh_manifest(bundle)
-    assert _problem_ids(verify(bundle)) == ["proxy_accounting"]
+    compressed = gzip.decompress((bundle / "proxy-requests.jsonl.gz").read_bytes()).decode("utf-8")
+    requests = [json.loads(line) for line in compressed.splitlines()]
+    completed = [
+        request
+        for request in requests
+        if request["trial"] == rows[0]["trial"] and request.get("upstream_status") is not None
+    ]
+    expected = {
+        "requests": len(completed),
+        "prompt_tokens": sum(request.get("prompt_tokens") or 0 for request in completed),
+        "completion_tokens": sum(request.get("completion_tokens") or 0 for request in completed),
+        "cached_read_tokens": sum(request.get("cached_read_tokens") or 0 for request in completed),
+    }
+    actual = {key: rows[0].get(key) for key in expected}
+    assert verify(bundle) == [Problem("proxy_accounting", rows[0]["trial"], expected, actual)]
 
 
 def test_measured_trial_cannot_have_unfinished_request(tmp_path: Path) -> None:
@@ -505,4 +818,4 @@ def test_measured_trial_cannot_have_unfinished_request(tmp_path: Path) -> None:
     raw = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows).encode("utf-8")
     requests_path.write_bytes(gzip.compress(raw, mtime=0))
     _refresh_manifest(bundle)
-    assert _problem_ids(verify(bundle)) == ["measured_closed"]
+    assert verify(bundle) == [Problem("measured_closed", trial, "no unfinished requests", 1)]
