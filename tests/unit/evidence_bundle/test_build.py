@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from harbor_research_runner.evidence_bundle.build import build, merged_requests
+from harbor_research_runner.evidence_bundle.build import _gzip, build, merged_requests
 from harbor_research_runner.records.proxy_ledger import RequestEnd, RequestStart
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "run_folders"
@@ -78,6 +78,29 @@ def test_build_is_byte_deterministic_for_both_run_shapes(tmp_path: Path) -> None
         assert build(run_dir, second, {}) == 0
         assert _hashes(first) == _hashes(second)
         assert (first / "manifest.json").is_file()
+
+
+def test_manifest_lists_the_contract_file_names(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    (run_dir / "resource-stats.jsonl").write_text('{"type":"sample"}\n', encoding="utf-8")
+    (run_dir / "docker-oom-events.jsonl").write_text('{"type":"oom"}\n', encoding="utf-8")
+    (run_dir / "memory-watch.jsonl").write_text('{"type":"sample"}\n', encoding="utf-8")
+    output = tmp_path / "bundle"
+
+    assert build(run_dir, output, {}) == 0
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    names = {item["name"] for item in manifest["files"]}
+
+    assert {
+        "run-events.jsonl",
+        "run-metadata.json",
+        "report.md",
+        "trials.jsonl",
+        "proxy-requests.jsonl.gz",
+        "resource-stats.jsonl.gz",
+        "docker-oom-events.jsonl",
+        "memory-watch.jsonl",
+    } <= names
 
 
 def test_build_copies_docker_oom_events(tmp_path: Path) -> None:
@@ -227,6 +250,69 @@ def test_build_ignores_malformed_ledger_accounting_fields(tmp_path: Path) -> Non
 def test_merged_requests_keeps_a_start_without_an_end() -> None:
     start = _start()
     assert merged_requests([start]) == [{**start, "upstream_status": None}]
+
+
+def test_merged_request_preserves_end_fields_and_time() -> None:
+    start = _start()
+    end = _end(seq=5, t=2.0)
+
+    assert merged_requests([start, end]) == [
+        {
+            **start,
+            **{key: value for key, value in end.items() if key not in {"type", "seq", "t"}},
+            "t_end": 2.0,
+        }
+    ]
+
+
+def test_gzip_has_zero_mtime() -> None:
+    compressed = _gzip(b"evidence")
+
+    assert int.from_bytes(compressed[4:8], "little") == 0
+
+
+def test_build_creates_missing_output_parent(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    output = tmp_path / "new-parent" / "nested" / "bundle"
+
+    assert build(run_dir, output, {}) == 0
+    assert (output / "manifest.json").is_file()
+
+
+def test_build_replaces_existing_bundle(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    output = tmp_path / "bundle"
+    output.mkdir()
+    (output / "old.txt").write_text("old", encoding="utf-8")
+
+    assert build(run_dir, output, {}) == 0
+    assert (output / "manifest.json").is_file()
+    assert not (output / "old.txt").exists()
+    assert not list(tmp_path.glob(".bundle.*.previous"))
+
+
+def test_build_rejects_machine_check_digest_mismatch(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    (run_dir / "machine-check.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        build(run_dir, tmp_path / "bundle", {})
+
+
+def test_build_counts_and_copies_malformed_oom_and_memory_rows(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    oom = b'{"type":"oom"}\nnot-json\n'
+    memory = b'{"type":"sample"}\nnot-json\n'
+    (run_dir / "docker-oom-events.jsonl").write_bytes(oom)
+    (run_dir / "memory-watch.jsonl").write_bytes(memory)
+    output = tmp_path / "bundle"
+
+    assert build(run_dir, output, {}) == 0
+    assert (output / "docker-oom-events.jsonl").read_bytes() == oom
+    assert (output / "memory-watch.jsonl").read_bytes() == memory
+    report = (output / "report.md").read_text(encoding="utf-8")
+    assert "| Malformed Docker OOM events | 1 |" in report
+    assert "| Malformed memory-watch samples | 1 |" in report
 
 
 def test_merged_requests_ignores_malformed_accounting_fields() -> None:
