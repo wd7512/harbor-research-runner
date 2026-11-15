@@ -37,8 +37,12 @@ def upstream_reason(ledger_rows: list[dict], limits: Limits) -> str | None:
         return "upstream_errors"
 
     ok_rows = [row for row in ends if row.get("upstream_status") == "ok" and row["duration_s"] > 0]
-    if ok_rows and any((row.get("completion_tokens") or 0) > 0 for row in ok_rows):
-        completion_tokens = sum(row.get("completion_tokens") or 0 for row in ok_rows)
+    if (
+        ok_rows
+        and all(row.get("completion_tokens") is not None for row in ok_rows)
+        and any(row["completion_tokens"] > 0 for row in ok_rows)
+    ):
+        completion_tokens = sum(row["completion_tokens"] for row in ok_rows)
         duration_s = sum(row["duration_s"] for row in ok_rows)
         if completion_tokens / duration_s < limits.trial_output_rate_min:
             return "upstream_slow"

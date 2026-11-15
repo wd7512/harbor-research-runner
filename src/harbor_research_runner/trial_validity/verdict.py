@@ -169,6 +169,12 @@ def _measurement(
 
     if not has_open and (has_result or starts or ends):
         return False, "no_open_row"
+    if any(
+        row.get("upstream_status") == "ok"
+        and (row.get("prompt_tokens") is None or row.get("completion_tokens") is None)
+        for row in ends
+    ):
+        return False, "usage_incomplete"
     return True, None
 
 
