@@ -57,7 +57,8 @@ Simplification candidates (class 5):
 These mutations are reachable only through private helpers or active lifecycle state that public entry points cannot supply with the permitted fakes:
 
 - `x__deadline_timestamp__mutmut_2`: its internal timestamp is observable only after a pass loop begins with lifecycle state unavailable to the public fake setup.
-- `xǁRunSessionǁstop_services__mutmut_21`, `xǁRunSessionǁstop_services__mutmut_30`: active process cleanup requires private process state installed by `start_services`.
+- `xǁRunSessionǁstop_services__mutmut_21`: active sampler cleanup requires private process state installed by `start_services`.
+- `xǁRunSessionǁstop_services__mutmut_30`: active proxy cleanup requires private process state installed by `start_services`.
 - `x__pass_loop__mutmut_2`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
 - `x__pass_loop__mutmut_4`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
 - `x__pass_loop__mutmut_5`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
