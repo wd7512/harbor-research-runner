@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 
-def write_manifest(out_dir: Path, tool_version: str, run_id: str) -> None:
+def write_manifest(out_dir: Path, tool_version: str, tool_commit: str, run_id: str) -> None:
     files = []
     for path in sorted(item for item in out_dir.rglob("*") if item.is_file()):
         if path.name == "manifest.json" and path.parent == out_dir:
@@ -18,7 +18,12 @@ def write_manifest(out_dir: Path, tool_version: str, run_id: str) -> None:
                 "sha256": hashlib.sha256(data).hexdigest(),
             }
         )
-    manifest = {"tool_version": tool_version, "run_id": run_id, "files": files}
+    manifest = {
+        "tool_version": tool_version,
+        "tool_commit": tool_commit,
+        "run_id": run_id,
+        "files": files,
+    }
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
     )

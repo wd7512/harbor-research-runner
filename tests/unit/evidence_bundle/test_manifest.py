@@ -25,6 +25,9 @@ def test_manifest_reports_a_changed_file(tmp_path: Path) -> None:
     run_dir = _copy_run("clean", tmp_path)
     output = tmp_path / "bundle"
     assert build(run_dir, output, {}) == 0
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["tool_version"] == "0"
+    assert manifest["tool_commit"] == "0"
     assert verify_manifest(output) == []
     trials = output / "trials.jsonl"
     trials.write_bytes(trials.read_bytes() + b" ")

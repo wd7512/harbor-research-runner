@@ -3,7 +3,7 @@
 ## Run
 
 - Run id: retries
-- Tool version: 0
+- Tool version: 0 (commit 0)
 - Model: fixture/model
 - Task source: fixture
 - Tasks: 2 run; 2 excluded by the machine check (task/d, task/e)
