@@ -134,7 +134,7 @@ def test_relay_shapes_groq_request_before_pacing_and_body_capture(tmp_path):
 
     clock = Clock()
     pacer = Pacer(100, clock.now, clock.sleep)
-    assert pacer.wait_for(40) == 0.0
+    assert pacer.wait_for(40)[0] == 0.0
     upstream = FakeUpstream(["ok"], model="served-model")
     base_url = upstream.start()
     card = {
@@ -263,7 +263,7 @@ def test_relay_pacing_estimate_uses_card_cap_without_payload_limit(tmp_path):
 
     clock = Clock()
     pacer = Pacer(80, clock.now, clock.sleep)
-    assert pacer.wait_for(50) == 0.0
+    assert pacer.wait_for(50)[0] == 0.0
     upstream = FakeUpstream(["ok"], model="served-model")
     base_url = upstream.start()
     card = {**_CARD, "request": {"max_tokens_cap": 40}}

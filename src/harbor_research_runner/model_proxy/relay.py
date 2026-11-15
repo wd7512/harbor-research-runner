@@ -23,7 +23,7 @@ from harbor_research_runner.model_proxy.chars import (
     prompt_chars_of_payload,
 )
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
-from harbor_research_runner.model_proxy.pacing import Pacer, estimate_request_tokens
+from harbor_research_runner.model_proxy.pacing import Pacer, Reservation, estimate_request_tokens
 from harbor_research_runner.model_proxy.shaping import shape_request
 from harbor_research_runner.model_proxy.status import (
     UpstreamOutcome,
@@ -254,6 +254,7 @@ class _RelayState:
         failovers: int,
         estimated_tokens: int,
         request_body: bytes,
+        reservation: Reservation | None,
     ) -> None:
         self.deps = deps
         self.trial = trial
@@ -263,6 +264,7 @@ class _RelayState:
         self.body = body
         self.failovers = failovers
         self.estimated_tokens = estimated_tokens
+        self.reservation = reservation
         self.request_body = request_body
         self.header_status: int | None = None
         self._written = False
@@ -312,7 +314,7 @@ class _RelayState:
                 actual = self.estimated_tokens
                 if usage is not None:
                     actual = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
-                self.deps.pacer.record(actual)
+                self.deps.pacer.record(self.reservation, actual)
         return http_status
 
     def client_disconnect(self) -> None:
@@ -399,8 +401,9 @@ def relay(
     )
     estimated_tokens = estimate_request_tokens(outbound, max_tokens_cap)
     paced_wait_s = 0.0
+    reservation = None
     if deps.pacer is not None:
-        paced_wait_s = deps.pacer.wait_for(estimated_tokens)
+        paced_wait_s, reservation = deps.pacer.wait_for(estimated_tokens)
     request_id = uuid.uuid4().hex
     clock = StreamClock(deps.now)
 
@@ -419,7 +422,7 @@ def relay(
         )
     except BaseException:
         if deps.pacer is not None:
-            deps.pacer.record(estimated_tokens)
+            deps.pacer.record(reservation, estimated_tokens)
         raise
 
     routes = list(deps.routes())
@@ -435,6 +438,7 @@ def relay(
             0,
             estimated_tokens,
             request_body,
+            reservation,
         )
         status = state.finish()
         return RelayResponse(
@@ -478,6 +482,7 @@ def relay(
                 failovers,
                 estimated_tokens,
                 request_body,
+                reservation,
             )
             if _can_fail_over(observation) and failovers + 1 < len(routes):
                 continue
@@ -499,6 +504,7 @@ def relay(
                 failovers,
                 estimated_tokens,
                 request_body,
+                reservation,
             )
             if _can_fail_over(observation) and failovers + 1 < len(routes):
                 continue
@@ -524,6 +530,7 @@ def relay(
             failovers,
             estimated_tokens,
             request_body,
+            reservation,
         )
 
         if response.status_code != 200:
