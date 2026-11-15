@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 from harbor_research_runner.evidence_bundle.build import build
-from harbor_research_runner.evidence_bundle.manifest import verify_manifest
+from harbor_research_runner.records.manifest import verify_manifest
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.results_explorer.loader import EvidenceStore, discover
 from harbor_research_runner.statistics.completeness import completeness

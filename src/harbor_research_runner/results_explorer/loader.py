@@ -8,8 +8,8 @@ from collections.abc import Sequence
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from harbor_research_runner.evidence_bundle.manifest import verify_manifest
 from harbor_research_runner.records.jsonl import read_rows
+from harbor_research_runner.records.manifest import verify_manifest
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.statistics.completeness import completeness
 from harbor_research_runner.statistics.paired import paired_difference

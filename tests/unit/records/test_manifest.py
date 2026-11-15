@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 from harbor_research_runner.evidence_bundle.build import build
-from harbor_research_runner.evidence_bundle.manifest import verify_manifest
+from harbor_research_runner.records.manifest import verify_manifest
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "run_folders"
 

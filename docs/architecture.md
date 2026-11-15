@@ -39,7 +39,7 @@ src/harbor_research_runner/
   cli.py
   local_http.py
   records/          jsonl.py  proxy_ledger.py  proxy_control.py  run_metadata.py
-                    run_events.py  resource_stats.py  trials.py  limits.py  machine_check.py
+                    run_events.py  resource_stats.py  trials.py  limits.py  machine_check.py  manifest.py
   job_config/       job_file.py  model_cards.py  model_cards/<provider>/<model>.json
   trial_validity/   verdict.py  upstream.py  phase_table.py  run_health.py
   statistics/       rates.py  paired.py  completeness.py  cost.py
@@ -51,7 +51,7 @@ src/harbor_research_runner/
                     chars.py  timing.py  pacing.py  keys.py  control.py  bodies.py  adapters/
   run/              checks.py  canary.py  machine_check.py  loop.py  watch.py  process_group.py
                     canary_task/say-hello/
-  evidence_bundle/  build.py  trials.py  manifest.py  secret_scan.py  report.py
+  evidence_bundle/  build.py  trials.py  secret_scan.py  report.py
   results_explorer/ loader.py  server.py  page.html
 tests/  unit/  integration/  e2e/  live/  fixtures/  support/
 ```
