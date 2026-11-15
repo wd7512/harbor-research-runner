@@ -31,6 +31,31 @@ def test_set_aside_and_unmeasured_trial_rows_match_expected() -> None:
     assert [row.to_row() for row in build_trial_rows(folder)] == _expected(folder)
 
 
+def test_set_aside_trial_uses_memory_sample_from_harbor_job(tmp_path: Path) -> None:
+    folder = tmp_path / "retries"
+    shutil.copytree(FIXTURES / "retries", folder)
+    (folder / "memory-watch.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "sample",
+                "t": 10.0,
+                "trial": "a-alpha-old",
+                "location": "harbor-job",
+                "container": "container-a",
+                "used_mb": 123.5,
+                "limit_mb": 256,
+                "reader": "docker_stats",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = next(row for row in build_trial_rows(folder) if row.trial == "a-alpha-old")
+
+    assert row.peak_memory_mb == 123.5
+
+
 def test_every_slot_has_k_first_attempts() -> None:
     rows = build_trial_rows(FIXTURES / "clean")
     slots = {(row.task, row.arm) for row in rows if row.location != "canary-job"}
