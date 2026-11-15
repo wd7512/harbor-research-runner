@@ -590,6 +590,17 @@ def test_memory_watch_damage_overlapping_trial_window_makes_trial_unmeasured(tmp
     assert verdict.unmeasured_reason == "telemetry_damaged"
 
 
+def test_half_written_last_memory_watch_row_keeps_trial_measured(tmp_path):
+    path = tmp_path / "memory-watch.jsonl"
+    complete = json.dumps(_memory_sample(2), sort_keys=True) + "\n"
+    in_flight = json.dumps(_memory_sample(6), sort_keys=True)[:20]
+    path.write_text(complete + in_flight, encoding="utf-8")
+
+    verdict = _judge(memory_watch_events=read_rows(path))
+
+    assert verdict.measured is True
+
+
 def test_memory_watch_damage_outside_trial_window_keeps_trial_measured(tmp_path):
     memory = _telemetry_read(
         tmp_path, "memory-watch.jsonl", [_memory_sample(0), _memory_sample(2)], 2

@@ -15,10 +15,8 @@ class ReadResult:
 def bad_line_time_spans(
     result: ReadResult, timestamp_field: str = "t", scale: float = 1.0
 ) -> list[tuple[float, float]]:
-    total = len(result.rows) + len(result.bad_lines) + int(result.torn_last_line)
     bad_lines = set(result.bad_lines)
-    if result.torn_last_line:
-        bad_lines.add(total)
+    total = len(result.rows) + len(bad_lines)
     positions = [line for line in range(1, total + 1) if line not in bad_lines]
     entries = list(zip(result.rows, positions, strict=False))
     spans = []
