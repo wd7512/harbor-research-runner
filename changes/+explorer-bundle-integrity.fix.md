@@ -1,0 +1,1 @@
+The results explorer verifies each evidence bundle against its manifest before loading it and refuses bundles with missing or altered files. Required event and request files no longer fall back to empty data.

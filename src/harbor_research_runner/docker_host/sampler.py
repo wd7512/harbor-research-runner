@@ -28,7 +28,7 @@ def run_sampler(out: Path, interval: float, lifeline_fd: int | None = None) -> N
     try:
         while not stopped.is_set():
             try:
-                measured, previous_swapouts = measure(previous_swapouts)
+                measured, previous_swapouts = measure(previous_swapouts, disk_path=out.parent)
                 if measured.docker_ok:
                     last = measured
                 else:

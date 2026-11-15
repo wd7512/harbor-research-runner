@@ -39,7 +39,7 @@ src/harbor_research_runner/
   cli.py
   local_http.py
   records/          jsonl.py  proxy_ledger.py  proxy_control.py  run_metadata.py
-                    run_events.py  resource_stats.py  trials.py  limits.py  machine_check.py
+                    run_events.py  resource_stats.py  trials.py  limits.py  machine_check.py  manifest.py
   job_config/       job_file.py  model_cards.py  model_cards/<provider>/<model>.json
   trial_validity/   verdict.py  upstream.py  phase_table.py  run_health.py
   statistics/       rates.py  paired.py  completeness.py  cost.py
@@ -51,7 +51,7 @@ src/harbor_research_runner/
                     chars.py  timing.py  pacing.py  keys.py  control.py  bodies.py  adapters/
   run/              checks.py  canary.py  machine_check.py  loop.py  watch.py  process_group.py
                     canary_task/say-hello/
-  evidence_bundle/  build.py  trials.py  manifest.py  secret_scan.py  report.py
+  evidence_bundle/  build.py  trials.py  secret_scan.py  report.py
   results_explorer/ loader.py  server.py  page.html
 tests/  unit/  integration/  e2e/  live/  fixtures/  support/
 ```
@@ -308,7 +308,7 @@ Rules, first match wins:
 
 Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`).
 
-`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); or the trial made requests but has no `open` row (`no_open_row`). An unmeasured trial is not re-run; it stops the run from exiting 0.
+`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); or a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`). An unmeasured trial is not re-run; it stops the run from exiting 0.
 
 Validity never reads `reward`, except rule 10, which reads only whether a reward exists.
 
@@ -434,6 +434,8 @@ built_at = "2026-12-01"
 - `memory-watch.jsonl`: copied.
 - `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged`. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
+
+The results explorer verifies every bundle file against `manifest.json` before loading the bundle. A missing or altered file refuses the bundle and is reported with the manifest problems.
 
 The secret scan runs before anything is written: it searches every output for the literal values of the model card's `key_env` variables and for the patterns ported from OLD's `runtime/secrets.py`. A hit exits 4 and writes nothing.
 
