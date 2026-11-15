@@ -417,6 +417,27 @@ def test_finish_returns_three_when_slot_stays_incomplete(tmp_path: Path) -> None
     assert finish["exit_code"] == 3
 
 
+def test_harbor_failure_without_trial_folder_halts_resumably(tmp_path: Path) -> None:
+    session = Session(tmp_path / "run")
+    commands: list[list[str]] = []
+    stopped: list[bool] = []
+
+    def watch_fn(_current, _process, _job_dir, _started):
+        return WatchResult("exited", 1, None, None)
+
+    deps = dependencies(tmp_path, watch_fn, commands, stopped)
+
+    result = _pass_loop(session, [("task-a", "arm-a")], deps, 0)
+
+    events = jsonl.read_rows(session.run_dir / "run-events.jsonl").rows
+    halt = next(row for row in events if row["type"] == "halt")
+    assert result == 2
+    assert halt["reason"] == "harbor_exit_1"
+    assert "code 1" in halt["detail"]
+    assert not any(row["type"] == "finish" for row in events)
+    assert stat.S_IMODE(session.run_dir.stat().st_mode) & stat.S_IWUSR
+
+
 def test_run_job_records_refusal_when_another_holder_owns_host_lock(tmp_path: Path) -> None:
     job_path = tmp_path / "job.yaml"
     machine_check_path = tmp_path / "machine-check.json"
