@@ -245,12 +245,16 @@ def run_checks(
         return True, "machine check matches this job and host"
 
     def tasks_included_check() -> tuple[bool, str]:
-        if not job.tasks.include:
-            return True, "empty task include selects all machine-check included tasks"
         included = set(machine_check.included if machine_check is not None else ())
         missing = [task for task in job.tasks.include if task not in included]
         if missing:
             return False, f"task(s) are not included in the machine check: {', '.join(missing)}"
+        if machine_check is not None and not resolve_tasks(job, machine_check):
+            if not included:
+                return False, "machine check included no tasks"
+            return False, "every included task was excluded by tasks.exclude"
+        if not job.tasks.include:
+            return True, "empty task include selects all machine-check included tasks"
         return True, "all requested tasks are included in the machine check"
 
     def memory_fits_check() -> tuple[bool, str]:
