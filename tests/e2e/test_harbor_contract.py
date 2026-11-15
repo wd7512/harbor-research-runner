@@ -8,10 +8,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import yaml
 from harbor.job import Job
-from harbor.models.job.config import JobConfig
+from harbor.models.job.config import DatasetConfig, JobConfig
 from harbor.viewer.scanner import JobScanner
 
+from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.records.jsonl import read_rows
 
 pytestmark = pytest.mark.contract
@@ -187,3 +189,71 @@ def test_harbor_viewer_scanner_reads_job_and_set_aside_folders(harbor_job):
         path.name for path in _trial_dirs(harbor_job.job_dir)
     ]
     assert scanner.list_trials("set-aside-trials") == [trial_dir.name]
+
+
+def test_empty_task_names_selects_every_local_task(tmp_path: Path):
+    tasks = tmp_path / "tasks"
+    tasks.mkdir()
+    source = Path(__file__).parents[2] / "src/harbor_research_runner/run/canary_task/say-hello"
+    for name in ("alpha", "beta"):
+        shutil.copytree(source, tasks / name)
+
+    empty_filter = asyncio.run(DatasetConfig(path=tasks, task_names=[]).get_task_configs())
+    named_filter = asyncio.run(DatasetConfig(path=tasks, task_names=["alpha"]).get_task_configs())
+
+    assert {task.get_task_id().get_name() for task in empty_filter} == {"alpha", "beta"}
+    assert [task.get_task_id().get_name() for task in named_filter] == ["alpha"]
+
+
+def test_local_trial_path_and_lock_digest_match_harbor(harbor_job):
+    trial_dir = _trial_dirs(harbor_job.job_dir)[0]
+    config = json.loads((trial_dir / "config.json").read_text(encoding="utf-8"))
+    lock = json.loads((trial_dir / "lock.json").read_text(encoding="utf-8"))
+    task_path = Path(config["task"]["path"])
+
+    assert task_path.name == "say-hello"
+    assert lock["task"]["digest"] == task_content_hash(task_path)
+
+
+def test_hrr_local_task_filter_matches_harbor_resolution(harbor_job, tmp_path: Path):
+    config = yaml.safe_load(
+        (harbor_job.run_dir / "harbor-job-config.yaml").read_text(encoding="utf-8")
+    )
+    dataset = DatasetConfig.model_validate(config["datasets"][0])
+    source = Path(dataset.path)
+    copied_source = tmp_path / "tasks"
+    shutil.copytree(source, copied_source)
+    shutil.copytree(source / "say-hello", copied_source / "decoy")
+    dataset = dataset.model_copy(update={"path": copied_source})
+
+    resolved = asyncio.run(dataset.get_task_configs())
+    trial_tasks = {
+        json.loads((trial / "config.json").read_text(encoding="utf-8"))["task"]["path"]
+        for trial in _trial_dirs(harbor_job.job_dir)
+    }
+
+    assert {task.get_task_id().get_name() for task in resolved} == {"say-hello"}
+    assert len(trial_tasks) == 1
+
+
+@pytest.mark.parametrize(
+    ("harbor_job", "exception"),
+    [
+        ({"fake": {"exit_code": 1}}, "NonZeroAgentExitCodeError"),
+        ({"fake": {"solve": False}}, None),
+    ],
+    ids=["agent-failure", "verifier-failure"],
+    indirect=["harbor_job"],
+)
+def test_failed_trial_keeps_harbor_phase_result_and_lock(harbor_job, exception):
+    trial_dir = _trial_dirs(harbor_job.job_dir)[0]
+    result = _trial_result(trial_dir)
+    lock = json.loads((trial_dir / "lock.json").read_text(encoding="utf-8"))
+
+    assert (trial_dir / "config.json").is_file()
+    assert isinstance(lock["task"]["digest"], str)
+    if exception is None:
+        assert result["exception_info"] is None
+        assert result["verifier_result"]["rewards"] == {"reward": 0.0}
+    else:
+        assert result["exception_info"]["exception_type"] == exception
