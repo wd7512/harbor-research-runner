@@ -1,0 +1,1 @@
+Trials with malformed or widely spaced host resource samples in their agent-to-verifier window are marked unmeasured, while observed host breaches still invalidate them. Evidence reports the malformed sample count and verifies it against the compressed source stream.

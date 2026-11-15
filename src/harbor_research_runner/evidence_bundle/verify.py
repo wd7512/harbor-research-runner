@@ -54,11 +54,93 @@ def _report_counts(report: str) -> dict[str, int]:
         "Slots incomplete",
         "Unmeasured trials",
         "Trials not yet judged",
+        "Malformed resource samples",
     ):
         matches = re.findall(rf"^\| {re.escape(label)} \| (\d+) \|$", report, re.MULTILINE)
         if len(matches) == 1:
             counts[label] = int(matches[0])
     return counts
+
+
+def malformed_jsonl_count(data: bytes) -> int:
+    if not data:
+        return 0
+    lines = data.split(b"\n")
+    if lines[-1] == b"":
+        lines.pop()
+    count = 0
+    for line in lines:
+        try:
+            value = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            count += 1
+        else:
+            if not isinstance(value, dict):
+                count += 1
+    return count
+
+
+def _resource_rows(data: bytes) -> tuple[list[tuple[int, dict]], list[int]]:
+    rows = []
+    bad_lines = []
+    lines = data.split(b"\n")
+    if lines[-1] == b"":
+        lines.pop()
+    for number, line in enumerate(lines, start=1):
+        try:
+            row = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            bad_lines.append(number)
+        else:
+            if isinstance(row, dict):
+                rows.append((number, row))
+            else:
+                bad_lines.append(number)
+    return rows, bad_lines
+
+
+def _host_window_damaged(
+    row: dict, resource_rows: list[tuple[int, dict]], bad_lines: list[int], interval_s: float
+) -> bool:
+    start = row.get("agent_started_t")
+    end = (
+        row.get("verifier_finished_t")
+        if row.get("verifier_started_t") is not None
+        else row.get("agent_finished_t")
+    )
+    if not isinstance(start, (int, float)) or isinstance(start, bool):
+        return False
+    if not isinstance(end, (int, float)) or isinstance(end, bool):
+        return False
+    samples = sorted(
+        (
+            (line, sample)
+            for line, sample in resource_rows
+            if sample.get("type") == "sample"
+            and isinstance(sample.get("t"), (int, float))
+            and not isinstance(sample.get("t"), bool)
+        ),
+        key=lambda item: item[1]["t"],
+    )
+    times = [float(sample["t"]) for _line, sample in samples]
+    if not times:
+        return True
+    threshold = 3 * interval_s
+    if any(
+        current - previous > threshold and previous <= end and current >= start
+        for previous, current in zip(times, times[1:], strict=False)
+    ):
+        return True
+    if any(min(abs(edge - timestamp) for timestamp in times) > threshold for edge in (start, end)):
+        return True
+    for bad_line in bad_lines:
+        previous = [sample["t"] for line, sample in samples if line < bad_line]
+        following = [sample["t"] for line, sample in samples if line > bad_line]
+        span_start = max(previous) if previous else float("-inf")
+        span_end = min(following) if following else float("inf")
+        if span_start <= end and span_end >= start:
+            return True
+    return False
 
 
 def verify(bundle_dir: Path) -> list[Problem]:
@@ -76,6 +158,25 @@ def verify(bundle_dir: Path) -> list[Problem]:
     request_rows = _jsonl_gzip(bundle_dir / "proxy-requests.jsonl.gz")
     metadata = _json(bundle_dir / "run-metadata.json")
     report = (bundle_dir / "report.md").read_text(encoding="utf-8")
+    resource_path = bundle_dir / "resource-stats.jsonl.gz"
+    resource_data = gzip.decompress(resource_path.read_bytes()) if resource_path.exists() else None
+    resource_rows, resource_bad_lines = (
+        _resource_rows(resource_data) if resource_data is not None else ([], [])
+    )
+    sampler_interval_s = metadata.get("sampler_interval_s", 10.0)
+    if (
+        isinstance(sampler_interval_s, bool)
+        or not isinstance(sampler_interval_s, (int, float))
+        or sampler_interval_s <= 0
+    ):
+        _problem(
+            problems,
+            "sampler_interval",
+            "run-metadata.json",
+            "positive number",
+            sampler_interval_s,
+        )
+        sampler_interval_s = 10.0
 
     if any(event.get("type") == "harbor_start" for event in events):
         for name in (
@@ -116,6 +217,24 @@ def verify(bundle_dir: Path) -> list[Problem]:
 
     for row in trials:
         trial = row["trial"]
+        if (
+            resource_data is not None
+            and any(event.get("type") == "harbor_start" for event in events)
+            and _host_window_damaged(
+                row, resource_rows, resource_bad_lines, float(sampler_interval_s)
+            )
+            and row.get("measured") is True
+        ):
+            _problem(
+                problems,
+                "host_samples_damaged",
+                trial,
+                {"measured": False, "unmeasured_reason": "host_samples_damaged"},
+                {
+                    "measured": row.get("measured"),
+                    "unmeasured_reason": row.get("unmeasured_reason"),
+                },
+            )
         if row.get("location") == "set-aside-trials" and row.get("valid") is not False:
             _problem(problems, "locations", trial, False, row.get("valid"))
 
@@ -152,6 +271,9 @@ def verify(bundle_dir: Path) -> list[Problem]:
         "Slots complete": slots_complete,
         "Slots incomplete": slots_incomplete,
         "Unmeasured trials": unmeasured,
+        "Malformed resource samples": (
+            malformed_jsonl_count(resource_data) if resource_data is not None else 0
+        ),
     }
     actual_counts = _report_counts(report)
     has_finish = any(event.get("type") == "finish" for event in events)
@@ -160,6 +282,17 @@ def verify(bundle_dir: Path) -> list[Problem]:
     )
     if actual_counts != expected_counts:
         _problem(problems, "report_agreement", "report.md", expected_counts, actual_counts)
+    if (
+        actual_counts.get("Malformed resource samples")
+        != expected_counts["Malformed resource samples"]
+    ):
+        _problem(
+            problems,
+            "resource_samples",
+            "resource-stats.jsonl.gz",
+            expected_counts["Malformed resource samples"],
+            actual_counts.get("Malformed resource samples"),
+        )
 
     for event in events:
         if event.get("type") != "finish":

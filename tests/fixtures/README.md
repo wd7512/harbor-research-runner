@@ -61,5 +61,5 @@ Every file in this folder has one line here saying where it came from. No file o
 | `memory_watch/proc-children-1.txt` | `/proc/1/task/1/children` from the captured trial container on Docker Desktop 29.8.0, 13 Nov 2026. |
 | `memory_watch/proc-smaps-rollup.txt` | Linux `/proc/<pid>/smaps_rollup` format fixture with the approved `Rss: 920 kB` and `Pss: 916 kB` values and adjacent `Pss_Dirty` and shared/private fields for parser coverage. |
 
-- `run_folders/`: hand-made compact run-folder samples for `evidence_bundle.trials`, covering a clean two-task/two-arm run and a set-aside, unmeasured, unfinished, and canary trial.
+- `run_folders/`: hand-made compact run-folder samples for `evidence_bundle.trials`, covering a clean two-task/two-arm run and a set-aside, unmeasured, unfinished, and canary trial; the metadata records the 10-second sampler interval.
 - `run_folders/{clean,retries}/machine-check.json` and `expected-report.md`: hand-made five-task machine-check records and the resulting evidence report goldens; each includes three tasks and excludes two.

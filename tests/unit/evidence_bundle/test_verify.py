@@ -105,6 +105,34 @@ def test_manifest_mismatch_is_reported(tmp_path: Path) -> None:
     assert set(_problem_ids(verify(bundle))) == {"manifest"}
 
 
+def test_resource_sample_count_disagreement_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    with (bundle / "resource-stats.jsonl.gz").open("wb") as stream:
+        stream.write(gzip.compress(b'{"type":"sample","t":1}\nnot-json\n'))
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report_path.write_text(
+        report.replace("| Malformed resource samples | 0 |", "| Malformed resource samples | 2 |")
+    )
+    _refresh_manifest(bundle)
+
+    assert "resource_samples" in _problem_ids(verify(bundle))
+
+
+def test_sampler_interval_checks_trial_sample_gaps(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    (bundle / "resource-stats.jsonl.gz").write_bytes(
+        gzip.compress(b'{"type":"sample","t":1767225600}\n{"type":"sample","t":1767225640}\n')
+    )
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    events.append({"type": "harbor_start", "t": 1, "pass": 0})
+    _write_rows(events_path, events)
+    _refresh_manifest(bundle)
+
+    assert "host_samples_damaged" in _problem_ids(verify(bundle))
+
+
 def test_trial_verdict_disagreement_is_reported(tmp_path: Path) -> None:
     bundle = _bundle("clean", tmp_path)
     rows = _rows(bundle / "trials.jsonl")
