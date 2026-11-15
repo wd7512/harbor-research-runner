@@ -126,6 +126,10 @@ def test_slot_at_set_aside_cap_finishes_with_exit_three(e2e_run) -> None:
     result = e2e_run.run()
 
     assert result.returncode == 3, result.stdout
+    harbor_passes = [row for row in e2e_run.events if row.get("type") == "harbor_exit"]
+    assert harbor_passes
+    assert all(row["returncode"] == 0 for row in harbor_passes), harbor_passes
+    assert "KeyboardInterrupt" not in result.stdout
     finish = next(row for row in e2e_run.events if row.get("type") == "finish")
     assert finish["slots_incomplete"] == 1
 

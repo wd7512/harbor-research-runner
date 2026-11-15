@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from harbor_research_runner.records.jsonl import read_rows
+from harbor_research_runner.records.jsonl import ReadResult, bad_line_time_spans, read_rows
 from harbor_research_runner.records.manifest import verify_manifest
 from harbor_research_runner.records.trials import CAP_EXEMPT_REASONS
 
@@ -55,6 +55,8 @@ def _report_counts(report: str) -> dict[str, int]:
         "Unmeasured trials",
         "Trials not yet judged",
         "Malformed resource samples",
+        "Malformed Docker OOM events",
+        "Malformed memory-watch samples",
     ):
         matches = re.findall(rf"^\| {re.escape(label)} \| (\d+) \|$", report, re.MULTILINE)
         if len(matches) == 1:
@@ -133,14 +135,30 @@ def _host_window_damaged(
         return True
     if any(min(abs(edge - timestamp) for timestamp in times) > threshold for edge in (start, end)):
         return True
-    for bad_line in bad_lines:
-        previous = [sample["t"] for line, sample in samples if line < bad_line]
-        following = [sample["t"] for line, sample in samples if line > bad_line]
-        span_start = max(previous) if previous else float("-inf")
-        span_end = min(following) if following else float("inf")
+    sample_result = ReadResult([sample for _line, sample in resource_rows], False, bad_lines)
+    for span_start, span_end in bad_line_time_spans(sample_result):
         if span_start <= end and span_end >= start:
             return True
     return False
+
+
+def _trial_telemetry_damaged(row: dict, oom: ReadResult, memory: ReadResult) -> bool:
+    start = row.get("agent_started_t")
+    end = (
+        row.get("verifier_finished_t")
+        if row.get("verifier_started_t") is not None
+        else row.get("agent_finished_t")
+    )
+    if (
+        not isinstance(start, (int, float))
+        or isinstance(start, bool)
+        or not isinstance(end, (int, float))
+        or isinstance(end, bool)
+    ):
+        return False
+    spans = bad_line_time_spans(oom, "timeNano", 1e-9)
+    spans.extend(bad_line_time_spans(memory))
+    return any(span_start <= end and span_end >= start for span_start, span_end in spans)
 
 
 def verify(bundle_dir: Path) -> list[Problem]:
@@ -155,6 +173,12 @@ def verify(bundle_dir: Path) -> list[Problem]:
     memory_path = bundle_dir / "memory-watch.jsonl"
     memory_rows_result = read_rows(memory_path) if memory_path.exists() else None
     memory_rows = memory_rows_result.rows if memory_rows_result is not None else []
+    oom_path = bundle_dir / "docker-oom-events.jsonl"
+    oom_result = read_rows(oom_path) if oom_path.exists() else None
+    oom_rows_result = oom_result if oom_result is not None else ReadResult([], False, [])
+    memory_rows_result = (
+        memory_rows_result if memory_rows_result is not None else ReadResult([], False, [])
+    )
     request_rows = _jsonl_gzip(bundle_dir / "proxy-requests.jsonl.gz")
     metadata = _json(bundle_dir / "run-metadata.json")
     report = (bundle_dir / "report.md").read_text(encoding="utf-8")
@@ -217,6 +241,27 @@ def verify(bundle_dir: Path) -> list[Problem]:
 
     for row in trials:
         trial = row["trial"]
+        telemetry_damaged = (
+            oom_path.exists() or memory_path.exists()
+        ) and _trial_telemetry_damaged(row, oom_rows_result, memory_rows_result)
+        recorded_damage = (
+            row.get("measured") is False and row.get("unmeasured_reason") == "telemetry_damaged"
+        )
+        if telemetry_damaged != recorded_damage:
+            _problem(
+                problems,
+                "telemetry_damaged",
+                trial,
+                (
+                    {"measured": False, "unmeasured_reason": "telemetry_damaged"}
+                    if telemetry_damaged
+                    else {"measured": True, "unmeasured_reason": None}
+                ),
+                {
+                    "measured": row.get("measured"),
+                    "unmeasured_reason": row.get("unmeasured_reason"),
+                },
+            )
         if (
             resource_data is not None
             and any(event.get("type") == "harbor_start" for event in events)
@@ -275,6 +320,14 @@ def verify(bundle_dir: Path) -> list[Problem]:
             malformed_jsonl_count(resource_data) if resource_data is not None else 0
         ),
     }
+    if oom_path.exists():
+        expected_counts["Malformed Docker OOM events"] = malformed_jsonl_count(
+            oom_path.read_bytes()
+        )
+    if memory_path.exists():
+        expected_counts["Malformed memory-watch samples"] = malformed_jsonl_count(
+            memory_path.read_bytes()
+        )
     actual_counts = _report_counts(report)
     has_finish = any(event.get("type") == "finish" for event in events)
     expected_counts["Trials not yet judged"] = (
@@ -326,8 +379,9 @@ def verify(bundle_dir: Path) -> list[Problem]:
         samples.setdefault(sample["trial"], []).append(sample["used_mb"])
     for row in trials:
         values = samples.get(row["trial"], [])
-        if values:
-            expected = max(values)
+        damaged = _trial_telemetry_damaged(row, oom_rows_result, memory_rows_result)
+        if values or damaged:
+            expected = None if damaged else max(values)
             actual = row.get("peak_memory_mb")
             if actual != expected:
                 _problem(problems, "memory", row["trial"], expected, actual)
@@ -368,10 +422,6 @@ def verify(bundle_dir: Path) -> list[Problem]:
         if row.get("measured") is True and unfinished:
             _problem(problems, "measured_closed", trial, "no unfinished requests", len(unfinished))
 
-    if (
-        trial_rows_result.bad_lines
-        or event_rows_result.bad_lines
-        or (memory_rows_result is not None and memory_rows_result.bad_lines)
-    ):
+    if trial_rows_result.bad_lines or event_rows_result.bad_lines:
         raise ValueError("bundle contains malformed JSONL records")
     return problems

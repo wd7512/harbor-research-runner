@@ -37,7 +37,7 @@ def _trial_verdict(
     ledger = ledger_tail.read()
     resources = resource_tail.read()
     oom_path = session.run_dir / "docker-oom-events.jsonl"
-    oom_events = jsonl.read_rows(oom_path).rows if oom_path.exists() else []
+    oom_events = jsonl.read_rows(oom_path)
     memory_path = session.run_dir / "memory-watch.jsonl"
     events = _read_events(session.run_dir)
     earlier = set_aside.earlier_reasons(events, facts.task, facts.arm)
@@ -49,7 +49,7 @@ def _trial_verdict(
         session.limits,
         earlier,
         oom_events,
-        jsonl.read_rows(memory_path).rows if memory_path.exists() else [],
+        jsonl.read_rows(memory_path),
         resource_problems=resources,
         sampler_interval_s=session.metadata.sampler_interval_s,
     )
@@ -315,8 +315,8 @@ def watch(
         halt = run_health.should_halt(snapshot, session.limits, poll_s)
         if halt is not None:
             reason, detail = halt
-            process_group.stop_group(harbor_process, grace_s=process_group.HARBOR_STOP_GRACE_S)
             session.event(Halt(current_t, reason, detail))
+            process_group.stop_group(harbor_process, grace_s=process_group.HARBOR_STOP_GRACE_S)
             return WatchResult("halted", None, reason, detail)
         returncode = harbor_process.poll()
         if returncode is not None:

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from harbor_research_runner.records.jsonl import ReadResult
+from harbor_research_runner.records.jsonl import ReadResult, bad_line_time_spans
 from harbor_research_runner.records.limits import Limits, host_breach
 from harbor_research_runner.records.proxy_ledger import is_valid_row, rows_for_trial
 from harbor_research_runner.trial_validity.phase_table import failed_phase
@@ -222,23 +222,26 @@ def _host_samples_damaged(
     for edge in (start, end):
         if sample_times and min(abs(edge - timestamp) for timestamp in sample_times) > threshold:
             return True
-    positions = _physical_positions(problems)
-    entries = list(zip(problems.rows, positions, strict=False))
-    bad_lines = list(problems.bad_lines)
-    if problems.torn_last_line:
-        bad_lines.append(len(problems.rows) + len(problems.bad_lines) + 1)
-    for bad_line in bad_lines:
-        before = [row.get("t") for row, position in entries if position < bad_line]
-        after = [row.get("t") for row, position in entries if position > bad_line]
-        before_times = [
-            t for t in before if isinstance(t, (int, float)) and not isinstance(t, bool)
-        ]
-        after_times = [t for t in after if isinstance(t, (int, float)) and not isinstance(t, bool)]
-        span_start = max(before_times) if before_times else float("-inf")
-        span_end = min(after_times) if after_times else float("inf")
+    for span_start, span_end in bad_line_time_spans(problems):
         if span_start <= end and span_end >= start:
             return True
     return False
+
+
+def _trial_telemetry_damaged(
+    facts: TrialFacts, oom_events: ReadResult, memory_watch_events: ReadResult
+) -> bool:
+    start = facts.phase_started.get("agent")
+    end = (
+        facts.phase_finished.get("verifier")
+        if facts.phase_started.get("verifier") is not None
+        else facts.phase_finished.get("agent")
+    )
+    if start is None or end is None:
+        return False
+    spans = bad_line_time_spans(oom_events, "timeNano", 1e-9)
+    spans.extend(bad_line_time_spans(memory_watch_events))
+    return any(span_start <= end and span_end >= start for span_start, span_end in spans)
 
 
 def _labels(
@@ -277,8 +280,8 @@ def judge_trial(
     resource_rows: list[dict],
     limits: Limits,
     earlier_set_aside_reasons: tuple[str, ...],
-    oom_events: list[dict] | tuple[()] = (),
-    memory_watch_events: list[dict] | tuple[()] = (),
+    oom_events: ReadResult,
+    memory_watch_events: ReadResult,
     *,
     resource_problems: ReadResult,
     sampler_interval_s: float,
@@ -290,6 +293,8 @@ def judge_trial(
     measured, unmeasured_reason = _measurement(
         facts.trial, trial_rows, ledger_problems, facts.has_result
     )
+    if measured and _trial_telemetry_damaged(facts, oom_events, memory_watch_events):
+        measured, unmeasured_reason = False, "telemetry_damaged"
     if measured and _host_samples_damaged(facts, resource_problems, sampler_interval_s):
         measured, unmeasured_reason = False, "host_samples_damaged"
     start = facts.phase_started.get("agent")
@@ -308,7 +313,7 @@ def judge_trial(
     oom_project = compose_project(facts.trial)
     oom_sources = []
     if start is not None and end is not None:
-        for event in oom_events:
+        for event in oom_events.rows:
             if not isinstance(event, dict):
                 continue
             event_time = event.get("timeNano")
@@ -321,7 +326,7 @@ def judge_trial(
                 timestamp = event_time / 1_000_000_000
                 if start <= timestamp <= end:
                     oom_sources.append((timestamp, "kernel"))
-        for event in memory_watch_events:
+        for event in memory_watch_events.rows:
             if (
                 isinstance(event, dict)
                 and event.get("type") in {"kill", "kill_failed"}
