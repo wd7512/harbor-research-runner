@@ -128,7 +128,7 @@ def _host_window_damaged(
     threshold = 3 * interval_s
     if any(
         current - previous > threshold and previous <= end and current >= start
-        for previous, current in zip(times, times[1:])
+        for previous, current in zip(times, times[1:], strict=False)
     ):
         return True
     if any(min(abs(edge - timestamp) for timestamp in times) > threshold for edge in (start, end)):

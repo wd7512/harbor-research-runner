@@ -216,7 +216,7 @@ def _host_samples_damaged(
     sample_times = [float(row["t"]) for row in samples]
     if not sample_times:
         return True
-    for previous, current in zip(sample_times, sample_times[1:]):
+    for previous, current in zip(sample_times, sample_times[1:], strict=False):
         if current - previous > threshold and previous <= end and current >= start:
             return True
     for edge in (start, end):
