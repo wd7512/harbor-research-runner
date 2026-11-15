@@ -171,14 +171,15 @@ class EvidenceStore:
         return [row for row in self._load(run_id)["requests"] if row.get("trial") == trial]
 
     def compare(self, run_ids: list[str], arm_a: str, arm_b: str, view: str) -> dict:
+        run_a, run_b = run_ids
         side_a = [
             replace(row, arm="__selected_a__")
-            for row in self._load(run_ids[0])["rows"]
+            for row in self._load(run_a)["rows"]
             if row.arm == arm_a
         ]
         side_b = [
             replace(row, arm="__selected_b__")
-            for row in self._load(run_ids[1])["rows"]
+            for row in self._load(run_b)["rows"]
             if row.arm == arm_b
         ]
         rows = side_a + side_b
