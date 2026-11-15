@@ -4,6 +4,8 @@ import tempfile
 from dataclasses import dataclass, fields
 from pathlib import Path
 
+SAMPLER_INTERVAL_S = 10.0
+
 
 @dataclass(frozen=True)
 class RunMetadata:
@@ -21,6 +23,7 @@ class RunMetadata:
     host: dict
     proxy: dict
     limits: dict
+    sampler_interval_s: float
 
     def to_row(self) -> dict:
         return {item.name: getattr(self, item.name) for item in fields(self)}

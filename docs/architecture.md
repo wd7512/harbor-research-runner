@@ -169,7 +169,7 @@ A request for a trial that is not open gets HTTP 410 with body `{"error": {"mess
 
 Written once, atomically, before anything else starts: write a temporary file in the same folder, `fsync` it, then link it into place without replacing any existing destination. An existing destination, including a dangling symlink, raises `FileExistsError` and is left unchanged. Never rewritten.
 
-Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`.
+Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds).
 
 `tool_version` is the installed `harbor-research-runner` package version. `tool_commit` is the 40-hex commit of the checkout containing the package, with `+dirty` appended when tracked files have changes; it is `none` when Git is unavailable or the package is not in a Git checkout.
 
@@ -290,7 +290,9 @@ class Verdict:
 
 def judge_trial(facts: TrialFacts, ledger_rows: list[dict], ledger_problems: ReadResult,
                 resource_rows: list[dict], limits: Limits,
-                earlier_set_aside_reasons: tuple[str, ...]) -> Verdict
+                earlier_set_aside_reasons: tuple[str, ...], *,
+                resource_problems: ReadResult | None = None,
+                sampler_interval_s: float = 10.0) -> Verdict
 ```
 
 When `exception_type` is not null, the failed phase is the last phase (in order environment_setup, agent_setup, agent, verifier) whose start time is non-null and no later than `exception_at`. If `exception_at` is null, use the last phase with a non-null start time.
@@ -313,7 +315,7 @@ Rules, first match wins:
 
 Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`).
 
-`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`); any `ok` request has a null prompt or completion token count (`usage_incomplete`); or a required telemetry file is missing after `harbor_start` (`telemetry_missing`). An unmeasured trial is not re-run; it stops the run from exiting 0.
+`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`); any `ok` request has a null prompt or completion token count (`usage_incomplete`); host samples are malformed or have a gap greater than three times `sampler_interval_s` overlapping the agent-to-verifier window (`host_samples_damaged`); or a required telemetry file is missing after `harbor_start` (`telemetry_missing`). For malformed host rows, the interval between the parsed samples on either side of the bad line is attributed to that line. A host breach still invalidates a damaged trial. An unmeasured trial is not re-run; it stops the run from exiting 0.
 
 Validity never reads `reward`, except rule 10, which reads only whether a reward exists.
 
@@ -439,6 +441,7 @@ built_at = "2026-12-01"
 - `memory-watch.jsonl`: copied.
 - All three telemetry files are required when `run-events.jsonl` has a `harbor_start`; verification reports `telemetry_present` once per missing file. Before `harbor_start`, absent telemetry files are allowed and are omitted from the bundle.
 - `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged`. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
+- The completeness table reports malformed resource sample lines; `verify-evidence` re-derives that count from `resource-stats.jsonl.gz`.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
 The results explorer verifies every bundle file against `manifest.json` before loading the bundle. A missing or altered file refuses the bundle and is reported with the manifest problems.

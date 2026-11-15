@@ -90,6 +90,17 @@ def test_build_copies_docker_oom_events(tmp_path: Path) -> None:
     assert (output / "docker-oom-events.jsonl").read_bytes() == events
 
 
+def test_build_reports_malformed_resource_sample_count(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    (run_dir / "resource-stats.jsonl").write_bytes(
+        b'{"type":"sample","t":1}\nnot-json\n{"type":"sample","t":2}\n{broken}\n'
+    )
+    output = tmp_path / "bundle"
+
+    assert build(run_dir, output, {}) == 0
+    assert "| Malformed resource samples | 2 |" in (output / "report.md").read_text()
+
+
 def test_build_copies_memory_watch(tmp_path: Path) -> None:
     run_dir = _copy_run("clean", tmp_path)
     samples = b'{"type":"sample","trial":"trial-a"}\n'

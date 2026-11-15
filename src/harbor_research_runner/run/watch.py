@@ -50,6 +50,8 @@ def _trial_verdict(
         earlier,
         oom_events,
         jsonl.read_rows(memory_path).rows if memory_path.exists() else [],
+        resource_problems=resources,
+        sampler_interval_s=session.metadata.sampler_interval_s,
     )
     telemetry_missing = any(event.get("type") == "harbor_start" for event in events) and (
         not oom_path.exists() or not memory_path.exists()
