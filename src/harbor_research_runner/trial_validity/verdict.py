@@ -167,7 +167,7 @@ def _measurement(
     if has_close and started_ids - ended_ids:
         return False, "request_not_recorded"
 
-    if not has_open and (starts or ends):
+    if not has_open and (has_result or starts or ends):
         return False, "no_open_row"
     return True, None
 
@@ -243,6 +243,13 @@ def judge_trial(
         if facts.phase_started.get("verifier") is not None
         else facts.phase_finished.get("agent")
     )
+    if (
+        measured
+        and facts.has_result
+        and phase not in ("environment_setup", "agent_setup")
+        and (start is None or end is None)
+    ):
+        measured, unmeasured_reason = False, "phase_times_missing"
     oom_project = compose_project(facts.trial)
     oom_sources = []
     if start is not None and end is not None:

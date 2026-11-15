@@ -484,7 +484,8 @@ def test_repeated_setup_failure_counts_as_failure():
 
     assert verdict.valid
     assert "harness_could_not_start" in verdict.labels
-    assert verdict.measured
+    assert not verdict.measured
+    assert verdict.unmeasured_reason == "no_open_row"
 
 
 def test_repeated_setup_failure_is_valid_without_a_reward():
@@ -818,10 +819,29 @@ def test_requests_without_open_row_are_unmeasured():
     assert verdict.unmeasured_reason == "no_open_row"
 
 
-def test_no_ledger_rows_is_measured():
-    verdict = _judge(_facts(harbor_reported_tokens=0), rows=[])
+def test_result_without_open_row_is_unmeasured():
+    verdict = _judge(_facts(reward=1.0, harbor_reported_tokens=0), rows=[])
+
+    assert not verdict.measured
+    assert verdict.unmeasured_reason == "no_open_row"
+
+
+def test_open_trial_without_requests_is_measured():
+    verdict = _judge(_facts(harbor_reported_tokens=0), rows=[_open_row(1), _close_row(2)])
 
     assert verdict.measured
+    assert verdict.labels == ("no_requests",)
+
+
+def test_result_without_agent_phase_window_is_unmeasured():
+    phase_started, phase_finished = _phases(agent=(None, 5.0))
+    verdict = _judge(
+        _facts(phase_started=phase_started, phase_finished=phase_finished),
+        rows=[_open_row(1), _close_row(2)],
+    )
+
+    assert not verdict.measured
+    assert verdict.unmeasured_reason == "phase_times_missing"
 
 
 @pytest.mark.parametrize("field", ["prompt_tokens", "completion_tokens", "cached_read_tokens"])
