@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import socket
 import time
 import urllib.request
@@ -22,6 +23,21 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def _stub_docker_env(tmp_path: Path, calls_path: Path) -> dict[str, str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$1\" >> {shlex.quote(str(calls_path))}\n"
+        'if [ "$1" = events ]; then exec sleep 30; fi\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    return {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
 
 
 def _session(tmp_path: Path, upstream_url: str) -> RunSession:
@@ -134,10 +150,12 @@ def test_resume_does_not_refuse_itself(tmp_path: Path) -> None:
     assert last_event["tool_commit"] == "a" * 40
 
 
-def test_services_start_sample_and_stop(tmp_path: Path) -> None:
+def test_services_start_sample_and_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     upstream = FakeUpstream(["ok"])
     upstream_url = upstream.start()
     session = _session(tmp_path, upstream_url)
+    docker_calls = tmp_path / "docker-calls.txt"
+    monkeypatch.setenv("PATH", _stub_docker_env(tmp_path, docker_calls)["PATH"])
     try:
         session.start_services(restart=False)
         with urllib.request.urlopen(
@@ -152,6 +170,7 @@ def test_services_start_sample_and_stop(tmp_path: Path) -> None:
             time.sleep(0.02)
         assert stats_path.exists()
         assert stats_path.read_text(encoding="utf-8").strip()
+        assert "info" in docker_calls.read_text(encoding="utf-8").splitlines()
         proxy_process = session._proxy
         sampler_process = session._sampler
 
