@@ -249,7 +249,7 @@ def test_slow_consumer_receives_queued_chunks_without_a_gap_stall(tmp_path):
     assert end["upstream_status"] == "ok"
 
 
-def test_request_latency_stall_allows_two_seconds_for_headers(tmp_path):
+def test_request_latency_stall_after_headers_is_stalled(tmp_path):
     upstream = FakeUpstream(["gap:4"], model="served-model")
     base_url = upstream.start()
     deps, ledger, client = _deps(tmp_path, base_url, request_latency_max_s=2.0)
