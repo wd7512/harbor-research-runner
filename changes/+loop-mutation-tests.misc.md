@@ -1,0 +1,1 @@
+Kill run-loop mutation survivors through `run_job`, `resume_run` and the run session's public methods, and list the remaining survivors in the mutation guide ([#146](https://github.com/wd7512/harbor-research-runner/issues/146)).

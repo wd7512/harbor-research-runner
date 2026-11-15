@@ -26,9 +26,30 @@ The wrapper reads mutmut's per-mutant exit codes and counts only 1 as killed; 0 
 
 The source-inspection tests are excluded: `tests/unit/test_cli.py::test_cli_does_not_read_environment_variables_by_name`, `tests/unit/test_import_rule.py` and `tests/integration/test_import_rule.py`. A new test that reads source as text must be added to `pytest_add_cli_args_test_selection` in `pyproject.toml`. Mutmut 3.7.0 restricts files but not named functions, so it mutates all of `run/loop.py` and `run/checks.py`.
 
-For each survivor, write a test that detects the behavior or add its mutant name and equivalent-mutant rationale to the list below.
+Run the pass on a case-sensitive filesystem: Linux, or on macOS a case-sensitive APFS disk image with `TMPDIR` pointed inside it. On a case-insensitive disk, a mutant that only upper-cases a file name (`'run-events.jsonl'` to `'RUN-EVENTS.JSONL'`) still opens the same file and survives. The image needs at least 20 GB free, because the host-resources check reads the free space under the test's temporary folder. When running `mutmut run` directly instead of through the wrapper, set `UV_PROJECT_ENVIRONMENT` to the repository's `.venv` as the wrapper does; otherwise the first test that runs `uv` inside `mutants/` builds a new environment and exceeds its time budget.
+
+For each survivor, write a test that detects the behavior through the public API, or list it below with its reason. A survivor that only a private helper, a private attribute or a patch could kill is a simplification candidate: it marks code the public behaviour does not need.
 
 Equivalent mutants:
+
+### harbor_research_runner.evidence_bundle.trials
+
+- `harbor_research_runner.evidence_bundle.trials.x_build_trial_rows__mutmut_8` and `harbor_research_runner.evidence_bundle.trials.x_build_trial_rows__mutmut_101`: the `UTF-8` codec name is case-insensitive, so both read the same UTF-8 bytes.
+- `harbor_research_runner.evidence_bundle.trials.x_build_trial_rows__mutmut_53`: the changed guard only adds memory-map entries with a non-run location or a non-string trial. Those keys are never looked up when constructing a trial row, so no returned row changes.
+- `harbor_research_runner.evidence_bundle.trials.x_build_trial_rows__mutmut_93`: Python parses `-INF` and `-inf` as the same negative infinity.
+- `harbor_research_runner.evidence_bundle.trials.x_build_trial_rows__mutmut_424` and `harbor_research_runner.evidence_bundle.trials.x_build_trial_rows__mutmut_478`: Python parses `INF` and `inf` as the same positive infinity.
+
+### harbor_research_runner.evidence_bundle.build
+
+- `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_4`: `filename=None` and `filename=""` produce the same gzip header when the file object is an unnamed `BytesIO`.
+- `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_9`: omitting `mode` lets `GzipFile` infer its write mode from the supplied file object; the compressed payload is unchanged.
+- `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_10`, `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_11` and `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_15`: these select a different valid compression level, which changes only the gzip representation and not its decompressed content or required `mtime`.
+- `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_14`: a constant gzip filename changes optional header metadata but not the decompressed request rows or deterministic output for the same input.
+- `harbor_research_runner.evidence_bundle.build.x__planned_slots__mutmut_7`, `harbor_research_runner.evidence_bundle.build.x__planned_slots__mutmut_9`, `harbor_research_runner.evidence_bundle.build.x__planned_slots__mutmut_11` and `harbor_research_runner.evidence_bundle.build.x__planned_slots__mutmut_13`: the alternatives differ only for absent or null task-set fields; valid run metadata requires `task_set.tasks` to be a list.
+- `harbor_research_runner.evidence_bundle.build.x__write_files__mutmut_3`, `harbor_research_runner.evidence_bundle.build.x__write_files__mutmut_5` and `harbor_research_runner.evidence_bundle.build.x__write_files__mutmut_7`: `build` supplies only root-level names to `_write_files`, so recursive creation of nested parents is never needed by this caller.
+- `harbor_research_runner.evidence_bundle.build.x_build__mutmut_103`: `UTF-8` and `utf-8` name the same codec.
+- `harbor_research_runner.evidence_bundle.build.x_build__mutmut_134` and `harbor_research_runner.evidence_bundle.build.x_build__mutmut_136`: the temporary directory prefix is not part of the bundle or any returned value.
+- `harbor_research_runner.evidence_bundle.build.x_build__mutmut_140` and `harbor_research_runner.evidence_bundle.build.x_build__mutmut_141`: the backup directory suffix is internal and is removed after a successful replacement.
 
 ### harbor_research_runner.run.loop
 
@@ -38,11 +59,29 @@ Equivalent mutants:
 
 Message-text mutants:
 
+### harbor_research_runner.evidence_bundle.trials
+
+1 mutant changes only the separator in the `ValueError` text listing trials without verdict events.
+
+### harbor_research_runner.evidence_bundle.build
+
+6 mutants change only the digest-mismatch exception text, report whitespace, or verification log text.
+
 ### harbor_research_runner.run.loop
 
 47 survivors change only human-readable exception or log text. They do not alter records, return values, or a documented remedy.
 
 Not unit-testable:
+
+### harbor_research_runner.evidence_bundle.trials
+
+- `harbor_research_runner.evidence_bundle.trials.x_build_trial_rows__mutmut_3` and `harbor_research_runner.evidence_bundle.trials.x_build_trial_rows__mutmut_96`: distinguishing the default text encoding from UTF-8 requires changing the interpreter's locale encoding, which is not an injectable boundary for these functions.
+
+### harbor_research_runner.evidence_bundle.build
+
+- `harbor_research_runner.evidence_bundle.build.x_build__mutmut_133` and `harbor_research_runner.evidence_bundle.build.x_build__mutmut_135`: using the system temporary directory differs only when that directory and the requested output are on separate filesystems; this runner has no injectable filesystem boundary and the test host exposes no such deterministic mount.
+- `harbor_research_runner.evidence_bundle.build.x_build__mutmut_168`, `harbor_research_runner.evidence_bundle.build.x_build__mutmut_169`, `harbor_research_runner.evidence_bundle.build.x_build__mutmut_170`, `harbor_research_runner.evidence_bundle.build.x_build__mutmut_171`, `harbor_research_runner.evidence_bundle.build.x_build__mutmut_172` and `harbor_research_runner.evidence_bundle.build.x_build__mutmut_173`: these affect only restoration after the temporary-directory rename fails; the public function has no filesystem-failure injection point, and inducing a rename race would make a unit test nondeterministic.
+- `harbor_research_runner.evidence_bundle.build.x_build__mutmut_175`: this affects temporary-directory cleanup after an earlier filesystem exception, which cannot be induced through the public inputs without patching the filesystem boundary.
 
 ### harbor_research_runner.run.loop
 
@@ -50,7 +89,11 @@ Not unit-testable:
 
 - `xǁRunSessionǁstart_services__mutmut_{5,8,9,47,51,53,54,57,58,59,64,66,68,69,72,73,74,76,77,78,79,80,81,82,83,84,85,86,87,89,91,92,93,99,101,103,104,107,108,109,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,130,132,133,136,137,138,140,144,157,158,164,166,167,171}`.
 
-Simplification candidates (class 5):
+Simplification candidates:
+
+### harbor_research_runner.evidence_bundle.build
+
+- `harbor_research_runner.evidence_bundle.build.x_build__mutmut_176`: after a successful replace, `build` deletes the backup folder and the `finally` block deletes it again, so the `finally` deletion runs only on the error path. Removing the first deletion leaves one cleanup that the replace test covers.
 
 ### harbor_research_runner.run.loop
 
@@ -120,24 +163,3 @@ These mutations are reachable only through private helpers or active lifecycle s
 - `x__pass_loop__mutmut_162`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
 - `x__pass_loop__mutmut_163`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
 - `x__pass_loop__mutmut_164`: this branch needs pass-loop and lifeline state unavailable through the public fake setup.
-
-Case-only file names:
-
-These mutations only change the case of a file or folder name and are checked by the orchestrator on a case-sensitive volume:
-
-- `x__append_event__mutmut_5` (`run-events.jsonl`)
-- `x__attach_run_log__mutmut_10` (`runner.log`)
-- `x__current_slots_status__mutmut_5` (`run-events.jsonl`)
-- `x__current_slots_status__mutmut_10` (`harbor-job`)
-- `x__set_aside_trials__mutmut_5`, `x__set_aside_trials__mutmut_19` (`run-events.jsonl`)
-- `x_resume_run__mutmut_33`, `x_resume_run__mutmut_170` (`run-events.jsonl`)
-- `x_resume_run__mutmut_181` (`harbor-job`)
-- `x_run_job__mutmut_119` (compose-host config)
-- `x_run_job__mutmut_126` (canary-job config)
-- `x_run_job__mutmut_137` (`CANARY-JOB` directory)
-- `x_run_job__mutmut_221`, `x_run_job__mutmut_228` (main-job config)
-- `xǁRunSessionǁcreate__mutmut_117` (machine-check file)
-- `xǁRunSessionǁcreate__mutmut_124`, `xǁRunSessionǁload__mutmut_5` (run-metadata file)
-- `xǁRunSessionǁstart_services__mutmut_90` (docker oom log)
-- `x__pass_loop__mutmut_{26,39,79,110,125}` (`harbor-job` directory)
-- `x__trials_left__mutmut_4` (`harbor-job` directory)
