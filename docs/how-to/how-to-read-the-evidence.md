@@ -40,8 +40,9 @@ JSONL files contain one UTF-8 JSON object per line. Gzip files are compressed JS
 | `upstream_errors` | Counted upstream errors exceeded the configured tolerance. |
 | `upstream_slow` | Successful responses with completion tokens had an aggregate output rate below the configured floor. |
 | `no_verdict` | There is no grader reward and the failure was not in the verifier phase. |
+| `run_halted` | The run halted while the proxy trial was open, so the otherwise valid result is rerun. |
 
-   The instrument identifies the source of an invalid verdict: Harbor, the host, or the proxy. A trial can also be unmeasured. The `unmeasured_reason` values are `request_not_recorded` (a request start has no matching end although the trial closed), `close_not_recorded` (the trial finished but the proxy never recorded its close, so its deadline was not enforced), `ledger_damaged` (a ledger line or sequence gap falls within the trial), and `no_open_row` (requests exist without a trial-open row). Unmeasured trials are not rerun and prevent a run from being complete.
+   The instrument identifies the source of an invalid verdict: Harbor, the host, or the proxy. A trial can also be unmeasured. The `unmeasured_reason` values are `request_not_recorded` (a request start has no matching end although the trial closed), `close_not_recorded` (the trial finished but the proxy never recorded its close, so its deadline was not enforced), `ledger_damaged` (a ledger line or sequence gap falls within the trial), `no_open_row` (a result or requests exist without a trial-open row), `phase_times_missing` (the trial reached the agent phase but has no usable agent/verifier time window), and `usage_incomplete` (an `ok` request has a null prompt or completion token count). Missing or non-numeric upstream token counters are recorded as null; an absent usage object leaves all token counters unknown. Token totals in `trials.jsonl` sum the values that are known, while `measured: false` and `unmeasured_reason` identify incomplete usage. Unmeasured trials are not rerun and prevent a run from being complete.
 
 5. **Interpret labels on valid trials.**
 

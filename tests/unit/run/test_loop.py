@@ -36,10 +36,20 @@ from harbor_research_runner.run.loop import (
     make_read_only,
     resume_run,
     run_job,
+    sampler_command,
     slots_status,
 )
 from harbor_research_runner.run.tool_identity import ToolIdentity
 from harbor_research_runner.run.watch import WatchResult
+
+
+def test_sampler_command_writes_inside_the_run_directory(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+
+    command = sampler_command(run_dir, 42)
+
+    assert command[command.index("--out") + 1] == str(run_dir / "resource-stats.jsonl")
+
 
 _PROFILE = {
     "arch": "arm64",
@@ -129,6 +139,31 @@ def test_slots_status_does_not_count_deferred_trial_against_set_aside_cap() -> N
             ).to_row()
         ],
         [SetAside(1.0, "trial-old", "task-a", "arm-a", "deferred").to_row()],
+        {"trial-a"},
+        Limits(max_set_asides_per_slot=1, verifier_timeout_multiplier=1.0),
+    )
+
+    assert status.to_set_aside == ["trial-a"]
+
+
+def test_slots_status_does_not_count_run_halted_trial_against_set_aside_cap() -> None:
+    run_halted = TrialVerdict(
+        t=1.0,
+        trial="trial-a",
+        task="task-a",
+        arm="arm-a",
+        valid=False,
+        reason="run_halted",
+        instrument=None,
+        labels=[],
+        measured=True,
+        unmeasured_reason=None,
+    ).to_row()
+    status = slots_status(
+        [("task-a", "arm-a")],
+        1,
+        [run_halted],
+        [SetAside(1.0, "trial-old", "task-a", "arm-a", "run_halted").to_row()],
         {"trial-a"},
         Limits(max_set_asides_per_slot=1, verifier_timeout_multiplier=1.0),
     )
@@ -311,7 +346,7 @@ def dependencies(
     return RunDeps(
         checks=CheckDeps(
             select_adapter=lambda *_args: None,
-            measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
+            measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
             inventory=lambda: None,
             live_run=lambda _path: None,
             host_lock=HostLock(tmp_path / "host.lock"),
@@ -348,7 +383,7 @@ def _resume_dependencies(
     return RunDeps(
         checks=CheckDeps(
             select_adapter=lambda *_args: object(),
-            measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
+            measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
             inventory=lambda: Inventory(True, "ok", (), ()),
             live_run=lambda _path: None,
             host_lock=HostLock(tmp_path / "resume-host.lock"),
@@ -552,7 +587,7 @@ def _launch_with_machine_check(
     started: list[bool] = []
     checks = CheckDeps(
         select_adapter=lambda *_args: object(),
-        measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
+        measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
         inventory=lambda: Inventory(True, "ok", (), ()),
         live_run=lambda _path: None,
         host_lock=HostLock(tmp_path / "host.lock"),

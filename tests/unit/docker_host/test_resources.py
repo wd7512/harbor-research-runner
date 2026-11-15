@@ -181,6 +181,41 @@ def test_measure_reads_linux_meminfo_and_host_metrics(tmp_path: Path) -> None:
     assert all(kwargs["timeout"] == 5 for _, kwargs in calls if _[:2] == ["docker", "info"])
 
 
+def test_measure_checks_disk_space_on_the_requested_path(tmp_path: Path, monkeypatch) -> None:
+    requested = tmp_path / "run-volume"
+    seen = []
+    usage = SimpleNamespace(free=10 * 1024**3)
+    monkeypatch.setattr("shutil.disk_usage", lambda path: seen.append(path) or usage)
+
+    def read_text(path: Path, **kwargs) -> str:
+        if str(path) == "/proc/meminfo":
+            return "MemAvailable: 8388608 kB\n"
+        return "pswpout 0\n"
+
+    def run(argv, **kwargs):
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    measure(run=run, read_text=read_text, disk_path=requested)
+
+    assert seen == [requested]
+
+
+def test_measure_requires_a_disk_path(monkeypatch) -> None:
+    usage = SimpleNamespace(free=10 * 1024**3)
+    monkeypatch.setattr("shutil.disk_usage", lambda _path: usage)
+
+    def read_text(path: Path, **kwargs) -> str:
+        if str(path) == "/proc/meminfo":
+            return "MemAvailable: 8388608 kB\n"
+        return "pswpout 0\n"
+
+    def run(argv, **kwargs):
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with pytest.raises(TypeError):
+        measure(run=run, read_text=read_text)
+
+
 def test_measure_uses_macos_vm_stat_swapouts_when_proc_is_absent(tmp_path: Path) -> None:
     def read_text(path: Path, **kwargs) -> str:
         raise FileNotFoundError(path)
@@ -239,11 +274,11 @@ def test_measure_first_sample_and_interval_swapouts(tmp_path: Path) -> None:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         raise AssertionError(argv)
 
-    first, first_counter = measure(None, run, read_text, tmp_path)
+    first, first_counter = measure(None, run, read_text, disk_path=tmp_path)
     counter = 15
-    second, second_counter = measure(first_counter, run, read_text, tmp_path)
+    second, second_counter = measure(first_counter, run, read_text, disk_path=tmp_path)
     counter = 2
-    reset, reset_counter = measure(second_counter, run, read_text, tmp_path)
+    reset, reset_counter = measure(second_counter, run, read_text, disk_path=tmp_path)
 
     assert first.swapped_out_pages == 0
     assert second.swapped_out_pages == 3

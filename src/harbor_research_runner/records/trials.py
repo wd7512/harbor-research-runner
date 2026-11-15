@@ -1,6 +1,8 @@
 import json
 from dataclasses import dataclass, fields
 
+CAP_EXEMPT_REASONS = frozenset({"deferred", "run_halted"})
+
 
 @dataclass(frozen=True)
 class TrialRow:

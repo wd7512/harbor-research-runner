@@ -9,18 +9,24 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
-from harbor_research_runner.evidence_bundle.manifest import write_manifest
 from harbor_research_runner.evidence_bundle.report import render_report
 from harbor_research_runner.evidence_bundle.secret_scan import key_values, scan
-from harbor_research_runner.evidence_bundle.trials import build_trial_rows
+from harbor_research_runner.evidence_bundle.trials import (
+    build_trial_rows,
+    unjudged_trial_names,
+)
 from harbor_research_runner.records.jsonl import append_row, read_rows
 from harbor_research_runner.records.machine_check import read as read_machine_check
+from harbor_research_runner.records.manifest import write_manifest
+from harbor_research_runner.records.proxy_ledger import is_valid_row
 
 
 def merged_requests(ledger_rows: list[dict]) -> list[dict]:
     starts: dict[str, dict] = {}
     ends: dict[str, dict] = {}
     for row in ledger_rows:
+        if not is_valid_row(row):
+            continue
         if row.get("type") == "request_start":
             starts[row["request_id"]] = row
         elif row.get("type") == "request_end":
@@ -100,6 +106,7 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
         planned_slots,
         repetitions,
         machine_check=machine_check,
+        unjudged_trials=len(unjudged_trial_names(run_dir)),
     )
     ledger_rows = read_rows(run_dir / "proxy-ledger.jsonl").rows
     resource_path = run_dir / "resource-stats.jsonl"

@@ -35,6 +35,7 @@ from harbor_research_runner.records.run_events import (
     Resume,
     StopLaunchingAt,
 )
+from harbor_research_runner.records.trials import CAP_EXEMPT_REASONS
 from harbor_research_runner.run import canary, process_group, watch
 from harbor_research_runner.run.checks import CheckDeps, CheckResult, resolve_tasks, run_checks
 from harbor_research_runner.run.tool_identity import ToolIdentity
@@ -55,6 +56,20 @@ HOST_FIELDS = {
 
 def _deadline_timestamp(value: str | None) -> float | None:
     return None if value is None else datetime.fromisoformat(value).timestamp()
+
+
+def sampler_command(run_dir: Path, lifeline_fd: int) -> list[str]:
+    return [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "harbor_research_runner.docker_host.sampler",
+        "--out",
+        str(run_dir / "resource-stats.jsonl"),
+        "--lifeline-fd",
+        str(lifeline_fd),
+    ]
 
 
 @dataclass(frozen=True)
@@ -217,17 +232,7 @@ class RunSession:
         self._lifeline_write_fd = write_fd
         try:
             self._sampler = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
-                    "-m",
-                    "harbor_research_runner.docker_host.sampler",
-                    "--out",
-                    str(self.run_dir / "resource-stats.jsonl"),
-                    "--lifeline-fd",
-                    str(read_fd),
-                ],
+                sampler_command(self.run_dir, read_fd),
                 env=environment,
                 pass_fds=(read_fd,),
                 stdout=subprocess.DEVNULL,
@@ -355,7 +360,7 @@ def slots_status(
     valid_counts: dict[tuple[str, str], int] = {}
     set_aside_counts: dict[tuple[str, str], int] = {}
     for event in set_aside_events:
-        if event.get("type") == "set_aside" and event.get("reason") != "deferred":
+        if event.get("type") == "set_aside" and event.get("reason") not in CAP_EXEMPT_REASONS:
             slot = (event["task"], event["arm"])
             set_aside_counts[slot] = set_aside_counts.get(slot, 0) + 1
 
@@ -370,7 +375,7 @@ def slots_status(
             valid_counts[slot] = valid_counts.get(slot, 0) + 1
             if not event["measured"]:
                 unmeasured_final.append(trial)
-        elif event.get("reason") == "deferred":
+        elif event.get("reason") in CAP_EXEMPT_REASONS:
             to_set_aside.append(trial)
         elif set_aside_counts.get(slot, 0) < limits.max_set_asides_per_slot:
             to_set_aside.append(trial)
