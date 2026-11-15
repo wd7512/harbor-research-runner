@@ -23,6 +23,7 @@ from harbor_research_runner.harness.manifest import (
     verify_arm,
 )
 from harbor_research_runner.harness.request_path import request_path
+from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.job_config.job_file import Job
 from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.records.limits import Limits, host_breach
@@ -222,6 +223,23 @@ def run_checks(
                 f"job concurrency {job.concurrency} exceeds checked concurrency "
                 f"{machine_check.concurrency}"
             )
+        if job.tasks.kind == "path" and job.tasks.path is not None:
+            checked_digests = {task.get("name"): task.get("digest") for task in machine_check.tasks}
+            drifted: list[str] = []
+            for name in resolve_tasks(job, machine_check):
+                recorded = checked_digests.get(name)
+                try:
+                    current = task_content_hash(Path(job.tasks.path) / name)
+                except OSError:
+                    drifted.append(name)
+                    continue
+                if not isinstance(recorded, str) or current != recorded:
+                    drifted.append(name)
+            if drifted:
+                mismatches.append(
+                    "path task content differs from the machine check for "
+                    f"{', '.join(drifted)}; rerun `hrr check-machine`"
+                )
         if mismatches:
             return False, "; ".join(mismatches)
         return True, "machine check matches this job and host"
