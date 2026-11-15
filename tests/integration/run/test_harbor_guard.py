@@ -76,6 +76,21 @@ def _wait_for_file(path: Path, timeout: float = 2.0) -> str:
     raise AssertionError(f"{path} was not written")
 
 
+def _wait_for_file_to_stabilize(path: Path, *, quiet_s: float, timeout_s: float) -> str:
+    deadline = time.monotonic() + timeout_s
+    last_value = path.read_text(encoding="utf-8")
+    unchanged_since = time.monotonic()
+    while time.monotonic() < deadline:
+        time.sleep(0.01)
+        value = path.read_text(encoding="utf-8")
+        if value != last_value:
+            last_value = value
+            unchanged_since = time.monotonic()
+        elif time.monotonic() - unchanged_since >= quiet_s:
+            return value
+    raise AssertionError(f"{path} did not stabilize")
+
+
 @pytest.mark.timeout(5)
 def test_harbor_guard_signals_child_when_lifeline_closes(tmp_path: Path) -> None:
     child, _heartbeat, terminated = _heartbeat_child(tmp_path, ignore_term=False)
@@ -97,17 +112,25 @@ def test_harbor_guard_signals_child_when_lifeline_closes(tmp_path: Path) -> None
 @pytest.mark.timeout(5)
 def test_harbor_guard_kills_group_after_lifeline_grace(tmp_path: Path) -> None:
     child, heartbeat, terminated = _heartbeat_child(tmp_path, ignore_term=True)
-    process, write_fd = _guard_start(tmp_path, child, grace_s=0.1)
+    grace_s = 0.1
+    process, write_fd = _guard_start(tmp_path, child, grace_s=grace_s)
     try:
         first_heartbeat = _wait_for_file(heartbeat)
+        heartbeat_deadline = time.monotonic() + 2.0
+        while (
+            heartbeat.read_text(encoding="utf-8") == first_heartbeat
+            and time.monotonic() < heartbeat_deadline
+        ):
+            time.sleep(0.01)
+        assert heartbeat.read_text(encoding="utf-8") != first_heartbeat
         os.close(write_fd)
         write_fd = -1
         assert process.wait(timeout=2.0) == -signal.SIGKILL
-        time.sleep(0.05)
-        stopped_heartbeat = heartbeat.read_text(encoding="utf-8")
-        time.sleep(0.05)
-        assert heartbeat.read_text(encoding="utf-8") == stopped_heartbeat
-        assert stopped_heartbeat != first_heartbeat
+        _wait_for_file_to_stabilize(
+            heartbeat,
+            quiet_s=grace_s,
+            timeout_s=grace_s * 4,
+        )
         assert not terminated.exists()
     finally:
         if process.poll() is None:
