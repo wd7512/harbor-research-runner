@@ -45,10 +45,12 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
             memory_peaks[key] = max(memory_peaks.get(key, float("-inf")), used_mb)
     machine_check = json.loads((run_dir / "machine-check.json").read_text(encoding="utf-8"))
     task_memory = {row["name"]: row.get("memory_mb") for row in machine_check["tasks"]}
+    sample_locations = {"set-aside-trials": "harbor-job"}
     candidates: list[tuple[TrialRow, float]] = []
     for location in ("harbor-job", "set-aside-trials", "canary-job"):
         for trial_dir in trial_folders(run_dir / location):
             facts = read_trial(trial_dir)
+            sample_location = sample_locations.get(location, location)
             verdict = verdicts.get(facts.trial)
             if verdict is None:
                 continue
@@ -101,10 +103,10 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 measured=verdict["measured"],
                 unmeasured_reason=verdict["unmeasured_reason"],
                 oom_source=verdict.get("oom_source"),
-                peak_memory_mb=memory_peaks.get((location, facts.trial)),
+                peak_memory_mb=memory_peaks.get((sample_location, facts.trial)),
                 memory_limit_mb=(
-                    memory_limits.get((location, facts.trial))
-                    if location == "canary-job"
+                    memory_limits.get((sample_location, facts.trial))
+                    if sample_location == "canary-job"
                     else task_memory.get(facts.task)
                 ),
                 requests=len(ends),
