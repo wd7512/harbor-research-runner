@@ -319,7 +319,7 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 | Reason | Condition |
 |---|---|
 | `quota_exhausted` | any `request_end` row with that status since the last `harbor_start` |
-| `upstream_invalid_streak` | the last `halt_after_consecutive_invalid` trial verdicts all have instrument `proxy` and `valid` false |
+| `upstream_invalid_streak` | the last `halt_after_consecutive_invalid` trial verdicts written since the latest `resume` event all have instrument `proxy` and `valid` false |
 | `zero_billed_window` | at least one trial is open and no `ok` `request_end` row for `zero_billed_window_s` |
 | `proxy_dead` | the proxy process has exited |
 | `oom_watch_dead` | the Docker OOM watcher process has exited |
