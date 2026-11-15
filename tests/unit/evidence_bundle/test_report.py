@@ -28,6 +28,7 @@ def _render(folder: str, extra_events: list[dict] | None = None) -> str:
         planned_slots,
         metadata["job"]["repetitions"],
         machine_check=read(run_dir / "machine-check.json"),
+        unjudged_trials=1 if folder == "retries" else 0,
     )
 
 
@@ -46,6 +47,11 @@ def test_retried_run_report_matches_golden():
     expected = (FIXTURES / "retries" / "expected-report.md").read_text(encoding="utf-8")
 
     assert _render("retries") == expected
+
+
+def test_reports_trials_not_yet_judged_for_clean_and_unfinished_runs():
+    assert "| Trials not yet judged | 0 |" in _render("clean")
+    assert "| Trials not yet judged | 1 |" in _render("retries")
 
 
 def test_report_lists_machine_check_exclusions():
@@ -90,6 +96,7 @@ def test_report_includes_host_memory_cap_and_rootless_status():
         list(product(tasks, [arm["label"] for arm in metadata["arms"]])),
         metadata["job"]["repetitions"],
         machine_check=read(run_dir / "machine-check.json"),
+        unjudged_trials=0,
     )
 
     assert "Machine: fixture-host, memory_cap=kernel, rootless=false" in report

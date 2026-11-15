@@ -1,0 +1,1 @@
+Evidence bundles skip and count unjudged trial folders in unfinished runs, and refuse finished runs with unjudged trials. Malformed proxy-ledger accounting rows are excluded from trial totals and merged requests.
