@@ -209,7 +209,8 @@ def test_canary_container_is_sampled_and_killed_above_canary_limit(tmp_path: Pat
     def run(command):
         commands.append(command)
         if "stats" in command:
-            output = '{"Container":"hrr-fixture-mem","MemUsage":"513MiB / 1GiB"}\n'
+            used = canary_memory_mb() + 1
+            output = f'{{"Container":"hrr-fixture-mem","MemUsage":"{used}MiB / 4GiB"}}\n'
         elif "ps" in command:
             output = json.dumps(
                 {
