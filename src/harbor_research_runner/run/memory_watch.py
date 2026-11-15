@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -18,6 +19,9 @@ from harbor_research_runner.records.jsonl import append_row, open_for_append
 from harbor_research_runner.records.machine_check import read as read_machine_check
 from harbor_research_runner.run.canary import canary_memory_mb
 from harbor_research_runner.trial_validity.verdict import TrialFacts, compose_project
+
+logger = logging.getLogger(__name__)
+MAX_CONSECUTIVE_SAMPLE_FAILURES = 30
 
 
 def _trial_memory_data(
@@ -131,6 +135,7 @@ def run_memory_watch(
     *,
     now: Callable[[], float] = time.time,
     wait: Callable[[threading.Event, float], object] = threading.Event.wait,
+    run: Callable = container_memory._run,
 ) -> int:
     stopped = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopped.set())
@@ -138,16 +143,26 @@ def run_memory_watch(
     out_fd = open_for_append(run_dir / "memory-watch.jsonl")
     killed: set[str] = set()
     trial_cache: dict[str, TrialFacts] = {}
+    consecutive_failures = 0
     try:
         while not stopped.is_set():
-            sample_once(
-                run_dir,
-                out_fd,
-                memory_cap,
-                now=now,
-                killed=killed,
-                trial_cache=trial_cache,
-            )
+            try:
+                sample_once(
+                    run_dir,
+                    out_fd,
+                    memory_cap,
+                    now=now,
+                    run=run,
+                    killed=killed,
+                    trial_cache=trial_cache,
+                )
+            except (subprocess.CalledProcessError, OSError) as exc:
+                consecutive_failures += 1
+                logger.warning("memory watcher sample failed: %s", exc)
+                if consecutive_failures >= MAX_CONSECUTIVE_SAMPLE_FAILURES:
+                    return 1
+            else:
+                consecutive_failures = 0
             wait(stopped, 2.0)
         return 0
     finally:

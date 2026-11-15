@@ -106,3 +106,24 @@ def test_responses_identity_stream_preserves_upstream_bytes(tmp_path):
         upstream.stop()
 
     assert b"".join(chunks) == b"".join(raw)
+
+
+def test_chat_stream_to_responses_records_cached_read_tokens(tmp_path):
+    raw = [
+        b'event: response.completed\r\ndata: {"type":"response.completed","response":{"id":"resp_1","model":"served-model","status":"completed","usage":{"input_tokens":12,"output_tokens":3,"input_tokens_details":{"cached_tokens":7}}}}\r\n\r\n',
+    ]
+    upstream = FakeUpstream([RawResponse(raw)], model="served-model")
+    upstream_url = upstream.start()
+    ledger, client, deps, adapter = _relay(
+        tmp_path, upstream_url, "responses", "/v1/chat/completions"
+    )
+    try:
+        response = relay(_request(), {}, "trial-1", deps, adapter)
+        list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = read_rows(tmp_path / "proxy-ledger.jsonl").rows[-1]
+    assert end["cached_read_tokens"] == 7
