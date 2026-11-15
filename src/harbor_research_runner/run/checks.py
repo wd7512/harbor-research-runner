@@ -103,6 +103,7 @@ def host_resources_check(
     job: Job, deps: CheckDeps, multiplier: float, disk_path: Path
 ) -> tuple[bool, str]:
     limits = Limits.from_dict(job.limit_overrides, job.repetitions, multiplier)
+    disk_path.mkdir(parents=True, exist_ok=True)
     sample, _ = deps.measure(disk_path=disk_path)
     if host_breach(sample.to_row(), limits):
         return False, "host resource limits are breached"

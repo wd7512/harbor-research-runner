@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import shutil
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -654,6 +655,17 @@ def test_host_resources_check_measures_runs_directory(tmp_path: Path) -> None:
     _run(tmp_path, deps=deps)
 
     assert paths == [tmp_path / "runs"]
+
+
+def test_host_resources_check_passes_before_the_runs_directory_exists(tmp_path: Path) -> None:
+    def measure(*, disk_path: Path) -> tuple[Sample, int]:
+        shutil.disk_usage(disk_path)
+        return _sample(), 0
+
+    assert not (tmp_path / "runs").exists()
+    result = _by_name(_run(tmp_path, deps=_deps(tmp_path, measure=measure)), "host_resources")
+
+    assert result.ok, result.detail
 
 
 def test_host_resources_check_ignores_swapouts_before_launch(tmp_path: Path) -> None:
