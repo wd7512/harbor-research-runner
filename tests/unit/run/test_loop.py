@@ -417,6 +417,26 @@ def test_finish_returns_three_when_slot_stays_incomplete(tmp_path: Path) -> None
     assert finish["exit_code"] == 3
 
 
+def test_nonzero_harbor_exit_with_every_trial_folder_finishes(tmp_path: Path) -> None:
+    session = Session(tmp_path / "run", set_aside_limit=1)
+    commands: list[list[str]] = []
+    stopped: list[bool] = []
+    session.event(SetAside(0.5, "earlier", "task-a", "arm-a", "upstream_errors"))
+
+    def watch_fn(current, _process, _job_dir, _started):
+        _trial_dir(current.run_dir, "trial-invalid")
+        current.event(_trial_verdict("trial-invalid", valid=False))
+        return WatchResult("exited", 1, None, None)
+
+    deps = dependencies(tmp_path, watch_fn, commands, stopped)
+
+    result = _pass_loop(session, [("task-a", "arm-a")], deps, 1)
+
+    events = jsonl.read_rows(session.run_dir / "run-events.jsonl").rows
+    assert result == 3
+    assert not any(row["type"] == "halt" for row in events)
+
+
 def test_harbor_failure_without_trial_folder_halts_resumably(tmp_path: Path) -> None:
     session = Session(tmp_path / "run")
     commands: list[list[str]] = []

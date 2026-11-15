@@ -326,7 +326,7 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 | `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit; swap breaches only when pages were swapped out since the previous sample above `max_swapped_out_pages` |
 | `inactive` | no ledger row and no new `result.json` for longer than the largest task agent budget x Harbor's timeout multiplier + the largest verifier budget x `verifier_timeout_multiplier` + `inactivity_margin_s` |
 | `deadline` | the timezone-aware launch deadline plus two watch poll intervals has passed and no trial opened in this pass remains unjudged |
-| `harbor_exit` | Harbor exited on its own, nothing is left to set aside, and Harbor's exit code was non-zero or planned trials have no trial folder; the detail names the exit code. The run stays resumable |
+| `harbor_exit` | Harbor exited on its own, nothing is left to set aside, and planned trials have no trial folder; the detail names Harbor's exit code. The run stays resumable. A non-zero exit code alone is not a halt: Harbor exits non-zero in normal flows |
 
 Harbor's exception labels are never an input to a halt rule.
 

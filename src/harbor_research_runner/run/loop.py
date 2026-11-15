@@ -640,7 +640,7 @@ def _pass_loop(
         watch.judge_all_remaining(session, session.run_dir / "harbor-job", judged, deps.now())
         status = _current_slots_status(session, planned)
         if not status.to_set_aside:
-            if returncode != 0 or _trials_left(session, status, planned):
+            if _trials_left(session, status, planned):
                 detail = f"Harbor exited with code {returncode}; planned trials remain"
                 session.event(Halt(deps.now(), "harbor_exit", detail))
                 deps.stop_services(session)
