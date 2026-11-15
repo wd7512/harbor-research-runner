@@ -17,6 +17,7 @@ hrr = "harbor_research_runner.cli:main"
 
 [dependency-groups]
 dev = [
+    "mutmut==3.7.0",
     "pytest==9.1.1",
     "pytest-timeout==2.4.0",
     "pytest-xdist==3.8.0",
@@ -62,6 +63,28 @@ markers = [
     "live: real OpenCode, a real model, one real task; run before a release by the owner",
     "contract: an end-to-end test that pins one Harbor behaviour we rely on",
     "replay: replays the new rules on OLD's committed evidence; needs HRR_OLD_REPO, not in the gate",
+]
+
+[tool.mutmut]
+source_paths = ["src"]
+only_mutate = [
+    "src/harbor_research_runner/trial_validity/verdict.py",
+    "src/harbor_research_runner/run/loop.py",
+    "src/harbor_research_runner/run/checks.py",
+    "src/harbor_research_runner/evidence_bundle/trials.py",
+    "src/harbor_research_runner/evidence_bundle/build.py",
+    "src/harbor_research_runner/evidence_bundle/verify.py",
+    "src/harbor_research_runner/records/proxy_ledger.py",
+    "src/harbor_research_runner/records/jsonl.py",
+]
+also_copy = ["scripts/", "README.md", "LICENSE", ".github/"]
+pytest_add_cli_args = ["-p", "scripts.mutation_pass"]
+pytest_add_cli_args_test_selection = [
+    "tests/unit",
+    "tests/integration",
+    "--deselect=tests/unit/test_cli.py::test_cli_does_not_read_environment_variables_by_name",
+    "--ignore=tests/unit/test_import_rule.py",
+    "--ignore=tests/integration/test_import_rule.py",
 ]
 
 [tool.devtools.gate]
