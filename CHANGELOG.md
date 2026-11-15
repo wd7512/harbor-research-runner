@@ -87,6 +87,7 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 - A run now keeps a write-once copy of its machine check as `machine-check.json` in the run folder, from the same bytes whose SHA-256 is in `run-metadata.json`, so `hrr build-evidence` finds it.
 - A run that finishes after a halt on Linux Docker Engine no longer crashes on files a container wrote as another user; they are left as found and named in the run log.
 - Classify upstream 401, 402 and 403 responses as `upstream_auth`, count them against trial validity and allow failover. Document the status in the proxy ledger contract.
+- Evidence rows for set-aside trials now include memory samples recorded while the trial ran in Harbor's job folder.
 - Explorer comparisons now use only the selected arm from each selected evidence bundle. The comparison table and paired result use the same selected observations.
 - Harbor failures that leave planned trials unlaunched now halt runs resumably instead of finishing them. The halt records the Harbor exit code, and the pass loop and resume path share the same remaining-trials check.
 - Harness image builds and version checks use the host network when Docker has no bridge network. Bridge-enabled hosts keep the existing Docker commands.
@@ -96,12 +97,14 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 - Model cards for OpenCode Go and OpenRouter list one key variable each (`OPENCODE_GO_API_KEY`, `OPENROUTER_API_KEY`); the second name was an alias in the old tool, but here every listed name is a required failover key, so runs refused unless both were set.
 - Non-streaming proxy responses now wait for the complete upstream body before choosing the harness status. Stalls and transport failures return retryable errors whose status matches the proxy ledger.
 - On a host without a bridge network, the overlay now also sets `build.network: host` when `tasks.images: build`, so BuildKit's `RUN` steps no longer fail with `network bridge not found`.
+- Pending deferred trials are always set aside, even when their slot has reached its set-aside cap. They do not consume the cap, so ordinary invalid trials remain subject to it.
 - Pin development tools v0.2.1 so the layout check detects source files whose mirrored tests are missing. The placeholder CLI is explicitly exempt until its command implementation lands.
 - Proxy startup replays the valid rows after torn or unparseable ledger lines and logs their locations. Trial verdicts remain responsible for marking affected records unmeasured.
 - Refuse to resume runs that stopped before their first main Harbor pass, preserving the run folder for inspection and directing the operator to start a new run.
 - Reset the upstream invalid streak window after each resume, so failures from an earlier pass do not halt the resumed run. Historical verdicts remain in the event log for judging and evidence.
 - Resolve relative local task paths against the job file when parsing it. Generated Harbor configs and resumed runs now keep the absolute task location.
 - Resume events now record the active runner's version and commit while preserving the launch metadata unchanged.
+- Runs now refuse to start when the machine check and task filters resolve to no tasks.
 - Slowest-first task ordering now reads Git task timeouts from Harbor's downloaded task folder. Local task paths keep their existing resolution behavior.
 - Streamed chat requests routed to a Responses API now record cached input tokens from the normalized usage callback. This keeps cached token totals available to evidence and cost estimates.
 - The 2.x arm passed `--model` before `run`, which OpenCode 2.2.7 rejects.
