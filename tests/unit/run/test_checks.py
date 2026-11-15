@@ -982,6 +982,37 @@ def test_machine_check_matches_lists_every_missing_path_task(tmp_path: Path) -> 
     )
 
 
+def test_machine_check_matches_reports_path_tasks_that_are_not_folders(
+    tmp_path: Path,
+) -> None:
+    task_root = tmp_path / "tasks"
+    task_root.mkdir()
+    (task_root / "task-a").write_text("not a task folder", encoding="utf-8")
+    check = _machine_check(
+        task_source={"path": str(task_root)},
+        included=["task-a", "task-b"],
+        tasks=[
+            {"name": "task-a", "memory_mb": 512, "digest": "sha256:0"},
+            {"name": "task-b", "memory_mb": 512, "digest": "sha256:0"},
+        ],
+    )
+    job = replace(
+        _job(include=("task-a", "task-b")),
+        tasks=TaskSource("path", None, str(task_root), None, None, ("task-a", "task-b"), ()),
+    )
+
+    result = _by_name(
+        _run(tmp_path, job=job, deps=_deps(tmp_path, read_machine_check=lambda _path: check)),
+        "machine_check_matches",
+    )
+
+    assert not result.ok
+    assert result.detail == (
+        "path task content differs from the machine check for task-a, task-b; "
+        "rerun `hrr check-machine`"
+    )
+
+
 def test_withdrawn_model_card_without_reason_has_default_detail(tmp_path: Path) -> None:
     card = replace(_card(withdrawn=True), reason=None)
 
