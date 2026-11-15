@@ -17,7 +17,6 @@ hrr = "harbor_research_runner.cli:main"
 
 [dependency-groups]
 dev = [
-    "mutmut==3.7.0",
     "pytest==9.1.1",
     "pytest-timeout==2.4.0",
     "pytest-xdist==3.8.0",
@@ -26,6 +25,7 @@ dev = [
     "ty==0.0.78",
     "wills-agentic-tools",
 ]
+mutation = ["mutmut==3.7.0"]
 
 [build-system]
 requires = ["hatchling==1.32.4"]
@@ -98,6 +98,7 @@ unit_tests = "tests/unit"
 tests_dir = "tests"
 mirror_exceptions = [
     "tests/unit/test_skeleton.py",
+    "tests/unit/scripts/test_mutation_pass.py",
     "tests/unit/test_import_rule.py",
     "tests/integration/test_import_rule.py",
     "src/harbor_research_runner/cli.py",

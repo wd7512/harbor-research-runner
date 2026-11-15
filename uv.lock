@@ -474,7 +474,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "mutmut" },
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
@@ -482,6 +481,9 @@ dev = [
     { name = "towncrier" },
     { name = "ty" },
     { name = "wills-agentic-tools" },
+]
+mutation = [
+    { name = "mutmut" },
 ]
 
 [package.metadata]
@@ -493,7 +495,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "mutmut", specifier = "==3.7.0" },
     { name = "pytest", specifier = "==9.1.1" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
     { name = "pytest-xdist", specifier = "==3.8.0" },
@@ -502,6 +503,7 @@ dev = [
     { name = "ty", specifier = "==0.0.78" },
     { name = "wills-agentic-tools", git = "https://github.com/wd7512/wills-agentic-tools?tag=v0.2.1" },
 ]
+mutation = [{ name = "mutmut", specifier = "==3.7.0" }]
 
 [[package]]
 name = "hf-xet"
