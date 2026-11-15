@@ -24,6 +24,10 @@ def test_mem_usage_parses_supported_units(value, expected):
     assert parse_mem_usage(f"{value} / 256MiB") == pytest.approx(expected)
 
 
+def _in_container_namespace(path) -> str:
+    return "pid:[4026531836]" if str(path) == "/proc/self/ns/pid" else "pid:[4026532001]"
+
+
 def test_proc_memory_sums_pss_for_every_process_in_container_pid_namespace():
     def run(_command):
         return SimpleNamespace(stdout=json.dumps({"Pid": 100}))
@@ -47,6 +51,7 @@ def test_proc_memory_sums_pss_for_every_process_in_container_pid_namespace():
             "/proc/100/ns/pid": "pid:[4026532001]",
             "/proc/200/ns/pid": "pid:[4026532001]",
             "/proc/300/ns/pid": "pid:[4026531836]",
+            "/proc/self/ns/pid": "pid:[4026531836]",
         }
         return links[str(path)]
 
@@ -74,7 +79,7 @@ def test_proc_memory_falls_back_to_rss_for_a_process_refused_by_smaps():
         return [Path("/proc/100"), Path("/proc/200")]
 
     used_mb, reader = proc_container_memory(
-        "be3b8bd3cf84", run, read_text, list_dir, lambda _path: "pid:[4026532001]"
+        "be3b8bd3cf84", run, read_text, list_dir, _in_container_namespace
     )
 
     assert used_mb == pytest.approx((916 + 2048) / 1024)
@@ -95,7 +100,7 @@ def test_proc_memory_parses_pss_without_matching_pss_dirty():
         return [Path("/proc/618")]
 
     used_mb, reader = proc_container_memory(
-        "be3b8bd3cf84", run, read_text, list_dir, lambda _path: "pid:[4026532001]"
+        "be3b8bd3cf84", run, read_text, list_dir, _in_container_namespace
     )
 
     assert used_mb == pytest.approx(412 / 1024)
@@ -161,6 +166,8 @@ def test_proc_memory_skips_a_process_that_vanishes_mid_scan():
     def readlink(path):
         if str(path) == "/proc/619/ns/pid":
             raise FileNotFoundError(path)
+        if str(path) == "/proc/self/ns/pid":
+            return "pid:[4026531836]"
         return "pid:[4026532001]"
 
     used_mb, reader = proc_rss_mb(618, read_text=read_text, list_dir=list_dir, readlink=readlink)
@@ -186,3 +193,14 @@ def test_docker_stats_reader_matches_unfiltered_stats_rows_keyed_by_full_id():
     containers = [{"ID": "2abc7dd4e196", "Names": "hrr-fixture-mem"}]
 
     assert docker_stats_memory(run, containers) == {"2abc7dd4e196": pytest.approx(5.277)}
+
+
+def test_proc_memory_refuses_a_container_in_the_host_pid_namespace():
+    def readlink(_path):
+        return "pid:[4026531836]"
+
+    def list_dir(_path):
+        raise AssertionError("must not scan host processes")
+
+    with pytest.raises(ValueError, match="host PID namespace"):
+        proc_rss_mb(100, list_dir=list_dir, readlink=readlink)

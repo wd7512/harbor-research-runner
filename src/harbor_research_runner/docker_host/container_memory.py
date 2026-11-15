@@ -44,6 +44,8 @@ def proc_rss_mb(
     readlink: Callable[[Path], str] = os.readlink,
 ) -> tuple[float, str]:
     init_namespace = readlink(Path(f"/proc/{pid}/ns/pid"))
+    if init_namespace == readlink(Path("/proc/self/ns/pid")):
+        raise ValueError("container shares the host PID namespace")
     total_kb = 0
     used_rss = False
     for process_dir in list_dir(Path("/proc")):
