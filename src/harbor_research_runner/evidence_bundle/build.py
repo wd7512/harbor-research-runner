@@ -9,12 +9,12 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
-from harbor_research_runner.evidence_bundle.manifest import write_manifest
 from harbor_research_runner.evidence_bundle.report import render_report
 from harbor_research_runner.evidence_bundle.secret_scan import key_values, scan
 from harbor_research_runner.evidence_bundle.trials import build_trial_rows
 from harbor_research_runner.records.jsonl import append_row, read_rows
 from harbor_research_runner.records.machine_check import read as read_machine_check
+from harbor_research_runner.records.manifest import write_manifest
 
 
 def merged_requests(ledger_rows: list[dict]) -> list[dict]:
