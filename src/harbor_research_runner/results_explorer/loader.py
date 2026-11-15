@@ -9,6 +9,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 from harbor_research_runner.records.jsonl import read_rows
+from harbor_research_runner.records.manifest import verify_manifest
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.statistics.completeness import completeness
 from harbor_research_runner.statistics.paired import paired_difference
@@ -66,14 +67,9 @@ class EvidenceStore:
         manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
         metadata = json.loads((path / "run-metadata.json").read_text(encoding="utf-8"))
         rows = read_rows(path / "trials.jsonl").rows
-        events_path = path / "run-events.jsonl"
-        events = read_rows(events_path).rows if events_path.is_file() else []
-        requests_path = path / "proxy-requests.jsonl.gz"
-        if requests_path.is_file():
-            with gzip.open(requests_path, "rt", encoding="utf-8") as stream:
-                requests = [json.loads(line) for line in stream if line.strip()]
-        else:
-            requests = []
+        events = read_rows(path / "run-events.jsonl").rows
+        with gzip.open(path / "proxy-requests.jsonl.gz", "rt", encoding="utf-8") as stream:
+            requests = [json.loads(line) for line in stream if line.strip()]
         return {
             "path": path,
             "manifest": manifest,
@@ -111,6 +107,11 @@ class EvidenceStore:
         return result
 
     def _load_for_path(self, path: Path) -> dict:
+        problems = verify_manifest(path)
+        if problems:
+            detail = "; ".join(problems)
+            logger.warning("refusing invalid evidence bundle %s: %s", path, detail)
+            raise ValueError(detail)
         manifest_hash = hashlib.sha256((path / "manifest.json").read_bytes()).hexdigest()
         cache_key = str(path)
         cached = self._cache.get(cache_key)

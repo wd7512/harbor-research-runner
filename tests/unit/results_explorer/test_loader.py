@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 from harbor_research_runner.evidence_bundle.build import build
-from harbor_research_runner.evidence_bundle.manifest import verify_manifest
+from harbor_research_runner.records.manifest import verify_manifest
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.results_explorer.loader import EvidenceStore, discover
 from harbor_research_runner.statistics.completeness import completeness
@@ -84,6 +84,31 @@ def test_summary_uses_statistics_for_bundle_rows(tmp_path: Path) -> None:
     }
 
 
+def test_missing_proxy_requests_file_refuses_bundle_with_problem(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    (bundle / "proxy-requests.jsonl.gz").unlink()
+
+    try:
+        EvidenceStore([bundle]).summary("clean")
+    except ValueError as exc:
+        assert "proxy-requests.jsonl.gz: missing file" in str(exc)
+    else:
+        raise AssertionError("bundle with a missing request file must be refused")
+
+
+def test_changed_proxy_requests_file_refuses_bundle_with_problem(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    requests_path = bundle / "proxy-requests.jsonl.gz"
+    requests_path.write_bytes(requests_path.read_bytes() + b"x")
+
+    try:
+        EvidenceStore([bundle]).summary("clean")
+    except ValueError as exc:
+        assert "proxy-requests.jsonl.gz: hash mismatch" in str(exc)
+    else:
+        raise AssertionError("bundle with a changed request file must be refused")
+
+
 def test_trial_filters_apply_arm_task_and_validity(tmp_path: Path) -> None:
     bundle = _bundle("retries", tmp_path)
     store = EvidenceStore([bundle])
@@ -130,6 +155,12 @@ def test_compare_uses_only_the_selected_bundle_and_arm(tmp_path: Path) -> None:
         "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
         encoding="utf-8",
     )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    trials_record = next(item for item in manifest["files"] if item["name"] == "trials.jsonl")
+    trials_data = trials_path.read_bytes()
+    trials_record["bytes"] = len(trials_data)
+    trials_record["sha256"] = hashlib.sha256(trials_data).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     store = EvidenceStore([bundle_a, bundle_b])
 
     result = store.compare(["clean", "bundle-b"], "alpha", "beta", "final")

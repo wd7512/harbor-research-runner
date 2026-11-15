@@ -1,0 +1,1 @@
+Host disk-space checks now measure the filesystem holding the run directory for both launch checks and ongoing sampling. The sampler requires an explicit disk path, derived from its run-local output file.
