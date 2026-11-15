@@ -7,22 +7,7 @@ import pytest
 
 from harbor_research_runner.records.jsonl import ReadResult, read_rows
 from harbor_research_runner.records.limits import Limits
-from harbor_research_runner.trial_validity.verdict import (
-    TrialFacts,
-    _boundary,
-    _gap_within,
-    _host_fault,
-    _host_samples_damaged,
-    _labels,
-    _measurement,
-    _physical_positions,
-    _position_within,
-    _positive_seq,
-    _reset_within,
-    _trial_telemetry_damaged,
-    _view,
-    judge_trial,
-)
+from harbor_research_runner.trial_validity.verdict import TrialFacts, judge_trial
 
 TRIAL = "task__abc123"
 DEFAULT_LIMITS = Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.5)
@@ -230,6 +215,95 @@ def test_other_trials_damage_does_not_change_a_trial_without_an_open_row(tmp_pat
 
     assert verdict.measured is False
     assert verdict.unmeasured_reason == "no_open_row"
+
+
+def test_sequence_gap_ending_at_open_row_without_close_keeps_trial_measured():
+    rows = [_open_row(1, trial="other-trial"), _open_row(4)]
+    problems = ReadResult(rows, False, [])
+
+    verdict = _judge(
+        _facts(has_result=False),
+        rows=problems.rows,
+        problems=problems,
+    )
+
+    assert verdict.measured is True
+
+
+@pytest.mark.parametrize(
+    ("rows", "has_result"),
+    [
+        ([_open_row(5, trial="other-trial"), _open_row(3)], False),
+        ([_open_row(5, trial="other-trial"), _open_row(3), _close_row(4)], True),
+    ],
+)
+def test_sequence_reset_at_open_row_marks_trial_ledger_damaged(rows, has_result):
+    problems = ReadResult(rows, False, [])
+
+    verdict = _judge(
+        _facts(has_result=has_result),
+        rows=problems.rows,
+        problems=problems,
+    )
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "ledger_damaged"
+
+
+def test_invalid_other_trial_row_after_close_keeps_trial_measured():
+    malformed_start = _request_start(3, "other-request", trial="other-trial")
+    del malformed_start["request_id"]
+    rows = [_open_row(1), _close_row(2), malformed_start]
+    problems = ReadResult(rows, False, [])
+
+    verdict = _judge(rows=problems.rows, problems=problems)
+
+    assert verdict.measured is True
+
+
+def test_request_start_without_open_or_result_is_no_open_row():
+    rows = [_request_start(1, "r0")]
+    problems = ReadResult(rows, False, [])
+
+    verdict = _judge(_facts(has_result=False), rows=problems.rows, problems=problems)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "no_open_row"
+
+
+def test_damage_after_other_trial_open_inside_trial_window_is_ledger_damaged(tmp_path):
+    problems = _write_ledger(
+        tmp_path,
+        [_open_row(1, trial="other-trial"), _open_row(2), "{not json", _close_row(4)],
+    )
+
+    verdict = _judge(rows=problems.rows, problems=problems)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "ledger_damaged"
+
+
+def test_damage_before_trial_open_does_not_change_measurement(tmp_path):
+    problems = _write_ledger(
+        tmp_path,
+        [_refused(1, "not_open"), "{not json", _open_row(3), _close_row(4)],
+    )
+
+    verdict = _judge(rows=problems.rows, problems=problems)
+
+    assert verdict.measured is True
+
+
+def test_malformed_oom_line_without_agent_start_returns_verdict(tmp_path):
+    started, finished = _phases(agent=(None, 5.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    oom_events = _telemetry_read(tmp_path, "docker-oom-events.jsonl", [], 1)
+
+    verdict = _judge(facts, oom_events=oom_events)
+
+    assert verdict.valid is True
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "phase_times_missing"
 
 
 def _fixture_oom_facts(name):
@@ -495,7 +569,7 @@ def test_bad_line_before_trial_keeps_it_measured(tmp_path):
 
 def test_harbor_tokens_without_proxy_rows_is_possible_bypass():
     verdict = _judge(
-        _facts(reward=0.0, harbor_reported_tokens=500),
+        _facts(reward=0.0, harbor_reported_tokens=1),
         rows=[_open_row(1), _close_row(2)],
     )
 
@@ -506,6 +580,40 @@ def test_harbor_tokens_without_proxy_rows_is_possible_bypass():
 
 def test_host_breach_in_agent_window_invalidates_trial():
     samples = [_sample(4.0, mem_available_mb=100)]
+
+    verdict = _judge(samples=samples)
+
+    _assert_invalid(verdict, "host_fault", "host")
+
+
+@pytest.mark.parametrize("timestamp", [3.0, 5.0])
+def test_host_breach_at_agent_window_boundary_invalidates_trial(timestamp):
+    verdict = _judge(samples=[_sample(timestamp, mem_available_mb=100)])
+
+    _assert_invalid(verdict, "host_fault", "host")
+
+
+def test_host_breach_during_verifier_invalidates_trial():
+    started, finished = _phases(verifier=(6.0, 8.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+
+    verdict = _judge(facts, samples=[_sample(7.0, mem_available_mb=100)])
+
+    _assert_invalid(verdict, "host_fault", "host")
+
+
+@pytest.mark.parametrize("timestamp", [True, "bad"])
+def test_host_breach_with_invalid_sample_time_is_ignored(timestamp):
+    verdict = _judge(samples=[_sample(timestamp, mem_available_mb=100)])
+
+    assert verdict.reason != "host_fault"
+
+
+def test_host_fault_search_continues_after_invalid_sample_time():
+    samples = [
+        _sample("bad", mem_available_mb=100),
+        _sample(4.0, mem_available_mb=100),
+    ]
 
     verdict = _judge(samples=samples)
 
@@ -547,6 +655,81 @@ def test_host_sample_gap_of_two_intervals_keeps_trial_measured():
     verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
 
     assert verdict.measured is True
+
+
+def test_host_sample_gap_of_three_intervals_keeps_trial_measured():
+    samples = [_sample(0.0), _sample(30.0)]
+
+    verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is True
+
+
+@pytest.mark.parametrize("samples", [[_sample(-28.0), _sample(3.0)], [_sample(5.0), _sample(40.0)]])
+def test_host_sample_gap_touching_trial_window_is_unmeasured(samples):
+    verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_timestamps_without_numeric_values_are_unmeasured():
+    samples = [_sample(True), _sample("4")]
+
+    verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_distance_of_three_intervals_from_trial_edge_is_accepted():
+    started, finished = _phases(agent=(40.0, 40.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    samples = [_sample(10.0)]
+
+    verdict = _judge(facts, samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is True
+
+
+def test_host_sample_distance_beyond_three_intervals_from_trial_edge_is_unmeasured():
+    started, finished = _phases(agent=(40.0, 40.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    samples = [_sample(0.0)]
+
+    verdict = _judge(facts, samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_damage_span_ending_before_trial_is_ignored():
+    samples = ReadResult([_sample(0.0), _sample(2.0)], False, [2])
+
+    verdict = _judge(samples=samples.rows, resource_problems=samples)
+
+    assert verdict.measured is True
+
+
+@pytest.mark.parametrize("times", [[0.0, 3.0], [5.0, 10.0]])
+def test_host_sample_damage_span_touching_trial_boundary_is_unmeasured(times):
+    samples = ReadResult([_sample(timestamp) for timestamp in times], False, [2])
+
+    verdict = _judge(samples=samples.rows, resource_problems=samples)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_damage_during_verifier_is_unmeasured():
+    started, finished = _phases(verifier=(6.0, 8.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    samples = ReadResult([_sample(6.0), _sample(8.0)], False, [2])
+
+    verdict = _judge(facts, samples=samples.rows, resource_problems=samples)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
 
 
 def test_missing_host_samples_make_trial_unmeasured():
@@ -675,6 +858,40 @@ def test_oom_event_damage_overlapping_trial_window_makes_trial_unmeasured(tmp_pa
     assert verdict.unmeasured_reason == "telemetry_damaged"
 
 
+@pytest.mark.parametrize(
+    ("times", "bad_line"),
+    [([0, 3], 2), ([5, 10], 2)],
+)
+def test_memory_watch_damage_touching_trial_window_is_unmeasured(tmp_path, times, bad_line):
+    memory = _telemetry_read(
+        tmp_path,
+        "memory-watch.jsonl",
+        [_memory_sample(timestamp) for timestamp in times],
+        bad_line,
+    )
+
+    verdict = _judge(memory_watch_events=memory)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "telemetry_damaged"
+
+
+def test_memory_watch_damage_during_verifier_is_unmeasured(tmp_path):
+    started, finished = _phases(verifier=(6.0, 8.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    memory = _telemetry_read(
+        tmp_path,
+        "memory-watch.jsonl",
+        [_memory_sample(6), _memory_sample(8)],
+        2,
+    )
+
+    verdict = _judge(facts, memory_watch_events=memory)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "telemetry_damaged"
+
+
 def test_oom_event_damage_outside_trial_window_keeps_trial_measured(tmp_path):
     oom = _telemetry_read(
         tmp_path,
@@ -727,310 +944,6 @@ def test_exception_before_verifier_is_labelled_as_agent_exit():
     assert verdict.valid
     assert "exit_nonzero" in verdict.labels
     assert "verifier_failed" not in verdict.labels
-
-
-def test_physical_positions_exclude_damaged_and_torn_lines():
-    problems = ReadResult([{}, {}, {}], True, [2])
-
-    assert _physical_positions(problems) == [1, 3, 4]
-
-
-def test_physical_positions_without_torn_line_end_at_last_row():
-    problems = ReadResult([{}, {}, {}], False, [2])
-
-    assert _physical_positions(problems) == [1, 3, 4]
-
-
-def test_physical_positions_resume_after_each_bad_line():
-    assert _physical_positions(ReadResult([{}, {}, {}], False, [2, 4])) == [1, 3, 5]
-
-
-def test_view_keeps_row_positions_aligned_after_damage():
-    rows = [_open_row(1), _close_row(3)]
-
-    assert _view(ReadResult(rows, False, [2])) == [(rows[0], 1, True), (rows[1], 3, True)]
-
-
-def test_boundary_uses_first_matching_trial_open_and_close_rows():
-    other = {**_open_row(1, "other"), "type": "request_start"}
-    unrelated = {"type": "request_start", "trial": TRIAL}
-    opened = _open_row(3)
-    closed = _close_row(4)
-
-    assert _boundary(
-        [(other, 1, True), (unrelated, 2, True), (opened, 3, True), (closed, 4, True)],
-        TRIAL,
-    ) == ((opened, 3), (closed, 4))
-
-
-def test_boundary_keeps_first_open_row_for_a_trial():
-    first = _open_row(1)
-    second = _open_row(2)
-    closed = _close_row(3)
-
-    assert _boundary([(first, 1, True), (second, 2, True), (closed, 3, True)], TRIAL) == (
-        (first, 1),
-        (closed, 3),
-    )
-
-
-@pytest.mark.parametrize("seq", [0, -1, True, 1.0, "1", None])
-def test_non_positive_or_non_integer_sequence_is_rejected(seq):
-    assert _positive_seq({"seq": seq}) is None
-
-
-def test_positive_integer_sequence_is_accepted():
-    assert _positive_seq({"seq": 1}) == 1
-
-
-@pytest.mark.parametrize(
-    ("position", "expected"),
-    [(2, False), (3, True), (4, True), (5, False)],
-)
-def test_position_within_excludes_open_and_close_boundaries(position, expected):
-    assert _position_within(2, 5, position) is expected
-
-
-def test_open_trial_position_within_starts_after_open_row():
-    assert _position_within(2, None, 2) is False
-
-
-def test_sequence_gap_within_excludes_close_sequence():
-    assert _gap_within(2, 5, 5, 6) is False
-
-
-def test_sequence_gap_within_starts_after_open_sequence():
-    assert _gap_within(2, None, 1, 2) is False
-
-
-def test_sequence_reset_within_includes_open_and_close_positions():
-    assert _reset_within(2, 5, 2) is True
-    assert _reset_within(2, 5, 5) is True
-
-
-def test_sequence_reset_for_open_trial_starts_at_open_position():
-    assert _reset_within(2, None, 2) is True
-
-
-def test_invalid_ledger_row_inside_trial_makes_measurement_unmeasured():
-    rows = [_open_row(1), {"type": "request_start", "trial": TRIAL, "seq": "bad"}, _close_row(3)]
-
-    assert _measurement(TRIAL, rows, ReadResult(rows, False, []), True) == (False, "ledger_damaged")
-
-
-def test_damage_before_trial_does_not_make_measurement_unmeasured():
-    rows = [_open_row(2), _close_row(3)]
-
-    assert _measurement(TRIAL, rows, ReadResult(rows, False, [1]), True) == (True, None)
-
-
-def test_finished_trial_with_open_but_no_close_is_unmeasured():
-    rows = [_open_row(1)]
-
-    assert _measurement(TRIAL, rows, ReadResult(rows, False, []), True) == (
-        False,
-        "close_not_recorded",
-    )
-
-
-def test_closed_trial_with_unmatched_request_start_is_unmeasured():
-    rows = [_open_row(1), _request_start(2, "r1"), _close_row(3)]
-
-    assert _measurement(TRIAL, rows, ReadResult(rows, False, []), True) == (
-        False,
-        "request_not_recorded",
-    )
-
-
-def test_request_rows_without_open_are_unmeasured():
-    rows = [_request_start(1, "r1")]
-
-    assert _measurement(TRIAL, rows, ReadResult(rows, False, []), True) == (False, "no_open_row")
-
-
-def test_unfinished_trial_with_only_one_request_boundary_is_unmeasured():
-    rows = [_request_start(1, "r1")]
-
-    assert _measurement(TRIAL, rows, ReadResult(rows, False, []), False) == (False, "no_open_row")
-
-
-def test_other_trial_damage_after_close_does_not_unmeasure_trial():
-    rows = [_open_row(1), _close_row(2)]
-    all_rows = [*rows, {"type": "close", "trial": TRIAL, "seq": "bad"}]
-
-    assert _measurement(TRIAL, rows, ReadResult(all_rows, False, []), True) == (True, None)
-
-
-def test_successful_request_with_unknown_usage_is_unmeasured():
-    rows = [
-        _open_row(1),
-        _request_start(2, "r1"),
-        _request_end(3, "r1", completion_tokens=None),
-        _close_row(4),
-    ]
-
-    assert _measurement(TRIAL, rows, ReadResult(rows, False, []), True) == (
-        False,
-        "usage_incomplete",
-    )
-
-
-@pytest.mark.parametrize("timestamp", [3.0, 5.0])
-def test_host_breach_at_agent_window_boundary_invalidates_measurement(timestamp):
-    facts = _facts()
-
-    assert _host_fault(facts, [_sample(timestamp, mem_available_mb=100)], DEFAULT_LIMITS) is True
-
-
-def test_host_fault_uses_verifier_end_when_verifier_started():
-    started, finished = _phases(verifier=(6.0, 8.0))
-    facts = _facts(phase_started=started, phase_finished=finished)
-
-    assert _host_fault(facts, [_sample(7.0, mem_available_mb=100)], DEFAULT_LIMITS) is True
-
-
-def test_boolean_host_sample_time_is_ignored():
-    assert _host_fault(_facts(), [_sample(True, mem_available_mb=100)], DEFAULT_LIMITS) is False
-
-
-def test_non_numeric_host_sample_time_is_ignored():
-    assert _host_fault(_facts(), [_sample("bad", mem_available_mb=100)], DEFAULT_LIMITS) is False
-
-
-def test_host_fault_search_continues_after_invalid_sample_time():
-    samples = [_sample("bad", mem_available_mb=100), _sample(4.0, mem_available_mb=100)]
-
-    assert _host_fault(_facts(), samples, DEFAULT_LIMITS) is True
-
-
-def test_host_sample_gap_at_three_intervals_is_accepted():
-    samples = ReadResult([_sample(0.0), _sample(30.0)], False, [])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is False
-
-
-def test_host_sample_gap_over_three_intervals_overlapping_trial_is_damaged():
-    samples = ReadResult([_sample(0.0), _sample(40.0)], False, [])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is True
-
-
-def test_host_sample_gap_touching_agent_end_is_damaged():
-    samples = ReadResult([_sample(5.0), _sample(40.0)], False, [])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is True
-
-
-def test_host_sample_gap_touching_agent_start_is_damaged():
-    samples = ReadResult([_sample(-28.0), _sample(3.0)], False, [])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is True
-
-
-def test_host_sample_edge_exactly_three_intervals_away_is_accepted():
-    samples = ReadResult([_sample(0.0), _sample(30.0)], False, [])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is False
-
-
-def test_host_sample_exactly_three_intervals_from_trial_edge_is_accepted():
-    samples = ReadResult([_sample(33.0)], False, [])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is False
-
-
-def test_host_sample_damage_span_ending_before_trial_is_ignored():
-    samples = ReadResult([_sample(0.0), _sample(2.0)], False, [2])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is False
-
-
-def test_host_sample_damage_span_touching_agent_end_is_included():
-    samples = ReadResult([_sample(5.0), _sample(10.0)], False, [2])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is True
-
-
-def test_host_sample_damage_span_touching_agent_start_is_included():
-    samples = ReadResult([_sample(0.0), _sample(3.0)], False, [2])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is True
-
-
-def test_host_sample_window_includes_verifier_phase():
-    started, finished = _phases(verifier=(6.0, 8.0))
-    facts = _facts(phase_started=started, phase_finished=finished)
-    samples = ReadResult([_sample(6.0), _sample(8.0)], False, [2])
-
-    assert _host_samples_damaged(facts, samples, 10.0) is True
-
-
-def test_host_sample_distance_uses_absolute_time_difference():
-    started, finished = _phases(agent=(40.0, 40.0))
-    facts = _facts(phase_started=started, phase_finished=finished)
-    samples = ReadResult([_sample(-40.0)], False, [])
-
-    assert _host_samples_damaged(facts, samples, 10.0) is True
-
-
-def test_host_sample_damage_between_agent_and_verifier_is_included():
-    started, finished = _phases(verifier=(6.0, 8.0))
-    facts = _facts(phase_started=started, phase_finished=finished)
-    samples = ReadResult([_sample(6.0), _sample(8.0)], False, [2])
-
-    assert _host_samples_damaged(facts, samples, 10.0) is True
-
-
-def test_bad_host_sample_line_touching_trial_start_is_damaged():
-    samples = ReadResult([_sample(0.0), _sample(10.0)], False, [2])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is True
-
-
-def test_host_samples_without_numeric_timestamps_are_damaged():
-    samples = ReadResult([_sample(True), _sample("4")], False, [])
-
-    assert _host_samples_damaged(_facts(), samples, 10.0) is True
-
-
-def test_telemetry_damage_touching_trial_window_boundary_is_damaged():
-    oom = ReadResult([_docker_oom_event(2), _docker_oom_event(6)], False, [2])
-
-    assert _trial_telemetry_damaged(_facts(), oom, ReadResult([], False, [])) is True
-
-
-def test_telemetry_damage_span_touching_agent_end_is_included():
-    memory = ReadResult([_memory_sample(5), _memory_sample(10)], False, [2])
-
-    assert _trial_telemetry_damaged(_facts(), ReadResult([], False, []), memory) is True
-
-
-def test_telemetry_damage_span_touching_agent_start_is_included():
-    memory = ReadResult([_memory_sample(0), _memory_sample(3)], False, [2])
-
-    assert _trial_telemetry_damaged(_facts(), ReadResult([], False, []), memory) is True
-
-
-def test_telemetry_damage_window_ends_after_verifier_finishes():
-    started, finished = _phases(verifier=(6.0, 8.0))
-    facts = _facts(phase_started=started, phase_finished=finished)
-    memory = ReadResult([_memory_sample(6), _memory_sample(8)], False, [2])
-
-    assert _trial_telemetry_damaged(facts, ReadResult([], False, []), memory) is True
-
-
-def test_telemetry_damage_without_complete_phase_window_is_ignored():
-    started, finished = _phases(agent=(None, 5.0))
-    facts = _facts(phase_started=started, phase_finished=finished)
-    oom = ReadResult([], False, [1])
-
-    assert _trial_telemetry_damaged(facts, oom, ReadResult([], False, [])) is False
-
-
-def test_harbor_tokens_without_request_end_is_possible_bypass():
-    facts = _facts(harbor_reported_tokens=1)
-
-    assert "possible_bypass" in _labels(facts, "agent", [_request_start(1, "r1")], False, False)
 
 
 def test_environment_setup_failure_does_not_require_agent_phase_times():
@@ -1589,6 +1502,17 @@ def test_string_sequence_marks_trial_unmeasured():
     verdict = _judge(rows=rows)
 
     assert not verdict.measured
+    assert verdict.unmeasured_reason == "ledger_damaged"
+
+
+@pytest.mark.parametrize("sequence", [0, -1, True, 1.0, None])
+def test_non_positive_or_non_integer_sequence_marks_trial_unmeasured(sequence):
+    rows = _clean_ledger()
+    rows[-2]["seq"] = sequence
+
+    verdict = _judge(rows=rows)
+
+    assert verdict.measured is False
     assert verdict.unmeasured_reason == "ledger_damaged"
 
 
