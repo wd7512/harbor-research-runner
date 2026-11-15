@@ -22,6 +22,8 @@ Use the study job's task source and `concurrency`. Add `--with-do-nothing` so th
 uv run hrr check-machine --job study.yaml --out checks/machine-check.json --with-do-nothing
 ```
 
+The command exits `1` if the machine check fails or its Harbor jobs leave Docker residue after scoped cleanup; if residue remains, the error names it and gives the `hrr clean-docker --apply` remedy. The machine-check record is written before the final residue check.
+
 Confirm `checks/machine-check.json` exists and inspect `task_source`, `concurrency`, `tasks`, and `included`. Compare `included` with the included task names from a previous oracle sweep using the same task source and concurrency. Investigate and record the reason for every difference before proceeding; a task is included only when its oracle reward is `1.0` and its do-nothing reward is `0.0` where measured.
 
 The job file's `limits.memory_reserve_mb` can be raised or lowered for each host to reflect memory that must remain available outside task containers.

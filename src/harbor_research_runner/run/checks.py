@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from harbor_research_runner.docker_host import cleanup
 from harbor_research_runner.docker_host.cleanup import (
     Inventory,
 )
@@ -75,7 +76,7 @@ def docker_clean_check(deps: CheckDeps) -> tuple[bool, str]:
     inventory = deps.inventory()
     if not inventory.daemon_ok:
         return False, inventory.daemon_detail
-    residue = (*inventory.residue_containers, *inventory.leaked_networks)
+    residue = cleanup.residue_names(inventory)
     if residue:
         return False, f"Docker residue found: {', '.join(residue)}"
     return True, "Docker inventory is clean"

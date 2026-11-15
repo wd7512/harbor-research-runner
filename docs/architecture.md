@@ -63,7 +63,7 @@ Unit tests mirror the source path: `src/harbor_research_runner/records/jsonl.py`
 | Command | Does | Exit codes |
 |---|---|---|
 | `hrr build-harness --harness opencode --commit SHA [--arch amd64|arm64]` | Builds the image for one commit and adds it to the commit manifest; `--arch` defaults to the Docker host architecture | 0 ok, 1 failed |
-| `hrr check-machine --job JOB.yaml --out FILE` | Runs the oracle check for the job's task set on this machine | 0 ok, 1 failed |
+| `hrr check-machine --job JOB.yaml --out FILE` | Runs the oracle check for the job's task set on this machine, then removes and rechecks residue from its Harbor compose projects | 0 ok, 1 failed |
 | `hrr run JOB.yaml [--stop-launching-at TIME]` / `hrr run --resume RUN_ID [--stop-launching-at TIME]` | Launches or resumes a run | 0 complete, 1 refused to start or internal error, 2 halted and resumable, 3 finished incomplete |
 | `hrr build-evidence RUN_ID` | Builds the evidence bundle from a run folder | 0 ok, 1 failed, 4 secret found (nothing written), 5 evidence invariants failed (bundle written) |
 | `hrr verify-evidence BUNDLE_DIR` | Checks an evidence bundle's internal invariants | 0 clean, 1 problems found, 2 unreadable bundle |

@@ -84,6 +84,22 @@ def is_pool_exhaustion_text(text: str) -> bool:
     return POOL_EXHAUSTED_RE.search(text) is not None
 
 
+def residue_names(inventory: Inventory, projects: set[str] | None = None) -> tuple[str, ...]:
+    if projects is None:
+        return (*inventory.residue_containers, *inventory.leaked_networks)
+    containers = tuple(
+        name
+        for name in inventory.residue_containers
+        if any(name.startswith(f"{project}__env-main-") for project in projects)
+    )
+    networks = tuple(
+        name
+        for name in inventory.leaked_networks
+        if any(name == f"{project}__env_default" for project in projects)
+    )
+    return (*containers, *networks)
+
+
 def _run_docker(argv: list[str], run: Callable = subprocess.run):
     try:
         return run(argv, capture_output=True, text=True, timeout=DOCKER_TIMEOUT_S)
@@ -282,6 +298,20 @@ def clean_trials(trial_names: frozenset[str], run: Callable = subprocess.run) ->
         )
         return Report(False, (), (), (), (), ())
     projects = {compose_project_name(trial) for trial in trial_names}
+    return clean_projects(projects, run, inv)
+
+
+def clean_projects(
+    projects: set[str], run: Callable = subprocess.run, inv: Inventory | None = None
+) -> Report:
+    if not projects:
+        return Report(False, (), (), (), (), ())
+    inv = inventory(run) if inv is None else inv
+    if not inv.daemon_ok:
+        logger.warning(
+            "trial Docker cleanup failed; residue counts left are unknown: %s", inv.daemon_detail
+        )
+        return Report(False, (), (), (), (), ())
     containers = tuple(
         name
         for name in inv.residue_containers
