@@ -52,19 +52,16 @@ def _trial_verdict(
         if (session.run_dir / "memory-watch.jsonl").exists()
         else [],
     )
+    boundaries = {row.get("type") for row in ledger.rows if row.get("trial") == facts.trial} & {
+        "open",
+        "close",
+    }
     deferred = (
         halt_reason == "deadline"
         and not (trial_dir / "result.json").exists()
-        and not any(
-            row.get("type") == "open" and row.get("trial") == facts.trial for row in ledger.rows
-        )
+        and "open" not in boundaries
     )
-    run_halted = (
-        halt_reason is not None
-        and any(row.get("type") == "open" and row.get("trial") == facts.trial for row in ledger.rows)
-        and not any(row.get("type") == "close" and row.get("trial") == facts.trial for row in ledger.rows)
-        and result.valid
-    )
+    run_halted = halt_reason is not None and boundaries == {"open"} and result.valid
     event = TrialVerdict(
         t=now,
         trial=facts.trial,
