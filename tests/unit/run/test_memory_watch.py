@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -375,3 +376,64 @@ def test_watcher_stops_when_the_runner_lifeline_closes(tmp_path: Path, monkeypat
 
     assert run_memory_watch(tmp_path, "kernel", read_fd, wait=wait) == 0
     assert len(calls) <= 1
+
+
+def _watch_run_dir(tmp_path: Path) -> Path:
+    (tmp_path / "machine-check.json").write_text(
+        json.dumps(
+            {
+                "created_t": 1,
+                "tool_version": "1",
+                "harbor_version": "0.23.0",
+                "host_fingerprint": "host",
+                "task_source": {},
+                "concurrency": 1,
+                "tasks": [],
+                "included": [],
+                "verifier_timeout_multiplier": 1.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def test_watcher_retries_docker_listing_failure_on_next_tick(tmp_path: Path, caplog):
+    run_dir = _watch_run_dir(tmp_path)
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        if len(commands) == 1:
+            raise subprocess.CalledProcessError(1, command)
+        return SimpleNamespace(stdout="")
+
+    ticks = []
+
+    def wait(stopped, timeout):
+        ticks.append(timeout)
+        if len(ticks) == 2:
+            stopped.set()
+
+    assert run_memory_watch(run_dir, "kernel", now=lambda: 10.0, wait=wait, run=run) == 0
+    assert [command[1] for command in commands] == ["ps", "ps", "stats"]
+    assert ticks == [2.0, 2.0]
+    assert "memory watcher sample failed" in caplog.text
+
+
+def test_watcher_exits_after_consecutive_docker_listing_failures(tmp_path: Path):
+    run_dir = _watch_run_dir(tmp_path)
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        raise subprocess.CalledProcessError(1, command)
+
+    ticks = []
+
+    def wait(stopped, timeout):
+        ticks.append(timeout)
+
+    assert run_memory_watch(run_dir, "kernel", now=lambda: 10.0, wait=wait, run=run) == 1
+    assert len(commands) == 30
+    assert len(ticks) == 29

@@ -11,7 +11,7 @@ import pytest
 
 from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
-from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
+from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource, load_job
 from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.records import jsonl
 from harbor_research_runner.records.limits import Limits
@@ -600,6 +600,98 @@ def _finished_session(
     return session.run_dir, manifest_path, check
 
 
+def _record_canary_history(run_dir: Path, *, returncode: int, valid: bool) -> None:
+    fd = jsonl.open_for_append(run_dir / "run-events.jsonl")
+    try:
+        jsonl.append_row(fd, HarborStart(1.0, 0, "harbor run canary", "canary").to_row())
+        jsonl.append_row(fd, HarborExit(2.0, 0, returncode, "canary").to_row())
+        jsonl.append_row(
+            fd,
+            TrialVerdict(
+                t=2.0,
+                trial="canary-trial",
+                task="canary/say-hello",
+                arm="arm-a",
+                valid=valid,
+                reason=None if valid else "upstream_errors",
+                instrument=None if valid else "proxy",
+                labels=[],
+                measured=True,
+                unmeasured_reason=None,
+            ).to_row(),
+        )
+    finally:
+        import os
+
+        os.close(fd)
+
+
+def _record_main_start(run_dir: Path) -> None:
+    fd = jsonl.open_for_append(run_dir / "run-events.jsonl")
+    try:
+        jsonl.append_row(fd, HarborStart(3.0, 0, "harbor run", "main").to_row())
+    finally:
+        import os
+
+        os.close(fd)
+
+
+def test_resume_refuses_run_stopped_after_failed_canary_without_appending_events(
+    tmp_path: Path,
+) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    _record_canary_history(run_dir, returncode=1, valid=False)
+    events_path = run_dir / "run-events.jsonl"
+    before = events_path.read_bytes()
+    commands: list[list[str]] = []
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        commands,
+        [],
+    )
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    assert result == RunOutcome(1, run_dir)
+    assert events_path.read_bytes() == before
+    assert run_dir.stat().st_mode & stat.S_IWUSR
+    assert commands == []
+    log = (run_dir / "runner.log").read_text(encoding="utf-8")
+    assert run_dir.name in log
+    assert "stopped before its first main pass" in log
+    assert "hrr run <job file>" in log
+
+
+def test_resume_refuses_run_stopped_after_passed_canary_without_appending_events(
+    tmp_path: Path,
+) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    _record_canary_history(run_dir, returncode=0, valid=True)
+    events_path = run_dir / "run-events.jsonl"
+    before = events_path.read_bytes()
+    commands: list[list[str]] = []
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        commands,
+        [],
+    )
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    assert result == RunOutcome(1, run_dir)
+    assert events_path.read_bytes() == before
+    assert run_dir.stat().st_mode & stat.S_IWUSR
+    assert commands == []
+    log = (run_dir / "runner.log").read_text(encoding="utf-8")
+    assert run_dir.name in log
+    assert "stopped before its first main pass" in log
+    assert "hrr run <job file>" in log
+
+
 def test_resume_of_finished_run_returns_one_without_appending(tmp_path: Path) -> None:
     run_dir, manifest_path, _check = _finished_session(tmp_path)
     before = (run_dir / "run-events.jsonl").read_bytes()
@@ -666,6 +758,7 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
 
 def test_resume_refuses_when_host_profile_memory_cap_differs(tmp_path: Path) -> None:
     run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    _record_main_start(run_dir)
     changed_profile = {**_PROFILE, "memory_cap": "none"}
     deps = _resume_dependencies(
         tmp_path,
@@ -753,8 +846,11 @@ def _inputs(tmp_path: Path):
     return job, card, manifest_path, machine_check
 
 
-def _create(tmp_path: Path, check_results: list[CheckResult] | None = None) -> RunSession:
-    job, card, manifest_path, machine_check = _inputs(tmp_path)
+def _create(
+    tmp_path: Path, check_results: list[CheckResult] | None = None, job: Job | None = None
+) -> RunSession:
+    default_job, card, manifest_path, machine_check = _inputs(tmp_path)
+    job = job or default_job
     return RunSession.create(
         job=job,
         card=card,
@@ -835,6 +931,29 @@ def test_load_does_not_change_metadata_or_append_event(tmp_path: Path) -> None:
     assert (session.run_dir / "run-events.jsonl").read_bytes() == events_before
 
 
+def test_resume_keeps_absolute_task_path_from_stored_job(tmp_path: Path) -> None:
+    study = tmp_path / "a"
+    study.mkdir()
+    task_path = tmp_path / "tasks"
+    (task_path / "example-task").mkdir(parents=True)
+    job_path = study / "job.yaml"
+    job_path.write_text(
+        "name: study\nmodel: provider/model\nrepetitions: 1\nconcurrency: 1\n"
+        "task_order: as_listed\ntasks: {path: ../tasks}\n"
+        "machine_check: ../machine-check.json\n"
+        "arms: [{label: arm-a, harness: fake, commit: " + "a" * 40 + "}]\n"
+        "proxy: {host: 127.0.0.1, port: 8766, container_host: host.docker.internal}\n"
+        "limits: {}\n",
+        encoding="utf-8",
+    )
+    parsed_job = load_job(job_path)
+    session = _create(tmp_path, job=parsed_job)
+
+    resumed = RunSession.load(session.run_dir, {"MODEL_KEY": "configured"})
+
+    assert resumed.job.tasks.path == str(task_path.resolve())
+
+
 def test_mark_resumed_appends_resume_event(tmp_path: Path) -> None:
     session = _create(tmp_path)
 
@@ -852,6 +971,7 @@ def test_mark_resumed_appends_resume_event(tmp_path: Path) -> None:
 
 def test_resume_refuses_a_run_that_predates_host_profile_recording(tmp_path: Path) -> None:
     run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    _record_main_start(run_dir)
     metadata_path = run_dir / "run-metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     del metadata["host"]["host_profile"]

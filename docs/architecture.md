@@ -136,7 +136,8 @@ Every row has `seq` (integer, starts at 1, +1 per row, never reused across proxy
 | `stalled` | The proxy cut the request: no first chunk within `first_chunk_max_s`, a gap over `inter_chunk_gap_max_s`, or total over `request_latency_max_s` | yes |
 | `truncated` | The stream ended without its terminator | yes |
 | `transport_error` | Connection to the upstream failed | yes |
-| `client_error` | Other 4xx: the harness sent a bad request | no |
+| `upstream_auth` | 401, 402 or 403 from the upstream: the proxy's own key, billing or account was refused | yes |
+| `client_error` | Other 4xx (except 401, 402, 403 and 429): the harness sent a bad request | no |
 | `client_disconnect` | The harness closed the connection first | no |
 
 A failover that the proxy absorbed (a later key or endpoint answered) is an `ok` row with `failovers > 0`.
@@ -307,7 +308,7 @@ Rules, first match wins:
 
 Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`).
 
-`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); or the trial made requests but has no `open` row (`no_open_row`). An unmeasured trial is not re-run; it stops the run from exiting 0.
+`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); or the trial made requests but has no `open` row (`no_open_row`). An unmeasured trial is not re-run; it stops the run from exiting 0.
 
 Validity never reads `reward`, except rule 10, which reads only whether a reward exists.
 
@@ -318,7 +319,7 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 | Reason | Condition |
 |---|---|
 | `quota_exhausted` | any `request_end` row with that status since the last `harbor_start` |
-| `upstream_invalid_streak` | the last `halt_after_consecutive_invalid` trial verdicts all have instrument `proxy` and `valid` false |
+| `upstream_invalid_streak` | the last `halt_after_consecutive_invalid` trial verdicts written since the latest `resume` event all have instrument `proxy` and `valid` false |
 | `zero_billed_window` | at least one trial is open and no `ok` `request_end` row for `zero_billed_window_s` |
 | `proxy_dead` | the proxy process has exited |
 | `oom_watch_dead` | the Docker OOM watcher process has exited |
@@ -340,7 +341,7 @@ Harbor's exception labels are never an input to a halt rule.
 7. When Harbor exits on its own: judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
 8. Finish: stop the proxy and sampler, write `finish`, make the run folder read-only, exit 0 or 3.
 
-Resume (`hrr run --resume RUN_ID`): acquire the host lock, read the run metadata, repeat the launch checks, start the sampler and the proxy (same host and port, `restart: true`, then wait `restart_cooldown_s`), write `resume`, judge and set aside, then continue from step 7. A refused resume appends nothing. The canary is not repeated.
+Resume (`hrr run --resume RUN_ID`): acquire the host lock, read the run metadata, repeat the launch checks, start the sampler and the proxy (same host and port, `restart: true`, then wait `restart_cooldown_s`), write `resume`, judge and set aside, then continue from step 7. A refused resume appends nothing. The canary is not repeated. A run with no main-pass `harbor_start` is refused: it never started its main work, so it is restarted as a new run.
 
 `hrr clean-docker --apply` treats a run as live while its runner pid is alive or any process command line names the run folder. It refuses cleanup and logs the run id while a run is live.
 

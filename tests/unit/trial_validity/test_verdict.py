@@ -369,6 +369,15 @@ def test_start_without_end_in_closed_trial_is_unmeasured():
     assert verdict.unmeasured_reason == "request_not_recorded"
 
 
+def test_finished_trial_without_close_row_is_unmeasured():
+    rows = [_open_row(1), _request_start(2, "r1"), _request_end(3, "r1")]
+
+    verdict = _judge(_facts(has_result=True), rows=rows)
+
+    assert not verdict.measured
+    assert verdict.unmeasured_reason == "close_not_recorded"
+
+
 def test_damaged_line_marks_trial_unmeasured(tmp_path):
     rows = _clean_ledger()
     result = _write_ledger(tmp_path, [rows[0], rows[1], "not json", rows[2], rows[3]])
@@ -795,7 +804,7 @@ def test_reversed_sequence_outside_window_is_ignored():
 def test_request_start_without_end_without_close_is_measured():
     rows = [_open_row(1), _request_start(2, "r1")]
 
-    verdict = _judge(rows=rows)
+    verdict = _judge(_facts(has_result=False), rows=rows)
 
     assert verdict.measured
 

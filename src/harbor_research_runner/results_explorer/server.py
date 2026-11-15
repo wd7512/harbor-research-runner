@@ -52,6 +52,9 @@ class _Handler(BaseHTTPRequestHandler):
             if segments == ["api", "compare"]:
                 query = parse_qs(parts.query)
                 runs = query.get("run", [])
+                if len(runs) != 2:
+                    self._json(400, {"error": "compare needs exactly two run parameters"})
+                    return
                 self._json(
                     200,
                     self.server.store.compare(

@@ -650,6 +650,7 @@ def _can_fail_over(observation: _Observation) -> bool:
         "rate_limited",
         "server_error",
         "transport_error",
+        "upstream_auth",
     }
 
 
@@ -728,9 +729,13 @@ def _stream_chunks(
     assert state.body is not None
     tail: list[bytes] = []
     aborted = False
-    translator = adapter.new_stream_translator(
-        state.deps.model["upstream_model"], lambda _usage: None
-    )
+    ledger_usage: dict[str, int] | None = None
+
+    def record_usage(usage: dict[str, int]) -> None:
+        nonlocal ledger_usage
+        ledger_usage = usage
+
+    translator = adapter.new_stream_translator(state.deps.model["upstream_model"], record_usage)
     try:
         try:
             for raw in _iter_events(_chunk_stream(state.body, first), state.clock):
@@ -738,7 +743,7 @@ def _stream_chunks(
                 translated: list[str] = []
                 for line in raw.decode("utf-8", "replace").splitlines():
                     translated.extend(translator.feed_line(line))
-                observation.usage = translator.usage
+                observation.usage = ledger_usage or translator.usage
                 observation.served_model = translator.served_model
                 observation.completion_chars = translator.completion_chars
                 if translator.completion_chars > before_chars:
@@ -759,7 +764,7 @@ def _stream_chunks(
             aborted = True
         except UpstreamDecodeError as exc:
             observation.error_body = str(exc)
-            observation.usage = exc.usage or translator.usage or observation.usage
+            observation.usage = ledger_usage or exc.usage or translator.usage or observation.usage
             aborted = True
         finally:
             state.finish(state.header_status)

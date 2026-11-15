@@ -10,6 +10,7 @@ from harbor_research_runner.model_proxy.ledger import LedgerWriter
 from harbor_research_runner.model_proxy.relay import RelayDeps, relay
 from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.limits import Limits
+from harbor_research_runner.trial_validity.upstream import upstream_reason
 from tests.support.fake_upstream import FakeUpstream
 
 _KEY = "sk-test-a"
@@ -28,16 +29,16 @@ def _request_body() -> bytes:
 
 def _run(tmp_path, first_script, second_script, caplog):
     first = FakeUpstream([first_script], model="first-model")
-    second = FakeUpstream([second_script], model="second-model")
+    second = FakeUpstream([second_script or "ok"], model="second-model")
     first_url = first.start()
     second_url = second.start()
     ledger = LedgerWriter(tmp_path / "proxy-ledger.jsonl")
     client = httpx.Client(trust_env=False)
+    endpoints = [f"{first_url}/v1/chat/completions"]
+    if second_script is not None:
+        endpoints.append(f"{second_url}/v1/chat/completions")
     card = {
-        "endpoints": [
-            f"{first_url}/v1/chat/completions",
-            f"{second_url}/v1/chat/completions",
-        ],
+        "endpoints": endpoints,
         "key_env": ["TEST_KEY"],
     }
     deps = RelayDeps(
@@ -129,6 +130,36 @@ def test_client_error_does_not_fail_over(tmp_path, caplog) -> None:
     assert ends[0]["failovers"] == 0
     assert len(first.requests) == 1
     assert second.requests == []
+
+
+def test_upstream_auth_error_invalidates_trial(tmp_path, caplog) -> None:
+    response, _body, rows, _ledger_text, _log_text, first, second = _run(
+        tmp_path, "http_401", None, caplog
+    )
+
+    ends = [row for row in rows if row["type"] == "request_end"]
+    assert response.http_status == 401
+    assert ends[0]["upstream_status"] == "upstream_auth"
+    assert ends[0]["failovers"] == 0
+    assert (
+        upstream_reason(ends, Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.0))
+        == "upstream_terminal_error"
+    )
+    assert len(first.requests) == 1
+    assert second.requests == []
+
+
+def test_upstream_auth_error_fails_over(tmp_path, caplog) -> None:
+    response, _body, rows, _ledger_text, _log_text, first, second = _run(
+        tmp_path, "http_402", "ok", caplog
+    )
+
+    ends = [row for row in rows if row["type"] == "request_end"]
+    assert response.http_status == 200
+    assert ends[0]["upstream_status"] == "ok"
+    assert ends[0]["failovers"] == 1
+    assert len(first.requests) == 1
+    assert len(second.requests) == 1
 
 
 def test_truncated_stream_does_not_fail_over(tmp_path, caplog) -> None:
