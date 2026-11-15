@@ -49,6 +49,7 @@ def _trial_config(name: str, path: Path | None, *, task_name: str | None = None,
         path=path,
         name=task_name,
         get_task_id=(lambda: task_id),
+        is_git_task=(lambda: False),
     )
     return SimpleNamespace(task=task, trial_name=name)
 
