@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import socket
 import time
 import urllib.request
@@ -16,6 +15,7 @@ from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.run.checks import CheckResult
 from harbor_research_runner.run.loop import RunSession
 from harbor_research_runner.run.tool_identity import ToolIdentity
+from tests.support.docker_stub import _stub_docker_dir
 from tests.support.fake_upstream import FakeUpstream
 
 
@@ -23,21 +23,6 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
-
-
-def _stub_docker_dir(tmp_path: Path, calls_path: Path) -> Path:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    docker = bin_dir / "docker"
-    docker.write_text(
-        "#!/bin/sh\n"
-        f"printf '%s\\n' \"$1\" >> {shlex.quote(str(calls_path))}\n"
-        'if [ "$1" = events ]; then exec sleep 30; fi\n'
-        "exit 0\n",
-        encoding="utf-8",
-    )
-    docker.chmod(0o755)
-    return bin_dir
 
 
 def _session(tmp_path: Path, upstream_url: str) -> RunSession:
