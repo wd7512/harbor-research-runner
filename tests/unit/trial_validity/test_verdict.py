@@ -194,6 +194,118 @@ def _judge(
     )
 
 
+def test_malformed_trial_row_without_an_open_row_is_ledger_damage():
+    malformed_start = _request_start(1, "r0")
+    del malformed_start["request_id"]
+
+    verdict = _judge(rows=[malformed_start])
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "ledger_damaged"
+
+
+def test_other_trials_damage_does_not_change_a_trial_without_an_open_row(tmp_path):
+    other_start = _request_start(1, "r0", trial="other-trial")
+    del other_start["request_id"]
+    problems = _write_ledger(
+        tmp_path, [other_start, "{not json", _open_row(3, trial="other-trial")]
+    )
+
+    verdict = _judge(rows=[], problems=problems)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "no_open_row"
+
+
+def test_sequence_gap_ending_at_open_row_without_close_keeps_trial_measured():
+    rows = [_open_row(1, trial="other-trial"), _open_row(4)]
+    problems = ReadResult(rows, False, [])
+
+    verdict = _judge(
+        _facts(has_result=False),
+        rows=problems.rows,
+        problems=problems,
+    )
+
+    assert verdict.measured is True
+
+
+@pytest.mark.parametrize(
+    ("rows", "has_result"),
+    [
+        ([_open_row(5, trial="other-trial"), _open_row(3)], False),
+        ([_open_row(5, trial="other-trial"), _open_row(3), _close_row(4)], True),
+    ],
+)
+def test_sequence_reset_at_open_row_marks_trial_ledger_damaged(rows, has_result):
+    problems = ReadResult(rows, False, [])
+
+    verdict = _judge(
+        _facts(has_result=has_result),
+        rows=problems.rows,
+        problems=problems,
+    )
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "ledger_damaged"
+
+
+def test_invalid_other_trial_row_after_close_keeps_trial_measured():
+    malformed_start = _request_start(3, "other-request", trial="other-trial")
+    del malformed_start["request_id"]
+    rows = [_open_row(1), _close_row(2), malformed_start]
+    problems = ReadResult(rows, False, [])
+
+    verdict = _judge(rows=problems.rows, problems=problems)
+
+    assert verdict.measured is True
+
+
+def test_request_start_without_open_or_result_is_no_open_row():
+    rows = [_request_start(1, "r0")]
+    problems = ReadResult(rows, False, [])
+
+    verdict = _judge(_facts(has_result=False), rows=problems.rows, problems=problems)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "no_open_row"
+
+
+def test_damage_after_other_trial_open_inside_trial_window_is_ledger_damaged(tmp_path):
+    problems = _write_ledger(
+        tmp_path,
+        [_open_row(1, trial="other-trial"), _open_row(2), "{not json", _close_row(4)],
+    )
+
+    verdict = _judge(rows=problems.rows, problems=problems)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "ledger_damaged"
+
+
+def test_damage_before_trial_open_does_not_change_measurement(tmp_path):
+    problems = _write_ledger(
+        tmp_path,
+        [_refused(1, "not_open"), "{not json", _open_row(3), _close_row(4)],
+    )
+
+    verdict = _judge(rows=problems.rows, problems=problems)
+
+    assert verdict.measured is True
+
+
+def test_malformed_oom_line_without_agent_start_returns_verdict(tmp_path):
+    started, finished = _phases(agent=(None, 5.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    oom_events = _telemetry_read(tmp_path, "docker-oom-events.jsonl", [], 1)
+
+    verdict = _judge(facts, oom_events=oom_events)
+
+    assert verdict.valid is True
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "phase_times_missing"
+
+
 def _fixture_oom_facts(name):
     fixture = Path(__file__).parents[2] / "fixtures" / "oom" / f"{name}-result.json"
     result = json.loads(fixture.read_text())
@@ -457,7 +569,7 @@ def test_bad_line_before_trial_keeps_it_measured(tmp_path):
 
 def test_harbor_tokens_without_proxy_rows_is_possible_bypass():
     verdict = _judge(
-        _facts(reward=0.0, harbor_reported_tokens=500),
+        _facts(reward=0.0, harbor_reported_tokens=1),
         rows=[_open_row(1), _close_row(2)],
     )
 
@@ -468,6 +580,40 @@ def test_harbor_tokens_without_proxy_rows_is_possible_bypass():
 
 def test_host_breach_in_agent_window_invalidates_trial():
     samples = [_sample(4.0, mem_available_mb=100)]
+
+    verdict = _judge(samples=samples)
+
+    _assert_invalid(verdict, "host_fault", "host")
+
+
+@pytest.mark.parametrize("timestamp", [3.0, 5.0])
+def test_host_breach_at_agent_window_boundary_invalidates_trial(timestamp):
+    verdict = _judge(samples=[_sample(timestamp, mem_available_mb=100)])
+
+    _assert_invalid(verdict, "host_fault", "host")
+
+
+def test_host_breach_during_verifier_invalidates_trial():
+    started, finished = _phases(verifier=(6.0, 8.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+
+    verdict = _judge(facts, samples=[_sample(7.0, mem_available_mb=100)])
+
+    _assert_invalid(verdict, "host_fault", "host")
+
+
+@pytest.mark.parametrize("timestamp", [True, "bad"])
+def test_host_breach_with_invalid_sample_time_is_ignored(timestamp):
+    verdict = _judge(samples=[_sample(timestamp, mem_available_mb=100)])
+
+    assert verdict.reason != "host_fault"
+
+
+def test_host_fault_search_continues_after_invalid_sample_time():
+    samples = [
+        _sample("bad", mem_available_mb=100),
+        _sample(4.0, mem_available_mb=100),
+    ]
 
     verdict = _judge(samples=samples)
 
@@ -509,6 +655,81 @@ def test_host_sample_gap_of_two_intervals_keeps_trial_measured():
     verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
 
     assert verdict.measured is True
+
+
+def test_host_sample_gap_of_three_intervals_keeps_trial_measured():
+    samples = [_sample(0.0), _sample(30.0)]
+
+    verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is True
+
+
+@pytest.mark.parametrize("samples", [[_sample(-28.0), _sample(3.0)], [_sample(5.0), _sample(40.0)]])
+def test_host_sample_gap_touching_trial_window_is_unmeasured(samples):
+    verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_timestamps_without_numeric_values_are_unmeasured():
+    samples = [_sample(True), _sample("4")]
+
+    verdict = _judge(samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_distance_of_three_intervals_from_trial_edge_is_accepted():
+    started, finished = _phases(agent=(40.0, 40.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    samples = [_sample(10.0)]
+
+    verdict = _judge(facts, samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is True
+
+
+def test_host_sample_distance_beyond_three_intervals_from_trial_edge_is_unmeasured():
+    started, finished = _phases(agent=(40.0, 40.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    samples = [_sample(0.0)]
+
+    verdict = _judge(facts, samples=samples, resource_problems=ReadResult(samples, False, []))
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_damage_span_ending_before_trial_is_ignored():
+    samples = ReadResult([_sample(0.0), _sample(2.0)], False, [2])
+
+    verdict = _judge(samples=samples.rows, resource_problems=samples)
+
+    assert verdict.measured is True
+
+
+@pytest.mark.parametrize("times", [[0.0, 3.0], [5.0, 10.0]])
+def test_host_sample_damage_span_touching_trial_boundary_is_unmeasured(times):
+    samples = ReadResult([_sample(timestamp) for timestamp in times], False, [2])
+
+    verdict = _judge(samples=samples.rows, resource_problems=samples)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
+
+
+def test_host_sample_damage_during_verifier_is_unmeasured():
+    started, finished = _phases(verifier=(6.0, 8.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    samples = ReadResult([_sample(6.0), _sample(8.0)], False, [2])
+
+    verdict = _judge(facts, samples=samples.rows, resource_problems=samples)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "host_samples_damaged"
 
 
 def test_missing_host_samples_make_trial_unmeasured():
@@ -637,6 +858,40 @@ def test_oom_event_damage_overlapping_trial_window_makes_trial_unmeasured(tmp_pa
     assert verdict.unmeasured_reason == "telemetry_damaged"
 
 
+@pytest.mark.parametrize(
+    ("times", "bad_line"),
+    [([0, 3], 2), ([5, 10], 2)],
+)
+def test_memory_watch_damage_touching_trial_window_is_unmeasured(tmp_path, times, bad_line):
+    memory = _telemetry_read(
+        tmp_path,
+        "memory-watch.jsonl",
+        [_memory_sample(timestamp) for timestamp in times],
+        bad_line,
+    )
+
+    verdict = _judge(memory_watch_events=memory)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "telemetry_damaged"
+
+
+def test_memory_watch_damage_during_verifier_is_unmeasured(tmp_path):
+    started, finished = _phases(verifier=(6.0, 8.0))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    memory = _telemetry_read(
+        tmp_path,
+        "memory-watch.jsonl",
+        [_memory_sample(6), _memory_sample(8)],
+        2,
+    )
+
+    verdict = _judge(facts, memory_watch_events=memory)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "telemetry_damaged"
+
+
 def test_oom_event_damage_outside_trial_window_keeps_trial_measured(tmp_path):
     oom = _telemetry_read(
         tmp_path,
@@ -689,6 +944,160 @@ def test_exception_before_verifier_is_labelled_as_agent_exit():
     assert verdict.valid
     assert "exit_nonzero" in verdict.labels
     assert "verifier_failed" not in verdict.labels
+
+
+def test_environment_setup_failure_does_not_require_agent_phase_times():
+    started, finished = _phases(agent=(None, None))
+    facts = _facts(
+        exception_type="EnvironmentSetupError",
+        exception_at=1.2,
+        phase_started=started,
+        phase_finished=finished,
+    )
+
+    verdict = _judge(facts, rows=_clean_ledger())
+
+    assert verdict.reason == "environment_failed"
+    assert verdict.measured is True
+
+
+def test_agent_setup_failure_does_not_require_agent_phase_times():
+    started, finished = _phases(agent=(None, None))
+    facts = _facts(
+        exception_type="HarnessSetupError",
+        exception_at=2.2,
+        phase_started=started,
+        phase_finished=finished,
+    )
+
+    verdict = _judge(facts, rows=_clean_ledger(), earlier=("harness_setup_failed",))
+
+    assert verdict.valid is True
+    assert verdict.measured is True
+
+
+def test_oom_events_are_not_checked_without_a_complete_trial_window():
+    started, finished = _phases(agent=(3.0, None))
+    facts = _facts(phase_started=started, phase_finished=finished)
+    event = _docker_oom_event(4.0)
+
+    verdict = _judge(facts, rows=_clean_ledger(), oom_events=[event])
+
+    assert verdict.valid is True
+    assert verdict.oom_source is None
+
+
+def test_oom_search_continues_after_non_object_event():
+    event = _docker_oom_event(4.0)
+
+    verdict = _judge(rows=_clean_ledger(), oom_events=[None, event])
+
+    assert verdict.oom_source == "kernel"
+
+
+@pytest.mark.parametrize("event", [{}, {"Actor": {}}])
+def test_oom_search_ignores_incomplete_event_shapes(event):
+    verdict = _judge(rows=_clean_ledger(), oom_events=[event, _docker_oom_event(4.0)])
+
+    assert verdict.oom_source == "kernel"
+
+
+@pytest.mark.parametrize("timestamp", [3.0, 5.0])
+def test_kernel_oom_at_trial_window_boundary_is_counted(timestamp):
+    verdict = _judge(rows=_clean_ledger(), oom_events=[_docker_oom_event(timestamp)])
+
+    assert verdict.oom_source == "kernel"
+
+
+def test_watchdog_event_for_another_row_type_does_not_count_as_oom():
+    sample = {**_memory_sample(4.0), "trial": TRIAL}
+
+    verdict = _judge(rows=_clean_ledger(), memory_watch_events=[sample])
+
+    assert verdict.oom_source is None
+
+
+def test_watchdog_event_for_matching_trial_with_non_numeric_time_is_ignored():
+    event = {"type": "kill", "trial": TRIAL, "t": "bad"}
+
+    verdict = _judge(rows=_clean_ledger(), memory_watch_events=[event])
+
+    assert verdict.oom_source is None
+
+
+@pytest.mark.parametrize("timestamp", [3.0, 5.0])
+def test_watchdog_kill_at_trial_window_boundary_is_counted(timestamp):
+    event = {"type": "kill", "trial": TRIAL, "t": timestamp}
+
+    verdict = _judge(rows=_clean_ledger(), memory_watch_events=[event])
+
+    assert verdict.oom_source == "watchdog"
+
+
+def test_invalid_verdict_preserves_measurement_reason_and_empty_oom_source():
+    verdict = _judge(_facts(exception_type="CancelledError"), rows=_clean_ledger())
+
+    assert verdict.valid is False
+    assert verdict.reason == "cancelled"
+    assert verdict.measured is True
+    assert verdict.unmeasured_reason is None
+    assert verdict.oom_source is None
+
+
+def test_invalid_verdict_preserves_unmeasured_reason():
+    rows = _clean_ledger()
+    facts = _facts(has_result=False)
+
+    verdict = judge_trial(
+        facts,
+        rows,
+        ReadResult(rows, False, [3]),
+        [_sample(0.0), _sample(10.0)],
+        DEFAULT_LIMITS,
+        (),
+        ReadResult([], False, []),
+        ReadResult([], False, []),
+        resource_problems=ReadResult([_sample(0.0), _sample(10.0)], False, []),
+        sampler_interval_s=10,
+    )
+
+    assert verdict.valid is False
+    assert verdict.reason == "never_finished"
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "ledger_damaged"
+
+
+def test_repeated_setup_failure_keeps_boolean_measurement_value():
+    started, finished = _phases(agent=(None, None))
+    facts = _facts(
+        reward=0.0,
+        exception_type="HarnessSetupError",
+        phase_started=started,
+        phase_finished=finished,
+        harbor_reported_tokens=0,
+    )
+
+    verdict = _judge(facts, rows=[], earlier=("harness_setup_failed",))
+
+    assert verdict.measured is False
+
+
+def test_repeated_setup_failure_does_not_add_oom_label():
+    facts = _facts(
+        exception_type="HarnessSetupError",
+        exception_at=2.6,
+        phase_started={**_phases()[0], "agent": 3.0},
+        phase_finished=_phases()[1],
+    )
+
+    verdict = _judge(
+        facts,
+        rows=_clean_ledger(),
+        earlier=("harness_setup_failed",),
+        oom_events=[_docker_oom_event(4.0)],
+    )
+
+    assert "oom_killed" not in verdict.labels
 
 
 def test_repeated_setup_failure_counts_as_failure():
@@ -1065,6 +1474,22 @@ def test_result_without_agent_phase_window_is_unmeasured():
     assert verdict.unmeasured_reason == "phase_times_missing"
 
 
+def test_missing_agent_start_with_malformed_memory_watch_line_is_phase_times_missing(tmp_path):
+    phase_started, phase_finished = _phases(agent=(None, 5.0))
+    memory = _telemetry_read(
+        tmp_path, "memory-watch.jsonl", [_memory_sample(2), _memory_sample(6)], 2
+    )
+
+    verdict = _judge(
+        _facts(phase_started=phase_started, phase_finished=phase_finished),
+        rows=[_open_row(1), _close_row(2)],
+        memory_watch_events=memory,
+    )
+
+    assert not verdict.measured
+    assert verdict.unmeasured_reason == "phase_times_missing"
+
+
 @pytest.mark.parametrize("field", ["prompt_tokens", "completion_tokens", "cached_read_tokens"])
 def test_string_token_value_marks_trial_unmeasured(field):
     rows = _clean_ledger()
@@ -1093,6 +1518,17 @@ def test_string_sequence_marks_trial_unmeasured():
     verdict = _judge(rows=rows)
 
     assert not verdict.measured
+    assert verdict.unmeasured_reason == "ledger_damaged"
+
+
+@pytest.mark.parametrize("sequence", [0, -1, True, 1.0, None])
+def test_non_positive_or_non_integer_sequence_marks_trial_unmeasured(sequence):
+    rows = _clean_ledger()
+    rows[-2]["seq"] = sequence
+
+    verdict = _judge(rows=rows)
+
+    assert verdict.measured is False
     assert verdict.unmeasured_reason == "ledger_damaged"
 
 
