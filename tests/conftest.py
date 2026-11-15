@@ -136,7 +136,6 @@ def _no_sleep_process_or_network(request: pytest.FixtureRequest, monkeypatch: py
 
 
 @pytest.fixture(autouse=True)
-def _harness_cache_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from harbor_research_runner.harness import agents
-
-    monkeypatch.setattr(agents, "_extraction_workdir", lambda: tmp_path / "harness-cache")
+def _home_in_tmp(request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    if tier_of(Path(str(request.node.path))) in ("unit", "integration"):
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
