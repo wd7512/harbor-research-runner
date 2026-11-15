@@ -12,6 +12,7 @@ from pathlib import Path
 from harbor_research_runner.docker_host import cleanup, resources
 from harbor_research_runner.docker_host.host_lock import HostLock
 from harbor_research_runner.evidence_bundle import build as evidence_build
+from harbor_research_runner.evidence_bundle.verify import verify as verify_evidence
 from harbor_research_runner.harness import build as harness_build
 from harbor_research_runner.job_config.job_file import load_job
 from harbor_research_runner.model_proxy.adapters import select_adapter
@@ -80,6 +81,9 @@ def _parser() -> argparse.ArgumentParser:
     evidence.add_argument("run_id", type=_run_id)
     evidence.add_argument("--runs-dir", type=_absolute_path, default="runs")
     evidence.add_argument("--evidence-dir", type=_absolute_path, default="evidence")
+
+    verify = commands.add_parser("verify-evidence")
+    verify.add_argument("bundle_dir", type=_absolute_path)
 
     explore = commands.add_parser("explore")
     explore.add_argument(
@@ -268,6 +272,15 @@ def main(argv: list[str] | None = None, steps: Steps | None = None) -> int:
         except Exception as exc:
             logger.error("evidence build failed: %s", exc)
             return 1
+    if args.command == "verify-evidence":
+        try:
+            problems = verify_evidence(args.bundle_dir)
+        except Exception as exc:
+            logger.error("evidence bundle unreadable: %s", exc)
+            return 2
+        for problem in problems:
+            logger.error("evidence verification failed: %s", problem)
+        return 1 if problems else 0
     if args.command == "explore":
         return _serve(args, steps)
     if args.command == "clean-docker":

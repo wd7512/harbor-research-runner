@@ -214,6 +214,14 @@ def parse_row(row: dict) -> ProxyStart | Open | RequestStart | RequestEnd | Refu
         raise ValueError("invalid proxy ledger row") from exc
 
 
+def is_valid_row(row: dict) -> bool:
+    try:
+        parse_row(row)
+    except ValueError:
+        return False
+    return True
+
+
 def sequence_gaps(rows: list[dict]) -> list[tuple[int, int]]:
     return [
         (previous, current)

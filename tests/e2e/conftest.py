@@ -21,6 +21,8 @@ import yaml
 from harbor_research_runner.docker_host.processes import pids_naming_run
 from harbor_research_runner.docker_host.profile import host_profile
 from harbor_research_runner.docker_host.resources import host_fingerprint
+from harbor_research_runner.evidence_bundle.build import build as build_evidence
+from harbor_research_runner.evidence_bundle.verify import verify as verify_evidence
 from harbor_research_runner.harbor_adapter.commands import (
     job_config as harbor_job_config,
 )
@@ -833,6 +835,14 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
             test_run.stop_process_groups()
         finally:
             try:
-                upstream.stop()
+                run_dir = test_run._run_path_if_ready()
+                if run_dir is not None and (run_dir / "machine-check.json").is_file():
+                    bundle_dir = tmp_path / "verified-evidence"
+                    result = build_evidence(run_dir, bundle_dir, dict(os.environ))
+                    assert result == 0
+                    assert verify_evidence(bundle_dir) == []
             finally:
-                _clean_docker_and_wait(runs_dir)
+                try:
+                    upstream.stop()
+                finally:
+                    _clean_docker_and_wait(runs_dir)

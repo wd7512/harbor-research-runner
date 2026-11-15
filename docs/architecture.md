@@ -65,7 +65,8 @@ Unit tests mirror the source path: `src/harbor_research_runner/records/jsonl.py`
 | `hrr build-harness --harness opencode --commit SHA [--arch amd64|arm64]` | Builds the image for one commit and adds it to the commit manifest; `--arch` defaults to the Docker host architecture | 0 ok, 1 failed |
 | `hrr check-machine --job JOB.yaml --out FILE` | Runs the oracle check for the job's task set on this machine | 0 ok, 1 failed |
 | `hrr run JOB.yaml [--stop-launching-at TIME]` / `hrr run --resume RUN_ID [--stop-launching-at TIME]` | Launches or resumes a run | 0 complete, 1 refused to start or internal error, 2 halted and resumable, 3 finished incomplete |
-| `hrr build-evidence RUN_ID` | Builds the evidence bundle from a run folder | 0 ok, 1 failed, 4 secret found (nothing written) |
+| `hrr build-evidence RUN_ID` | Builds the evidence bundle from a run folder | 0 ok, 1 failed, 4 secret found (nothing written), 5 evidence invariants failed (bundle written) |
+| `hrr verify-evidence BUNDLE_DIR` | Checks an evidence bundle's internal invariants | 0 clean, 1 problems found, 2 unreadable bundle |
 | `hrr explore [PATH ...]` | Starts the results explorer over evidence bundles | 0 |
 | `hrr clean-docker [--apply]` | Lists or removes leftover trial containers and networks | 0 clean, 1 residue found (without `--apply`) or refused because the host lock is held or a process names a live run folder (`--apply`) |
 
@@ -136,13 +137,15 @@ Every row has `seq` (integer, starts at 1, +1 per row, never reused across proxy
 | `quota_exhausted` | The provider says the account quota is used up | yes |
 | `server_error` | 5xx reached the harness | yes |
 | `stalled` | The proxy cut the request: no first chunk within `first_chunk_max_s`, a gap over `inter_chunk_gap_max_s`, or total over `request_latency_max_s` | yes |
-| `truncated` | The stream ended without its terminator | yes |
+| `truncated` | The stream ended without a terminal-OK event | yes |
 | `transport_error` | Connection to the upstream failed | yes |
 | `upstream_auth` | 401, 402 or 403 from the upstream: the proxy's own key, billing or account was refused | yes |
 | `client_error` | Other 4xx (except 401, 402, 403 and 429): the harness sent a bad request | no |
 | `client_disconnect` | The harness closed the connection first | no |
 
 A failover that the proxy absorbed (a later key or endpoint answered) is an `ok` row with `failovers > 0`.
+
+A Responses body, including the response carried by a `response.completed` stream event, must have a terminal-OK `status` (`completed` or `incomplete`) and an `output` list. Missing or invalid fields are decode failures and are recorded as `truncated`. In identity streams, only `response.completed` or `response.incomplete` events with a status in that set terminate successfully; `response.failed` and other statuses count as unsuccessful termination.
 
 Write policy: flush after every row; `fsync` after every `close` row and at least every 5 seconds, from a background thread. If a write or flush fails, the proxy stops serving (every later request gets HTTP 503 with body `proxy ledger unavailable`) and exits with code 70.
 
@@ -207,11 +210,11 @@ Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_outp
 
 Host: `min_spare_memory_mb` [2048], `memory_reserve_mb` [4096], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` field. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
 
-Run: `max_set_asides_per_slot` [2 x repetitions], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
+Run: `max_set_asides_per_slot` [2 x repetitions; `deferred` and `run_halted` set-asides do not count toward the cap], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
 
 ### 4.7 `trials.jsonl` (evidence bundle)
 
-One row per trial, including set-aside trials and canary trials. Sorted by `task`, `arm`, `agent_started_t`, `trial`.
+One row per judged trial, including set-aside trials and canary trials. Unjudged trial folders in an unfinished run are skipped and counted in `report.md`; a finished run with any unjudged trial folder is refused. Sorted by `task`, `arm`, `agent_started_t`, `trial`.
 
 Identity: `trial`, `task`, `arm`, `harness`, `commit`, `model`, `location` (`harbor-job`, `set-aside-trials` or `canary-job`), `is_first_attempt`, `is_final`.
 
@@ -340,7 +343,7 @@ Harbor's exception labels are never an input to a halt rule.
 3. Canary: one Harbor job in `canary-job/` running the bundled task `say-hello` (Harbor selects a local task by its folder name; it records the trial under `[task].name`, `canary/say-hello`) once per arm against the real model. The task lives at `run/canary_task/say-hello/`: its instruction creates `/app/hello.txt` containing `hello`, its environment is `python:3.12-slim` pinned by digest, its agent timeout is 120 s and its verifier timeout is 60 s, and its verifier accepts exactly `hello` or `hello\n`. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
 4. Pass 0: `harbor run` with the generated `harbor-job-config.yaml`.
 5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules. The memory watcher samples each running `harbor-job` and `canary-job` trial container every 2 seconds and kills it when measured use exceeds its task memory limit. Watchdog kill rows only label main-job verdicts.
-6. On halt: stop Harbor's process group, stop the proxy and sampler, judge every remaining trial folder, write `halt`, exit 2. On a `deadline` halt, a remaining trial with no `result.json` and no ledger `open` row (Harbor made its folder but never started it) is judged invalid with reason `deferred` and no instrument. Its set-aside on resume does not count toward `max_set_asides_per_slot`.
+6. On halt: stop Harbor's process group, stop the proxy and sampler, judge every remaining trial folder, write `halt`, exit 2. A remaining trial with a ledger `open` row and no `close` row whose verdict would otherwise be valid is judged invalid with reason `run_halted` and no instrument; an already invalid verdict stays unchanged. On a `deadline` halt, a remaining trial with no `result.json` and no ledger `open` row (Harbor made its folder but never started it) is judged invalid with reason `deferred` and no instrument. Neither reason counts toward `max_set_asides_per_slot` when set aside on resume.
 7. When Harbor exits on its own: judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
 8. Finish: stop the proxy and sampler, write `finish`, make the run folder read-only, exit 0 or 3.
 
@@ -427,13 +430,14 @@ built_at = "2026-12-01"
 
 ## 9. Evidence bundle
 
-`hrr build-evidence RUN_ID` is a pure function of the run folder: the same run folder gives byte-identical files. It can run on an unfinished run folder and then covers the trials judged so far.
+`hrr build-evidence RUN_ID` is a pure function of the run folder: the same run folder gives byte-identical files. It can run on an unfinished run folder and then covers the trials judged so far; `report.md` lists `Trials not yet judged` in its completeness table. A run with a `finish` event must have a `trial_verdict` for every trial folder in `harbor-job/`, `set-aside-trials/` and `canary-job/`; otherwise evidence building refuses and names the trials.
 
 - `trials.jsonl`: section 4.7.
 - `proxy-requests.jsonl.gz`: one row per request, `request_start` and `request_end` merged on `request_id`, sorted by `seq` of the start row; gzip with `mtime=0`.
+- Rows with invalid types in request accounting fields are excluded from trial usage totals and merged request rows.
 - `resource-stats.jsonl.gz`, `docker-oom-events.jsonl`, `run-events.jsonl`, `run-metadata.json`: copied.
 - `memory-watch.jsonl`: copied.
-- `report.md`: generated from `statistics`; `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, and the loaded `MachineCheck` record.
+- `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged`. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
 The results explorer verifies every bundle file against `manifest.json` before loading the bundle. A missing or altered file refuses the bundle and is reported with the manifest problems.

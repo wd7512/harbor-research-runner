@@ -13,7 +13,7 @@ from harbor_research_runner.model_proxy.chars import (
 from harbor_research_runner.model_proxy.usage import normalize_usage
 
 from .base import DecodeResult, StreamTranslator, UpstreamAdapter, UpstreamDecodeError
-from .responses import ResponsesAdapter
+from .responses import TERMINAL_OK, ResponsesAdapter
 
 Adapter = UpstreamAdapter
 
@@ -34,21 +34,36 @@ class _IdentityStreamTranslator(StreamTranslator):
         self._usage: dict[str, int] | None = None
         self._served_model: str | None = None
         self._terminal = False
+        self._event_data: list[str] = []
 
     def feed_line(self, line: str) -> list[str]:
-        if not line.startswith("data:"):
-            return [line + "\n"]
-        raw = line[5:].strip()
+        if line.startswith("data:"):
+            value = line[5:]
+            self._event_data.append(value[1:] if value.startswith(" ") else value)
+        elif not line:
+            self.end_event()
+        return [line + "\n"]
+
+    def end_event(self) -> None:
+        if not self._event_data:
+            return
+        raw = "\n".join(self._event_data)
+        self._event_data.clear()
         if self._api == "chat" and raw == "[DONE]":
             self._finished = True
             self._terminal = True
-            return [line + "\n"]
+            return
+        self._record_event(raw)
+
+    def _record_event(self, raw: str) -> None:
+        if self._api == "responses" and self._terminal:
+            return
         try:
             obj = json.loads(raw)
         except json.JSONDecodeError:
-            return [line + "\n"]
+            return
         if not isinstance(obj, dict):
-            return [line + "\n"]
+            return
         usage = normalize_usage(obj)
         if usage is not None:
             self._usage = usage
@@ -63,13 +78,17 @@ class _IdentityStreamTranslator(StreamTranslator):
             self._completion_chars += chat_delta_chars(obj)
         else:
             self._completion_chars += responses_delta_chars(obj)
-            if obj.get("type") in {
+            event = obj.get("type")
+            if event in {
                 "response.completed",
                 "response.incomplete",
                 "response.failed",
             }:
-                self._finished = True
                 self._terminal = True
+                response = obj.get("response")
+                status = response.get("status") if isinstance(response, dict) else None
+                if event != "response.failed" and status in TERMINAL_OK:
+                    self._finished = True
         if self._api == "chat":
             choices = obj.get("choices")
             if isinstance(choices, list):
@@ -84,7 +103,6 @@ class _IdentityStreamTranslator(StreamTranslator):
                     self._terminal = True
             elif usage is not None:
                 self._terminal = True
-        return [line + "\n"]
 
     @property
     def finished(self) -> bool:
