@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import stat
 from collections.abc import Callable
 from dataclasses import replace
@@ -1133,8 +1134,10 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
 
     commands: list[list[str]] = []
     stopped: list[bool] = []
+    observed_deadlines: list[tuple[str | None, float | None]] = []
 
     def watch_fn(current, _process, _job_dir, _started):
+        observed_deadlines.append((current.stop_launching_at, current.stop_launching_at_epoch))
         new_trial = run_dir / "harbor-job" / "trial-resumed"
         new_trial.mkdir()
         (new_trial / "config.json").write_text("{}", encoding="utf-8")
@@ -1147,7 +1150,15 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
     deps = replace(deps, tool=ToolIdentity("0.1.1", "b" * 40))
     metadata_before = (run_dir / "run-metadata.json").read_bytes()
 
-    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+    stop_launching_at = "2026-12-01T10:00:00+00:00"
+    result = resume_run(
+        run_dir.name,
+        run_dir.parent,
+        manifest_path,
+        {},
+        deps,
+        stop_launching_at=stop_launching_at,
+    )
 
     events = jsonl.read_rows(events_path).rows
     resume_event = next(row for row in events if row.get("type") == "resume")
@@ -1162,6 +1173,14 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
     assert resume_event["tool_commit"] == "b" * 40
     assert (run_dir / "run-metadata.json").read_bytes() == metadata_before
     assert commands[0][3:5] == ["jobs", "resume"]
+    assert commands[0][-2:] == ["--pk", f"stop_launching_at={stop_launching_at}"]
+    assert len(observed_deadlines) == 1
+    assert observed_deadlines[0][0] == stop_launching_at
+    assert observed_deadlines[0][1] is not None
+    assert any(
+        row.get("type") == "stop_launching_at" and row.get("time") == stop_launching_at
+        for row in events
+    )
     assert start_index < finish_index
 
 
@@ -1256,7 +1275,10 @@ def _inputs(tmp_path: Path):
 
 
 def _create(
-    tmp_path: Path, check_results: list[CheckResult] | None = None, job: Job | None = None
+    tmp_path: Path,
+    check_results: list[CheckResult] | None = None,
+    job: Job | None = None,
+    host: dict | None = None,
 ) -> RunSession:
     default_job, card, manifest_path, machine_check = _inputs(tmp_path)
     job = job or default_job
@@ -1281,7 +1303,7 @@ def _create(
         machine_check=machine_check,
         now=lambda: 1794480000.123456,
         tool=ToolIdentity("0.1.0", "a" * 40),
-        host=_HOST,
+        host=_HOST if host is None else host,
     )
 
 
@@ -1293,8 +1315,10 @@ def test_create_writes_launch_checks_and_metadata(tmp_path: Path) -> None:
     ]
     metadata = json.loads((session.run_dir / "run-metadata.json").read_text())
     assert [event["type"] for event in events] == ["launch", "launch_check"]
+    assert events[0]["t"] == 1794480000.123456
     assert events[0]["tool_version"] == "0.1.0"
     assert events[0]["tool_commit"] == "a" * 40
+    assert events[0]["pid"] == os.getpid()
     assert events[1]["name"] == "ready"
     assert metadata["host"] == _HOST
     assert metadata["tool_version"] == "0.1.0"
@@ -1356,6 +1380,31 @@ def test_create_refuses_failed_checks_without_metadata(tmp_path: Path) -> None:
         "detail": "not ready",
     }
     assert not (run_dir / "run-metadata.json").exists()
+
+
+def test_create_refuses_a_host_profile_with_missing_fields(tmp_path: Path) -> None:
+    host = {key: value for key, value in _HOST.items() if key != "hostname"}
+
+    with pytest.raises(ValueError, match=r"missing=\['hostname'\], extra=\[\]"):
+        _create(tmp_path, host=host)
+
+    assert not (tmp_path / "runs").exists()
+
+
+def test_create_refuses_a_host_profile_with_extra_fields(tmp_path: Path) -> None:
+    host = {**_HOST, "unexpected": "value"}
+
+    with pytest.raises(ValueError, match=r"missing=\[\], extra=\['unexpected'\]"):
+        _create(tmp_path, host=host)
+
+    assert not (tmp_path / "runs").exists()
+
+
+def test_create_leaves_stop_deadline_fields_unset(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+
+    assert session.stop_launching_at is None
+    assert session.stop_launching_at_epoch is None
 
 
 def test_load_does_not_change_metadata_or_append_event(tmp_path: Path) -> None:

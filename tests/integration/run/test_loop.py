@@ -7,6 +7,7 @@ import shlex
 import socket
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -64,7 +65,6 @@ def _run_deps(
 ) -> tuple[Path, Path, Path, RunDeps, int]:
     port = _free_port()
     machine_check_path = tmp_path / "machine-check.json"
-    machine_check_path.write_text("{}", encoding="utf-8")
     job_path = tmp_path / "job.yaml"
     job_path.write_text(
         "name: study\n"
@@ -106,10 +106,14 @@ def _run_deps(
         host_profile=_PROFILE,
         task_source=task_source or {"dataset": "bench/tasks"},
         concurrency=1,
-        tasks=[{"name": "task-a", "digest": task_digest, "memory_mb": 512}],
+        tasks=[
+            {"name": "task-a", "digest": task_digest, "memory_mb": 512},
+            {"name": "canary/say-hello", "digest": "sha256:canary", "memory_mb": 1024},
+        ],
         included=["task-a"],
         verifier_timeout_multiplier=1.0,
     )
+    machine_check_path.write_text(machine_check.to_json(), encoding="utf-8")
     host_lock = HostLock(tmp_path / "host.lock")
     checks = CheckDeps(
         select_adapter=lambda *_args: object(),
@@ -333,6 +337,80 @@ def test_run_job_rejects_successful_canary_without_a_trial(
     run_log = (result.run_dir / "runner.log").read_text(encoding="utf-8")
     assert "canary failed with Harbor exit code 0:" in run_log
     assert "run failed" not in run_log
+    _assert_proxy_stopped(port)
+
+
+def test_run_job_rejects_a_canary_with_two_trials_for_one_arm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upstream, upstream_url = _start_upstream()
+    harbor_calls: list[tuple[list[str], Path, int]] = []
+    job_path, manifest_path, runs_dir, deps, port = _run_deps(
+        tmp_path, upstream_url, harbor_calls, returncode=0
+    )
+    original_start_harbor = deps.start_harbor
+
+    def start_harbor(argv: list[str], cwd: Path, lifeline_fd: int) -> HarborProcess:
+        process = original_start_harbor(argv, cwd, lifeline_fd)
+        fixture = Path(__file__).parents[2] / "fixtures/run_folders/clean/canary-job/canary-alpha"
+        canary_dir = cwd / "canary-job"
+        for name in ("canary-alpha", "canary-beta"):
+            trial_dir = canary_dir / name
+            trial_dir.mkdir(parents=True)
+            config = json.loads((fixture / "config.json").read_text(encoding="utf-8"))
+            config["agent"]["kwargs"]["arm_label"] = "arm-a"
+            config["trial_name"] = name
+            result_data = json.loads((fixture / "result.json").read_text(encoding="utf-8"))
+            result_data["trial_name"] = name
+            (trial_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+            (trial_dir / "result.json").write_text(json.dumps(result_data), encoding="utf-8")
+        return process
+
+    deps = replace(deps, start_harbor=start_harbor)
+    docker_calls = tmp_path / "docker-calls.txt"
+    monkeypatch.setenv(
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+    )
+    try:
+        result = run_job(job_path, runs_dir, manifest_path, {}, deps)
+    finally:
+        upstream.stop()
+
+    assert result.exit_code == 1
+    assert result.run_dir is not None
+    assert "arm arm-a has 2 canary trials; expected exactly one" in (
+        result.run_dir / "runner.log"
+    ).read_text(encoding="utf-8")
+    assert not (result.run_dir / "main-job-config.yaml").exists()
+    _assert_proxy_stopped(port)
+
+
+def test_run_job_reports_live_memory_and_oom_watch_services(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upstream, upstream_url = _start_upstream()
+    harbor_calls: list[tuple[list[str], Path, int]] = []
+    job_path, manifest_path, runs_dir, deps, port = _run_deps(
+        tmp_path, upstream_url, harbor_calls, returncode=7
+    )
+    observed: list[tuple[bool, bool]] = []
+
+    def start_services(session, restart: bool) -> None:
+        session.start_services(restart)
+        observed.append((session.memory_watch_alive(), session.oom_watch_alive()))
+
+    deps = replace(deps, start_services=start_services)
+    docker_calls = tmp_path / "docker-calls.txt"
+    monkeypatch.setenv(
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+    )
+    try:
+        result = run_job(job_path, runs_dir, manifest_path, {}, deps)
+    finally:
+        upstream.stop()
+
+    assert result.exit_code == 1
+    assert observed == [(True, True)]
     _assert_proxy_stopped(port)
 
 

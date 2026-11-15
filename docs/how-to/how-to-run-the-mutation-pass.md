@@ -30,19 +30,6 @@ Run the pass on a case-sensitive filesystem: Linux, or on macOS a case-sensitive
 
 For each survivor, write a test that detects the behavior through the public API, or list it below with its reason. A survivor that only a private helper, a private attribute or a patch could kill is a simplification candidate: it marks code the public behaviour does not need.
 
-Run-loop coverage added for the case-sensitive pass (expected kills; mutmut was not rerun):
-
-- `test_run_job_records_nonzero_canary_exit_and_stops_services` checks `_agent_configs` and `_arm_rows`, expected `x__agent_configs__mutmut_{2,4,13,22,23}` and `x__arm_rows__mutmut_{2,3}`.
-- `test_run_job_records_path_and_git_task_references` checks task references through `run_job`, expected `x__task_ref__mutmut_{7,8,9,10,13,14,15,16,17}`.
-- The slot tests check unrelated event filtering, exempt set-asides and cap boundaries, expected `x_slots_status__mutmut_{4,20,21,22,31,43,72,81,82}`.
-- The nested read-only test checks symlink traversal and preserved modes, expected `x_make_read_only__mutmut_{12,17,36}`.
-- The creation and load assertions check recorded identity and resume refusal outcomes, expected `xǁRunSessionǁcreate__mutmut_{43,76,132,140}`, `xǁRunSessionǁload__mutmut_25` and `x_resume_run__mutmut_{8,9,10,11}`.
-- The set-aside recovery test reaches repair through `resume_run`, expected `x_resume_run__mutmut_{172,173}`; its observable stop marker and the finish timestamp assertion expect `x__finish__mutmut_{1,9}`.
-
-These assertions target 41 of the 306 original survivors. The six exit-33 liveness cases now have public-method coverage; the exit -24 timeout is counted as killed.
-
-Expected survivor disposition after those 41 test kills: 265 total = 20 equivalent + 89 message-text + 152 end-to-end-only + 4 simplification candidates.
-
 Equivalent mutants:
 
 ### harbor_research_runner.evidence_bundle.trials
@@ -112,7 +99,6 @@ Equivalent mutants:
 - `x__attach_run_log__mutmut_14`: Python's codec lookup treats `"UTF-8"` and `"utf-8"` as the same encoding.
 - `x_run_job__mutmut_4`, `x_run_job__mutmut_195`, `x_run_job__mutmut_243`, `x_resume_run__mutmut_14`, `x_resume_run__mutmut_230`, `x_resume_run__mutmut_261`: each changes a `services_started` value from `False` to `None`; the value is only used as a truthiness guard and is set to `True` after services start, so both values select the same cleanup behavior.
 - `x_run_job__mutmut_196`: the canary-failure branch has already stopped services, and the `finally` cleanup is idempotent, so retaining the started flag only repeats that cleanup without changing observable output.
-- `x__attach_run_log__mutmut_{4,7}`: the local runtime's default text encoding is UTF-8, matching the explicit encoding or its omission.
 - `x__task_ref__mutmut_{1,11,12}`: parsed `Job` values always carry exactly one complete task-source variant, so these alternate boolean expressions have the same result for every valid job.
 - `x_make_read_only__mutmut_{3,4,6,7,11}`: changing traversal sort options does not change the final file modes; chmod of child entries does not require parent write permission.
 
@@ -140,7 +126,7 @@ Message-text mutants:
 
 ### harbor_research_runner.run.loop
 
-42 additional survivors in the case-sensitive pass change only human-readable exception or log text. Together with the 47 already recorded, 89 run-loop mutants change no record, return value, or documented remedy: `x_make_read_only__mutmut_{28,31}`, `x_resume_run__mutmut_{2,3,4,5,6,7,44,46,47,73,75,91,93,94,112,115,117,145,146,147,148,149,150,151,152,267,268,269}`, `x_run_job__mutmut_{187,191,253,255,259,266,267,268}`, `xǁRefusedToStartǁ__init____mutmut_1` and `xǁRunSessionǁcreate__mutmut_{64,68,69}`.
+87 survivors change only human-readable exception or log text; no record, return value or documented remedy depends on it: `x_make_read_only__mutmut_{28,31}`, `x_resume_run__mutmut_{3,4,5,6,44,46,47,73,75,91,93,94,112,115,117,145,146,147,148,149,150,151,152,267,268,269}`, `x_run_job__mutmut_{187,191,253,255,259,266,267,268}`, `xǁRefusedToStartǁ__init____mutmut_1` and `xǁRunSessionǁcreate__mutmut_{64,68,69}`.
 
 Not unit-testable:
 
@@ -160,6 +146,9 @@ Not unit-testable:
 - `harbor_research_runner.evidence_bundle.verify.x_verify__mutmut_78`: the default text encoding differs from UTF-8 only under a non-UTF-8 locale, which is not an injectable boundary for `verify`.
 
 ### harbor_research_runner.run.loop
+
+- `x__attach_run_log__mutmut_{4,7}`: omitting the run log's explicit encoding falls back to the locale's encoding, which is UTF-8 on the test hosts; only a non-UTF-8 locale would show the difference.
+- `x_sampler_command__mutmut_{2,6}` and `xǁRunSessionǁstart_services__mutmut_{76,80,111,115,140,144}`: these only uppercase the executable name (`uv` or `python`). On macOS's case-insensitive system disk, PATH lookup still finds the executable; Linux kills these mutants.
 
 `tests/integration/run/test_loop.py` starts the real proxy and sampler services, and mutmut runs integration tests. The remaining `RunSession.start_services` survivors require process, file-descriptor, socket, or health-endpoint behavior that is covered by the Docker end-to-end lifecycle tier:
 
