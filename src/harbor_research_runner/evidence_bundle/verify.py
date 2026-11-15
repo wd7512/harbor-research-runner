@@ -68,13 +68,23 @@ def verify(bundle_dir: Path) -> list[Problem]:
     ]
     trial_rows_result = read_rows(bundle_dir / "trials.jsonl")
     event_rows_result = read_rows(bundle_dir / "run-events.jsonl")
-    memory_rows_result = read_rows(bundle_dir / "memory-watch.jsonl")
     trials = trial_rows_result.rows
     events = event_rows_result.rows
-    memory_rows = memory_rows_result.rows
+    memory_path = bundle_dir / "memory-watch.jsonl"
+    memory_rows_result = read_rows(memory_path) if memory_path.exists() else None
+    memory_rows = memory_rows_result.rows if memory_rows_result is not None else []
     request_rows = _jsonl_gzip(bundle_dir / "proxy-requests.jsonl.gz")
     metadata = _json(bundle_dir / "run-metadata.json")
     report = (bundle_dir / "report.md").read_text(encoding="utf-8")
+
+    if any(event.get("type") == "harbor_start" for event in events):
+        for name in (
+            "resource-stats.jsonl.gz",
+            "docker-oom-events.jsonl",
+            "memory-watch.jsonl",
+        ):
+            if not (bundle_dir / name).exists():
+                _problem(problems, "telemetry_present", name, "present", "missing")
 
     by_trial: dict[str, list[dict]] = {}
     for row in trials:
@@ -225,6 +235,10 @@ def verify(bundle_dir: Path) -> list[Problem]:
         if row.get("measured") is True and unfinished:
             _problem(problems, "measured_closed", trial, "no unfinished requests", len(unfinished))
 
-    if trial_rows_result.bad_lines or event_rows_result.bad_lines or memory_rows_result.bad_lines:
+    if (
+        trial_rows_result.bad_lines
+        or event_rows_result.bad_lines
+        or (memory_rows_result is not None and memory_rows_result.bad_lines)
+    ):
         raise ValueError("bundle contains malformed JSONL records")
     return problems

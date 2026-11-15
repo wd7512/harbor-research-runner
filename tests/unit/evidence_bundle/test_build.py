@@ -100,6 +100,50 @@ def test_build_copies_memory_watch(tmp_path: Path) -> None:
     assert (output / "memory-watch.jsonl").read_bytes() == samples
 
 
+@pytest.mark.parametrize(
+    ("source_name", "bundle_name"),
+    [
+        ("resource-stats.jsonl", "resource-stats.jsonl.gz"),
+        ("docker-oom-events.jsonl", "docker-oom-events.jsonl"),
+        ("memory-watch.jsonl", "memory-watch.jsonl"),
+    ],
+)
+def test_build_reports_missing_telemetry_after_harbor_started(
+    tmp_path: Path, source_name: str, bundle_name: str
+) -> None:
+    from harbor_research_runner.evidence_bundle.verify import verify
+
+    run_dir = _copy_run("clean", tmp_path)
+    with (run_dir / "run-events.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"type": "harbor_start", "t": 1, "pass": 0}) + "\n")
+    telemetry = {
+        "resource-stats.jsonl": b'{"type":"sample"}\n',
+        "docker-oom-events.jsonl": b'{"Type":"container","Action":"oom"}\n',
+        "memory-watch.jsonl": b'{"type":"sample"}\n',
+    }
+    for name, content in telemetry.items():
+        (run_dir / name).write_bytes(content)
+    (run_dir / source_name).unlink()
+    output = tmp_path / "bundle"
+
+    assert build(run_dir, output, {}) == 5
+    assert not (output / bundle_name).exists()
+    assert any(
+        problem.invariant == "telemetry_present" and problem.subject == bundle_name
+        for problem in verify(output)
+    )
+
+
+def test_build_allows_missing_telemetry_before_harbor_started(tmp_path: Path) -> None:
+    run_dir = _copy_run("clean", tmp_path)
+    output = tmp_path / "bundle"
+
+    assert build(run_dir, output, {}) == 0
+    assert not (output / "resource-stats.jsonl.gz").exists()
+    assert not (output / "docker-oom-events.jsonl").exists()
+    assert not (output / "memory-watch.jsonl").exists()
+
+
 def test_build_skips_unjudged_trials_without_finish(tmp_path: Path) -> None:
     run_dir = _copy_run("retries", tmp_path)
     output = tmp_path / "bundle"
