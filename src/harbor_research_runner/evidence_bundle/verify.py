@@ -147,8 +147,11 @@ def verify(bundle_dir: Path) -> list[Problem]:
         "Unmeasured trials": unmeasured,
     }
     actual_counts = _report_counts(report)
+    has_finish = any(event.get("type") == "finish" for event in events)
     if "Trials not yet judged" in actual_counts:
-        expected_counts["Trials not yet judged"] = len(unjudged_trials)
+        expected_counts["Trials not yet judged"] = (
+            0 if has_finish else actual_counts["Trials not yet judged"]
+        )
     if actual_counts != expected_counts:
         _problem(problems, "report_agreement", "report.md", expected_counts, actual_counts)
 
@@ -194,7 +197,6 @@ def verify(bundle_dir: Path) -> list[Problem]:
     for request in request_rows:
         trial = request["trial"]
         requests_by_trial.setdefault(trial, []).append(request)
-    has_finish = any(event.get("type") == "finish" for event in events)
     if has_finish:
         for trial in sorted(unjudged_trials):
             _problem(

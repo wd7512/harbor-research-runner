@@ -65,6 +65,40 @@ def test_finished_bundle_reports_unjudged_proxy_trial(tmp_path: Path) -> None:
     )
 
 
+def test_finished_bundle_reporting_unjudged_trials_is_a_problem(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    events_path = bundle / "run-events.jsonl"
+    events = _rows(events_path)
+    events.append({"type": "finish", "exit_code": 0, "slots_complete": 4, "slots_incomplete": 0})
+    _write_rows(events_path, events)
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report_path.write_text(
+        report.replace(
+            "| Valid trials | 4 |", "| Valid trials | 4 |\n| Trials not yet judged | 1 |"
+        ),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert _problem_ids(verify(bundle)) == ["report_agreement"]
+
+
+def test_unfinished_bundle_may_report_unjudged_trial_folders(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    report_path = bundle / "report.md"
+    report = report_path.read_text(encoding="utf-8")
+    report_path.write_text(
+        report.replace(
+            "| Valid trials | 4 |", "| Valid trials | 4 |\n| Trials not yet judged | 1 |"
+        ),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == []
+
+
 def test_manifest_mismatch_is_reported(tmp_path: Path) -> None:
     bundle = _bundle("clean", tmp_path)
     report_path = bundle / "report.md"
