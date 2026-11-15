@@ -136,7 +136,8 @@ def measure(
     previous_swapouts: int | None = None,
     run: Callable = subprocess.run,
     read_text: Callable = Path.read_text,
-    disk_path: Path = Path("."),
+    *,
+    disk_path: Path,
 ) -> tuple[Sample, int]:
     mem_available_mb, current_swapouts = _read_host_memory(run, read_text)
     disk_free_gb = shutil.disk_usage(disk_path).free / (1024**3)

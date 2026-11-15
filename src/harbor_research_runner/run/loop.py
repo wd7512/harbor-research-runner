@@ -57,6 +57,20 @@ def _deadline_timestamp(value: str | None) -> float | None:
     return None if value is None else datetime.fromisoformat(value).timestamp()
 
 
+def sampler_command(run_dir: Path, lifeline_fd: int) -> list[str]:
+    return [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "harbor_research_runner.docker_host.sampler",
+        "--out",
+        str(run_dir / "resource-stats.jsonl"),
+        "--lifeline-fd",
+        str(lifeline_fd),
+    ]
+
+
 @dataclass(frozen=True)
 class SlotsStatus:
     complete: list[tuple[str, str]]
@@ -217,17 +231,7 @@ class RunSession:
         self._lifeline_write_fd = write_fd
         try:
             self._sampler = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
-                    "-m",
-                    "harbor_research_runner.docker_host.sampler",
-                    "--out",
-                    str(self.run_dir / "resource-stats.jsonl"),
-                    "--lifeline-fd",
-                    str(read_fd),
-                ],
+                sampler_command(self.run_dir, read_fd),
                 env=environment,
                 pass_fds=(read_fd,),
                 stdout=subprocess.DEVNULL,
