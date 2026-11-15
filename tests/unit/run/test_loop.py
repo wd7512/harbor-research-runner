@@ -4,6 +4,7 @@ import hashlib
 import json
 import stat
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -741,10 +742,13 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
     deps = _resume_dependencies(
         tmp_path, machine_check, watch_fn, commands, stopped, hostname="node-b"
     )
+    deps = replace(deps, tool=ToolIdentity("0.1.1", "b" * 40))
+    metadata_before = (run_dir / "run-metadata.json").read_bytes()
 
     result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
 
     events = jsonl.read_rows(events_path).rows
+    resume_event = next(row for row in events if row.get("type") == "resume")
     start_index = next(
         index
         for index, row in enumerate(events)
@@ -752,6 +756,9 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
     )
     finish_index = next(index for index, row in enumerate(events) if row.get("type") == "finish")
     assert result == RunOutcome(0, run_dir)
+    assert resume_event["tool_version"] == "0.1.1"
+    assert resume_event["tool_commit"] == "b" * 40
+    assert (run_dir / "run-metadata.json").read_bytes() == metadata_before
     assert commands[0][3:5] == ["jobs", "resume"]
     assert start_index < finish_index
 

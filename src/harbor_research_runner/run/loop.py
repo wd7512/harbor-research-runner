@@ -516,6 +516,7 @@ def resume_run(
     try:
         run_dir = runs_dir / run_id
         session = RunSession.load(run_dir, environment)
+        session.tool = deps.tool
         session.stop_launching_at = stop_launching_at
         session.stop_launching_at_epoch = _deadline_timestamp(stop_launching_at)
         log_handler = _attach_run_log(run_dir)
