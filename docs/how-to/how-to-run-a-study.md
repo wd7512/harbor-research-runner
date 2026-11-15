@@ -108,4 +108,8 @@ while true; do
 done
 ```
 
-For each scheduler job, start or resume with a stop time that leaves room for active trials and cleanup before its hard end.
+For each scheduler allocation, compute a fresh stop time that leaves room for active trials and cleanup before that allocation's hard end. Run the resume command once and return control to the scheduler; exit code 2 means the run can resume in the next allocation. Do not retry with the same stop time, because it will be in the past on the next attempt.
+
+```sh
+uv run hrr run --resume "$RUN_ID" --stop-launching-at "$STOP_AT"
+```
