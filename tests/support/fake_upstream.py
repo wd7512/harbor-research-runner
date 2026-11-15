@@ -356,6 +356,12 @@ class FakeUpstream:
                         "object": "response",
                         "model": model,
                         "status": "completed",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "hello"}],
+                            }
+                        ],
                         "usage": {
                             "input_tokens": 100,
                             "output_tokens": completion_tokens,

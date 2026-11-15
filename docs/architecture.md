@@ -142,6 +142,8 @@ Every row has `seq` (integer, starts at 1, +1 per row, never reused across proxy
 
 A failover that the proxy absorbed (a later key or endpoint answered) is an `ok` row with `failovers > 0`.
 
+A Responses body, including the response carried by a `response.completed` stream event, must have a terminal-OK `status` (`completed` or `incomplete`) and an `output` list. Missing or invalid fields are decode failures and are recorded as `truncated`.
+
 Write policy: flush after every row; `fsync` after every `close` row and at least every 5 seconds, from a background thread. If a write or flush fails, the proxy stops serving (every later request gets HTTP 503 with body `proxy ledger unavailable`) and exits with code 70.
 
 Each relayed response owns its upstream connection. Closing the response, or closing its chunk iterator, releases that connection even before iteration begins. The proxy server calls `close()` from a `finally`.

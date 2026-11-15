@@ -204,8 +204,13 @@ def _stream_error_message(obj: dict[str, Any]) -> str:
 
 
 def _check_status(status: Any) -> None:
-    if status is not None and status not in _TERMINAL_OK:
+    if status not in _TERMINAL_OK:
         raise UpstreamDecodeError(f"upstream response status {status!r} is not usable")
+
+
+def _check_output(output: Any) -> None:
+    if not isinstance(output, list):
+        raise UpstreamDecodeError("upstream response output is not a list")
 
 
 _KNOWN_CHAT_KEYS = frozenset(
@@ -340,7 +345,7 @@ def _response_tool_calls(output: Any) -> list[dict[str, Any]]:
 
 def responses_to_chat(body: dict[str, Any], model: str) -> dict[str, Any]:
     status = body.get("status")
-    if status is not None and status not in _TERMINAL_OK:
+    if status not in _TERMINAL_OK:
         raw_usage = body.get("usage")
         failed_usage: dict[str, int] | None = None
         if isinstance(raw_usage, dict):
@@ -353,6 +358,7 @@ def responses_to_chat(body: dict[str, Any], model: str) -> dict[str, Any]:
             status=status if isinstance(status, str) else None,
         )
     output = body.get("output")
+    _check_output(output)
     tool_calls = _response_tool_calls(output)
     usage = _as_usage_dict(body.get("usage"))
     input_details = _as_usage_dict(usage.get("input_tokens_details"))
@@ -623,6 +629,7 @@ class ResponsesStreamTranslator(StreamTranslator):
         if isinstance(response, dict):
             _check_status(response.get("status"))
         output = response.get("output") if isinstance(response, dict) else None
+        _check_output(output)
         tool_calls = _response_tool_calls(output)
         text = _response_text(output)
         if text and not self._streamed_text:

@@ -4,6 +4,7 @@ import json
 import time
 
 import httpx
+import pytest
 
 from harbor_research_runner.model_proxy.adapters import select_adapter
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
@@ -13,11 +14,11 @@ from harbor_research_runner.records.limits import Limits
 from tests.support.fake_upstream import FakeUpstream, RawResponse
 
 
-def _request() -> bytes:
+def _request(*, stream: bool = True) -> bytes:
     return json.dumps(
         {
             "model": "card/model",
-            "stream": True,
+            "stream": stream,
             "messages": [{"role": "user", "content": "hello"}],
         }
     ).encode()
@@ -92,7 +93,7 @@ def test_chat_identity_stream_preserves_upstream_bytes(tmp_path):
 def test_responses_identity_stream_preserves_upstream_bytes(tmp_path):
     raw = [
         b'event: response.created\r\ndata: {"type":"response.created","response":{"id":"resp_1","model":"served-model"}}\r\n\r\n',
-        b'event: response.completed\r\ndata: {"type":"response.completed","response":{"id":"resp_1","model":"served-model","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}\r\n\r\n',
+        b'event: response.completed\r\ndata: {"type":"response.completed","response":{"id":"resp_1","model":"served-model","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}\r\n\r\n',
     ]
     upstream = FakeUpstream([RawResponse(raw)], model="served-model")
     upstream_url = upstream.start()
@@ -110,7 +111,7 @@ def test_responses_identity_stream_preserves_upstream_bytes(tmp_path):
 
 def test_chat_stream_to_responses_records_cached_read_tokens(tmp_path):
     raw = [
-        b'event: response.completed\r\ndata: {"type":"response.completed","response":{"id":"resp_1","model":"served-model","status":"completed","usage":{"input_tokens":12,"output_tokens":3,"input_tokens_details":{"cached_tokens":7}}}}\r\n\r\n',
+        b'event: response.completed\r\ndata: {"type":"response.completed","response":{"id":"resp_1","model":"served-model","status":"completed","output":[],"usage":{"input_tokens":12,"output_tokens":3,"input_tokens_details":{"cached_tokens":7}}}}\r\n\r\n',
     ]
     upstream = FakeUpstream([RawResponse(raw)], model="served-model")
     upstream_url = upstream.start()
@@ -127,3 +128,62 @@ def test_chat_stream_to_responses_records_cached_read_tokens(tmp_path):
 
     end = read_rows(tmp_path / "proxy-ledger.jsonl").rows[-1]
     assert end["cached_read_tokens"] == 7
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"status": "completed"}],
+    ids=["missing-status-and-output", "missing-output"],
+)
+def test_responses_nonstream_missing_required_fields_counts_as_truncated(tmp_path, body):
+    upstream = FakeUpstream(
+        [RawResponse([json.dumps(body).encode()], content_type="application/json")],
+        model="served-model",
+    )
+    upstream_url = upstream.start()
+    ledger, client, deps, adapter = _relay(
+        tmp_path, upstream_url, "responses", "/v1/chat/completions"
+    )
+    try:
+        response = relay(_request(stream=False), {}, "trial-1", deps, adapter)
+        list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = read_rows(tmp_path / "proxy-ledger.jsonl").rows[-1]
+    assert end["upstream_status"] == "truncated"
+
+
+@pytest.mark.parametrize(
+    "response_body",
+    [{"output": []}, {"status": "completed"}],
+    ids=["missing-status", "missing-output"],
+)
+def test_responses_completed_event_missing_required_fields_counts_as_truncated(
+    tmp_path, response_body
+):
+    event = {"type": "response.completed", "response": response_body}
+    raw = [
+        b"event: response.completed\r\ndata: "
+        + json.dumps(event).encode()
+        + b"\r\n\r\n"
+    ]
+    upstream = FakeUpstream(
+        [RawResponse(raw, content_type="text/event-stream")], model="served-model"
+    )
+    upstream_url = upstream.start()
+    ledger, client, deps, adapter = _relay(
+        tmp_path, upstream_url, "responses", "/v1/chat/completions"
+    )
+    try:
+        response = relay(_request(), {}, "trial-1", deps, adapter)
+        list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = read_rows(tmp_path / "proxy-ledger.jsonl").rows[-1]
+    assert end["upstream_status"] == "truncated"
