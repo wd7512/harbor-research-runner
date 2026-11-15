@@ -146,6 +146,31 @@ def test_slots_status_does_not_count_deferred_trial_against_set_aside_cap() -> N
     assert status.to_set_aside == ["trial-a"]
 
 
+def test_slots_status_does_not_count_run_halted_trial_against_set_aside_cap() -> None:
+    run_halted = TrialVerdict(
+        t=1.0,
+        trial="trial-a",
+        task="task-a",
+        arm="arm-a",
+        valid=False,
+        reason="run_halted",
+        instrument=None,
+        labels=[],
+        measured=True,
+        unmeasured_reason=None,
+    ).to_row()
+    status = slots_status(
+        [("task-a", "arm-a")],
+        1,
+        [run_halted],
+        [SetAside(1.0, "trial-old", "task-a", "arm-a", "run_halted").to_row()],
+        {"trial-a"},
+        Limits(max_set_asides_per_slot=1, verifier_timeout_multiplier=1.0),
+    )
+
+    assert status.to_set_aside == ["trial-a"]
+
+
 def test_slots_status_sets_aside_pending_deferred_trial_at_cap() -> None:
     deferred = TrialVerdict(
         t=1.0,

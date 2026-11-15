@@ -207,7 +207,7 @@ Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_outp
 
 Host: `min_spare_memory_mb` [2048], `memory_reserve_mb` [4096], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` field. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
 
-Run: `max_set_asides_per_slot` [2 x repetitions], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
+Run: `max_set_asides_per_slot` [2 x repetitions; `deferred` and `run_halted` set-asides do not count toward the cap], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
 
 ### 4.7 `trials.jsonl` (evidence bundle)
 
@@ -340,7 +340,7 @@ Harbor's exception labels are never an input to a halt rule.
 3. Canary: one Harbor job in `canary-job/` running the bundled task `say-hello` (Harbor selects a local task by its folder name; it records the trial under `[task].name`, `canary/say-hello`) once per arm against the real model. The task lives at `run/canary_task/say-hello/`: its instruction creates `/app/hello.txt` containing `hello`, its environment is `python:3.12-slim` pinned by digest, its agent timeout is 120 s and its verifier timeout is 60 s, and its verifier accepts exactly `hello` or `hello\n`. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
 4. Pass 0: `harbor run` with the generated `harbor-job-config.yaml`.
 5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules. The memory watcher samples each running `harbor-job` and `canary-job` trial container every 2 seconds and kills it when measured use exceeds its task memory limit. Watchdog kill rows only label main-job verdicts.
-6. On halt: stop Harbor's process group, stop the proxy and sampler, judge every remaining trial folder, write `halt`, exit 2. On a `deadline` halt, a remaining trial with no `result.json` and no ledger `open` row (Harbor made its folder but never started it) is judged invalid with reason `deferred` and no instrument. Its set-aside on resume does not count toward `max_set_asides_per_slot`.
+6. On halt: stop Harbor's process group, stop the proxy and sampler, judge every remaining trial folder, write `halt`, exit 2. A remaining trial with a ledger `open` row and no `close` row whose verdict would otherwise be valid is judged invalid with reason `run_halted` and no instrument; an already invalid verdict stays unchanged. On a `deadline` halt, a remaining trial with no `result.json` and no ledger `open` row (Harbor made its folder but never started it) is judged invalid with reason `deferred` and no instrument. Neither reason counts toward `max_set_asides_per_slot` when set aside on resume.
 7. When Harbor exits on its own: judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
 8. Finish: stop the proxy and sampler, write `finish`, make the run folder read-only, exit 0 or 3.
 
