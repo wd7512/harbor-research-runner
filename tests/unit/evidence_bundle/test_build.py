@@ -149,9 +149,9 @@ def test_build_ignores_malformed_ledger_accounting_fields(tmp_path: Path) -> Non
     rows = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()]
     malformed = next(row for row in rows if row.get("type") == "request_end")
     malformed["prompt_tokens"] = "10"
-    valid = dict(malformed)
-    valid.update(seq=11, request_id="extra-valid-request", prompt_tokens=4)
-    rows.append(valid)
+    trial = malformed["trial"]
+    rows.append(_start(seq=11, trial=trial, request_id="extra-valid-request"))
+    rows.append(_end(seq=12, trial=trial, request_id="extra-valid-request", prompt_tokens=4))
     ledger_path.write_text(
         "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
         encoding="utf-8",
