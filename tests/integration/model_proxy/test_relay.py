@@ -405,7 +405,7 @@ def test_non_streaming_request_records_start_and_end_rows(tmp_path):
     deps, ledger, client = _deps(tmp_path, base_url)
     try:
         response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
-        assert not [row for row in _rows(tmp_path) if row["type"] == "request_end"]
+        assert [row for row in _rows(tmp_path) if row["type"] == "request_end"]
 
         chunks = list(response.chunks)
     finally:
@@ -431,6 +431,30 @@ def test_non_streaming_request_records_start_and_end_rows(tmp_path):
     )
     assert end["completion_chars"] == len("hello")
     assert upstream.requests[0]["body"]["model"] == "served-model"
+
+
+def test_non_streaming_gap_returns_retryable_status_and_matching_ledger_status(tmp_path):
+    upstream = FakeUpstream(["gap:0.2"], model="served-model")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(tmp_path, base_url)
+    deps.limits = Limits.from_dict(
+        {"inter_chunk_gap_max_s": 0.05}, repetitions=1, verifier_timeout_multiplier=1.0
+    )
+    try:
+        response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
+        chunks = list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = _rows(tmp_path)[-1]
+    assert response.http_status == 504
+    assert chunks == [
+        b'{"error": {"message": "upstream unavailable", "type": "upstream_unavailable"}}'
+    ]
+    assert end["upstream_status"] == "stalled"
+    assert end["http_status"] == response.http_status
 
 
 def test_truncated_stream_is_recorded_as_truncated(tmp_path):
@@ -600,32 +624,31 @@ def test_nonstream_first_chunk_is_stamped_before_the_body_completes(tmp_path):
     base_url = upstream.start()
     clock = _Clock([0.0, 5.0, 9.0, 12.0])
     deps, ledger, client = _deps(tmp_path, base_url, now=clock)
-    response = relay(_request_body(False), {}, "trial-1", deps, ChatAdapter())
-    chunks = []
-    received = Event()
+    responses = []
+    completed = Event()
 
-    def consume():
-        chunks.append(next(response.chunks))
-        received.set()
+    def request():
+        responses.append(relay(_request_body(False), {}, "trial-1", deps, ChatAdapter()))
+        completed.set()
 
-    thread = Thread(target=consume, daemon=True)
+    thread = Thread(target=request, daemon=True)
     thread.start()
-    rest = []
+    chunks = []
     try:
         assert clock.first_mark.wait(timeout=1.0)
-        assert not received.is_set()
+        assert not completed.is_set()
         assert not [row for row in _rows(tmp_path) if row["type"] == "request_end"]
     finally:
         gate.set()
         thread.join(timeout=2)
-        if not thread.is_alive():
-            rest.extend(response.chunks)
-        response.close()
+        if responses:
+            chunks = list(responses[0].chunks)
         ledger.close()
         client.close()
         upstream.stop()
 
-    assert chunks + rest == [body]
+    assert len(responses) == 1
+    assert chunks == [body]
     end = _rows(tmp_path)[-1]
     assert end["first_chunk_s"] == 5.0
     assert end["first_content_s"] == 9.0

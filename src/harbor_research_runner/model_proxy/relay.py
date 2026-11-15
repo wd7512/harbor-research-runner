@@ -564,20 +564,7 @@ def relay(
             clock.mark_chunk()
 
         if not is_stream:
-            state.header_status = 200
-            return RelayResponse(
-                200,
-                response_headers,
-                _OwnedChunks(
-                    _nonstream_chunks(
-                        state,
-                        first,
-                        adapter,
-                        response_headers["Content-Type"],
-                    ),
-                    state,
-                ),
-            )
+            return _nonstream_response(state, first, adapter, response_headers)
 
         if first is None:
             state.header_status = 200
@@ -646,49 +633,57 @@ def _can_fail_over(observation: _Observation) -> bool:
     }
 
 
-def _nonstream_chunks(
+def _nonstream_response(
     state: _RelayState,
     first: bytes | None,
     adapter: UpstreamAdapter,
-    content_type: str,
-) -> Generator[bytes, None, None]:
+    headers: dict[str, str],
+) -> RelayResponse:
     observation = state.observation
     assert state.body is not None
     try:
-        try:
-            body = _collect_with_first(state.body, state.clock, first)
-        except _Cut as cut:
-            observation.cut_by_proxy = cut.reason
-            return
-        except _Transport:
-            observation.transport_failed = True
-            return
-        try:
-            decoded = adapter.decode_response(
-                body, state.deps.model["upstream_model"], content_type
-            )
-        except UpstreamDecodeError as exc:
-            observation.error_body = str(exc)
-            observation.usage = exc.usage
-            observation.got_terminator = False
-            state.finish(state.header_status)
-            state.close_body()
-            if body:
-                yield body
-            return
-        observation.usage = decoded.usage
-        observation.completion_chars = decoded.completion_chars
-        if observation.completion_chars:
-            state.clock.mark_content()
-        observation.served_model = decoded.served_model
-        observation.got_terminator = True
-        state.finish(state.header_status)
+        body = _collect_with_first(state.body, state.clock, first)
+    except _Cut as cut:
+        observation.cut_by_proxy = cut.reason
         state.close_body()
-        if decoded.client_body:
-            yield decoded.client_body
-    finally:
-        state.finish(state.header_status)
+        status = state.finish()
+        return RelayResponse(
+            status,
+            _json_headers(),
+            _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
+        )
+    except _Transport:
+        observation.transport_failed = True
         state.close_body()
+        status = state.finish()
+        return RelayResponse(
+            status,
+            _json_headers(),
+            _OwnedChunks(iter([_UNAVAILABLE_BODY]), state),
+        )
+
+    try:
+        decoded = adapter.decode_response(
+            body, state.deps.model["upstream_model"], headers["Content-Type"]
+        )
+    except UpstreamDecodeError as exc:
+        observation.error_body = str(exc)
+        observation.usage = exc.usage
+        observation.got_terminator = False
+        state.close_body()
+        state.finish(200)
+        return RelayResponse(200, headers, _OwnedChunks(iter([body] if body else []), state))
+
+    observation.usage = decoded.usage
+    observation.completion_chars = decoded.completion_chars
+    if observation.completion_chars:
+        state.clock.mark_content()
+    observation.served_model = decoded.served_model
+    observation.got_terminator = True
+    state.close_body()
+    state.finish(200)
+    client_body = [decoded.client_body] if decoded.client_body else []
+    return RelayResponse(200, headers, _OwnedChunks(iter(client_body), state))
 
 
 def _collect(body: _UpstreamBody, clock: StreamClock, *, first_chunk: bool) -> bytes:
