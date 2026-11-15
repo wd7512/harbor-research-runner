@@ -26,8 +26,9 @@ def test_clean_run_trial_rows_match_expected() -> None:
     assert [row.to_row() for row in build_trial_rows(folder)] == _expected(folder)
 
 
-def test_set_aside_and_unmeasured_trial_rows_match_expected() -> None:
-    folder = FIXTURES / "retries"
+def test_valid_set_aside_and_unmeasured_trial_rows_match_expected(tmp_path: Path) -> None:
+    folder = tmp_path / "retries"
+    shutil.copytree(FIXTURES / "retries", folder)
     assert [row.to_row() for row in build_trial_rows(folder)] == _expected(folder)
 
 
@@ -65,7 +66,7 @@ def test_every_slot_has_k_first_attempts() -> None:
     )
 
 
-def test_trial_without_verdict_is_absent() -> None:
+def test_trial_folder_without_verdict_is_skipped() -> None:
     rows = build_trial_rows(FIXTURES / "retries")
     assert all(row.trial != "unfinished" for row in rows)
 

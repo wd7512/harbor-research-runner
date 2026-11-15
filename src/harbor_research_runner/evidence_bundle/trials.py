@@ -11,20 +11,39 @@ from harbor_research_runner.harbor_adapter.job_folder import (
     trial_folders,
 )
 from harbor_research_runner.records.jsonl import read_rows
-from harbor_research_runner.records.proxy_ledger import COUNTS_AGAINST_TRIAL
+from harbor_research_runner.records.proxy_ledger import (
+    COUNTS_AGAINST_TRIAL,
+    has_valid_accounting_fields,
+)
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.statistics.cost import cost_usd
+
+
+def unjudged_trial_names(run_dir: Path) -> set[str]:
+    verdicts = {
+        row["trial"]
+        for row in read_rows(run_dir / "run-events.jsonl").rows
+        if row.get("type") == "trial_verdict"
+    }
+    return {
+        facts.trial
+        for location in ("harbor-job", "set-aside-trials", "canary-job")
+        for trial_dir in trial_folders(run_dir / location)
+        for facts in (read_trial(trial_dir),)
+        if facts.trial not in verdicts
+    }
 
 
 def build_trial_rows(run_dir: Path) -> list[TrialRow]:
     metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
     arms = {arm["label"]: arm for arm in metadata["arms"]}
-    verdicts = {
-        row["trial"]: row
-        for row in read_rows(run_dir / "run-events.jsonl").rows
-        if row.get("type") == "trial_verdict"
-    }
-    ledger_rows = read_rows(run_dir / "proxy-ledger.jsonl").rows
+    events = read_rows(run_dir / "run-events.jsonl").rows
+    verdicts = {row["trial"]: row for row in events if row.get("type") == "trial_verdict"}
+    ledger_rows = [
+        row
+        for row in read_rows(run_dir / "proxy-ledger.jsonl").rows
+        if has_valid_accounting_fields(row)
+    ]
     memory_path = run_dir / "memory-watch.jsonl"
     memory_rows = read_rows(memory_path).rows if memory_path.exists() else []
     memory_peaks = {}
@@ -47,12 +66,14 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
     task_memory = {row["name"]: row.get("memory_mb") for row in machine_check["tasks"]}
     sample_locations = {"set-aside-trials": "harbor-job"}
     candidates: list[tuple[TrialRow, float]] = []
+    missing_verdicts: set[str] = set()
     for location in ("harbor-job", "set-aside-trials", "canary-job"):
         for trial_dir in trial_folders(run_dir / location):
             facts = read_trial(trial_dir)
             sample_location = sample_locations.get(location, location)
             verdict = verdicts.get(facts.trial)
             if verdict is None:
+                missing_verdicts.add(facts.trial)
                 continue
             details = read_trial_details(trial_dir)
             arm = arms[facts.arm]
@@ -131,6 +152,10 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
             if attempt_time is None:
                 attempt_time = facts.phase_started["environment_setup"]
             candidates.append((row, attempt_time if attempt_time is not None else float("inf")))
+
+    if missing_verdicts and any(row.get("type") == "finish" for row in events):
+        missing = ", ".join(sorted(missing_verdicts))
+        raise ValueError(f"trial folders without trial_verdict events: {missing}")
 
     repetitions = metadata["job"]["repetitions"]
     attempts: dict[tuple[str, str], list[int]] = {}

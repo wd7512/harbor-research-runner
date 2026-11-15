@@ -170,6 +170,23 @@ _ROW_TYPES = {
     "close": Close,
 }
 
+_REQUEST_EVIDENCE_FIELDS = {
+    "request_start": ("seq", "t", "trial", "request_id", "prompt_chars"),
+    "request_end": (
+        "seq",
+        "t",
+        "trial",
+        "request_id",
+        "upstream_status",
+        "prompt_tokens",
+        "completion_tokens",
+        "cached_read_tokens",
+        "completion_chars",
+        "first_content_s",
+        "duration_s",
+    ),
+}
+
 
 def _matches(value: object, annotation: object) -> bool:
     if annotation is int:
@@ -212,6 +229,26 @@ def parse_row(row: dict) -> ProxyStart | Open | RequestStart | RequestEnd | Refu
         return record_type(**{name: row[name] for name in names})
     except TypeError as exc:
         raise ValueError("invalid proxy ledger row") from exc
+
+
+def has_valid_accounting_fields(row: dict) -> bool:
+    row_type = row.get("type")
+    if not isinstance(row_type, str):
+        return False
+    fields = _REQUEST_EVIDENCE_FIELDS.get(row_type)
+    if fields is None:
+        return True
+    try:
+        parse_row(row)
+    except ValueError:
+        pass
+    else:
+        return True
+    record_type = _ROW_TYPES[row_type]
+    for name in fields:
+        if name not in row or not _matches(row[name], record_type.__annotations__[name]):
+            return False
+    return row_type != "request_end" or row["upstream_status"] in UPSTREAM_STATUSES
 
 
 def sequence_gaps(rows: list[dict]) -> list[tuple[int, int]]:

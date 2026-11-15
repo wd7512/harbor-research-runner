@@ -209,7 +209,7 @@ Run: `max_set_asides_per_slot` [2 x repetitions], `verifier_timeout_multiplier` 
 
 ### 4.7 `trials.jsonl` (evidence bundle)
 
-One row per trial, including set-aside trials and canary trials. Sorted by `task`, `arm`, `agent_started_t`, `trial`.
+One row per judged trial, including set-aside trials and canary trials. Unjudged trial folders in an unfinished run are skipped and counted in `report.md`; a finished run with any unjudged trial folder is refused. Sorted by `task`, `arm`, `agent_started_t`, `trial`.
 
 Identity: `trial`, `task`, `arm`, `harness`, `commit`, `model`, `location` (`harbor-job`, `set-aside-trials` or `canary-job`), `is_first_attempt`, `is_final`.
 
@@ -425,13 +425,14 @@ built_at = "2026-12-01"
 
 ## 9. Evidence bundle
 
-`hrr build-evidence RUN_ID` is a pure function of the run folder: the same run folder gives byte-identical files. It can run on an unfinished run folder and then covers the trials judged so far.
+`hrr build-evidence RUN_ID` is a pure function of the run folder: the same run folder gives byte-identical files. It can run on an unfinished run folder and then covers the trials judged so far; `report.md` lists `Trials not yet judged` in its completeness table. A run with a `finish` event must have a `trial_verdict` for every trial folder in `harbor-job/`, `set-aside-trials/` and `canary-job/`; otherwise evidence building refuses and names the trials.
 
 - `trials.jsonl`: section 4.7.
 - `proxy-requests.jsonl.gz`: one row per request, `request_start` and `request_end` merged on `request_id`, sorted by `seq` of the start row; gzip with `mtime=0`.
+- Rows with invalid types in request accounting fields are excluded from trial usage totals and merged request rows.
 - `resource-stats.jsonl.gz`, `docker-oom-events.jsonl`, `run-events.jsonl`, `run-metadata.json`: copied.
 - `memory-watch.jsonl`: copied.
-- `report.md`: generated from `statistics`; `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, and the loaded `MachineCheck` record.
+- `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged`. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
 The secret scan runs before anything is written: it searches every output for the literal values of the model card's `key_env` variables and for the patterns ported from OLD's `runtime/secrets.py`. A hit exits 4 and writes nothing.
