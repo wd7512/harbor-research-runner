@@ -42,19 +42,6 @@ def proc_rss_mb(
     read_text: Callable[[Path], str] = lambda path: path.read_text(encoding="utf-8"),
     list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
     readlink: Callable[[Path], str] = os.readlink,
-) -> tuple[float, str]:
-    used_mb, reader, _ = proc_process_memory(
-        pid, read_text=read_text, list_dir=list_dir, readlink=readlink
-    )
-    return used_mb, reader
-
-
-def proc_process_memory(
-    pid: int,
-    *,
-    read_text: Callable[[Path], str] = lambda path: path.read_text(encoding="utf-8"),
-    list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
-    readlink: Callable[[Path], str] = os.readlink,
 ) -> tuple[float, str, list[dict[str, int | float | str]]]:
     init_namespace = readlink(Path(f"/proc/{pid}/ns/pid"))
     if init_namespace == readlink(Path("/proc/self/ns/pid")):
@@ -148,28 +135,13 @@ def proc_container_memory(
     read_text=Path.read_text,
     list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
     readlink: Callable[[Path], str] = os.readlink,
-) -> tuple[float, str]:
-    result = run(["docker", "inspect", "--format", "{{json .State}}", container_id])
-    state = json.loads(result.stdout)
-    pid = state.get("Pid")
-    if type(pid) is not int or pid <= 0:
-        raise ValueError(f"container {container_id!r} has no process")
-    return proc_rss_mb(pid, read_text=read_text, list_dir=list_dir, readlink=readlink)
-
-
-def proc_container_memory_and_processes(
-    container_id: str,
-    run: Callable = _run,
-    read_text=Path.read_text,
-    list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
-    readlink: Callable[[Path], str] = os.readlink,
 ) -> tuple[float, str, list[dict[str, int | float | str]]]:
     result = run(["docker", "inspect", "--format", "{{json .State}}", container_id])
     state = json.loads(result.stdout)
     pid = state.get("Pid")
     if type(pid) is not int or pid <= 0:
         raise ValueError(f"container {container_id!r} has no process")
-    return proc_process_memory(pid, read_text=read_text, list_dir=list_dir, readlink=readlink)
+    return proc_rss_mb(pid, read_text=read_text, list_dir=list_dir, readlink=readlink)
 
 
 def docker_top_processes(

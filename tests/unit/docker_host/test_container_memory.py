@@ -55,7 +55,7 @@ def test_proc_memory_sums_pss_for_every_process_in_container_pid_namespace():
         }
         return links[str(path)]
 
-    used_mb, reader = proc_container_memory("be3b8bd3cf84", run, read_text, list_dir, readlink)
+    used_mb, reader, _ = proc_container_memory("be3b8bd3cf84", run, read_text, list_dir, readlink)
 
     assert used_mb == pytest.approx((2048 + 307200) / 1024)
     assert reader == "proc_pss"
@@ -78,7 +78,7 @@ def test_proc_memory_falls_back_to_rss_for_a_process_refused_by_smaps():
     def list_dir(_path):
         return [Path("/proc/100"), Path("/proc/200")]
 
-    used_mb, reader = proc_container_memory(
+    used_mb, reader, _ = proc_container_memory(
         "be3b8bd3cf84", run, read_text, list_dir, _in_container_namespace
     )
 
@@ -99,7 +99,7 @@ def test_proc_memory_parses_pss_without_matching_pss_dirty():
     def list_dir(_path):
         return [Path("/proc/618")]
 
-    used_mb, reader = proc_container_memory(
+    used_mb, reader, _ = proc_container_memory(
         "be3b8bd3cf84", run, read_text, list_dir, _in_container_namespace
     )
 
@@ -170,7 +170,7 @@ def test_proc_memory_skips_a_process_that_vanishes_mid_scan():
             return "pid:[4026531836]"
         return "pid:[4026532001]"
 
-    used_mb, reader = proc_rss_mb(618, read_text=read_text, list_dir=list_dir, readlink=readlink)
+    used_mb, reader, _ = proc_rss_mb(618, read_text=read_text, list_dir=list_dir, readlink=readlink)
 
     assert used_mb == pytest.approx(916 / 1024)
     assert reader == "proc_pss"

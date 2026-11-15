@@ -441,8 +441,8 @@ def test_docker_stats_over_limit_row_lists_processes_from_docker_top(tmp_path: P
     rows = read_rows(run_dir / "memory-watch.jsonl").rows
     assert rows[1]["type"] == "over_limit"
     assert rows[1]["processes"] == [
-        {"pid": 303, "cmd": "python worker.py", "mb": 6.0},
-        {"pid": 101, "cmd": "python app.py", "mb": 4.0},
+        {"pid": 617, "cmd": "sleep 120", "mb": 816 / 1024},
+        {"pid": 630, "cmd": "sleep 120", "mb": 812 / 1024},
     ]
 
 

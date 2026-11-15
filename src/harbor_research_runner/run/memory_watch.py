@@ -101,14 +101,12 @@ def sample_once(
                 used_reader = reader
                 processes = None
             else:
-                used_mb, used_reader, processes = (
-                    container_memory.proc_container_memory_and_processes(
-                        container_id,
-                        run=run,
-                        read_text=read_text,
-                        list_dir=list_dir,
-                        readlink=readlink,
-                    )
+                used_mb, used_reader, processes = container_memory.proc_container_memory(
+                    container_id,
+                    run=run,
+                    read_text=read_text,
+                    list_dir=list_dir,
+                    readlink=readlink,
                 )
         except (subprocess.CalledProcessError, ValueError, OSError):
             continue
