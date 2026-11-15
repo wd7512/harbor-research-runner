@@ -133,3 +133,10 @@ def _no_sleep_process_or_network(request: pytest.FixtureRequest, monkeypatch: py
     monkeypatch.setattr(os, "fork", _banned("os.fork"))
     monkeypatch.setattr(socket.socket, "connect", _banned("socket connect"))
     monkeypatch.setattr(socket.socket, "bind", _banned("socket bind"))
+
+
+@pytest.fixture(autouse=True)
+def _harness_cache_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from harbor_research_runner.harness import agents
+
+    monkeypatch.setattr(agents, "_extraction_workdir", lambda: tmp_path / "harness-cache")

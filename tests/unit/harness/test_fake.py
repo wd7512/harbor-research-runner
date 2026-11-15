@@ -118,6 +118,16 @@ def test_harness_files_contains_only_the_packaged_script(make_agent) -> None:
     assert (folder / "fake_script.py").read_bytes() == packaged_script.read_bytes()
 
 
+def test_harness_files_reuses_one_folder_per_script_content(make_agent) -> None:
+    agent = make_agent()
+
+    first = agent.harness_files()
+    second = agent.harness_files()
+
+    assert first == second
+    assert sorted(path.name for path in first.parent.iterdir()) == [first.name]
+
+
 def test_install_uploads_the_script_folder_without_a_manifest(make_agent) -> None:
     agent = make_agent()
     environment = _FakeEnvironment()
