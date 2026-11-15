@@ -1,0 +1,1 @@
+The memory watcher now records over-limit samples and process details even when a container kill fails, and does not retry or duplicate breach rows. Trial verdicts attribute successful and failed watchdog kills from both main and canary jobs.

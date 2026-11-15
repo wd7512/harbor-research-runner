@@ -77,6 +77,9 @@ def sample_once(
     run: Callable = container_memory._run,
     killed: set[str] | None = None,
     trial_cache: dict[str, TrialFacts] | None = None,
+    read_text=Path.read_text,
+    list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
+    readlink: Callable[[Path], str] = os.readlink,
 ) -> None:
     limits, locations = _trial_memory_data(run_dir, trial_cache)
     trial_by_project = {compose_project(trial): trial for trial in limits}
@@ -96,8 +99,17 @@ def sample_once(
             if reader == "docker_stats":
                 used_mb = stats.get(container_id)
                 used_reader = reader
+                processes = None
             else:
-                used_mb, used_reader = container_memory.proc_container_memory(container_id, run=run)
+                used_mb, used_reader, processes = (
+                    container_memory.proc_container_memory_and_processes(
+                        container_id,
+                        run=run,
+                        read_text=read_text,
+                        list_dir=list_dir,
+                        readlink=readlink,
+                    )
+                )
         except (subprocess.CalledProcessError, ValueError, OSError):
             continue
         if used_mb is None:
@@ -113,19 +125,24 @@ def sample_once(
             "limit_mb": limit_mb,
             "reader": used_reader,
         }
-        should_kill = limit_mb is not None and used_mb > limit_mb and container_id not in killed
-        if should_kill:
-            try:
-                container_memory.kill_container(container_id, run)
-            except (subprocess.CalledProcessError, ValueError, OSError):
-                continue
-            killed.add(container_id)
+        should_kill = kill_decision(container_id, used_mb, limit_mb, killed)
         append_row(out_fd, row)
         if should_kill:
-            append_row(
-                out_fd,
-                {**row, "type": "kill"},
-            )
+            over_limit = {**row, "type": "over_limit"}
+            try:
+                if reader == "docker_stats":
+                    processes = container_memory.docker_top_processes(container_id, run)
+                over_limit["processes"] = processes[:20] if processes is not None else None
+            except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+                over_limit["processes"] = None
+                over_limit["processes_error"] = str(exc)
+            append_row(out_fd, over_limit)
+            try:
+                container_memory.kill_container(container_id, run)
+            except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+                append_row(out_fd, {**row, "type": "kill_failed", "error": str(exc)[:200]})
+            else:
+                append_row(out_fd, {**row, "type": "kill"})
 
 
 def run_memory_watch(
