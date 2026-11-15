@@ -18,7 +18,8 @@ def task_id(task_data: Mapping[str, Any]) -> GitTaskId | LocalTaskId | PackageTa
 
 
 def task_content_hash(task_dir: Path) -> str:
-    return Packager.compute_content_hash(task_dir)[0]
+    """The task digest as Harbor records it in a trial's lock.json."""
+    return f"sha256:{Packager.compute_content_hash(task_dir)[0]}"
 
 
 def task_tomls(job_dir: Path, cache_root: Path | None = None) -> dict[str, str]:

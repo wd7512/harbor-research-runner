@@ -740,7 +740,7 @@ def test_machine_check_matches_refuses_when_path_task_content_changes(tmp_path: 
     check = _machine_check(
         task_source={"path": str(task_root)},
         included=["task-a"],
-        tasks=[{"name": "task-a", "memory_mb": 512, "digest": digest}],
+        tasks=[{"name": "task-a", "memory_mb": 512, "digest": f"sha256:{digest}"}],
     )
     job = replace(
         _job(include=("task-a",)),
@@ -771,7 +771,7 @@ def test_machine_check_matches_passes_for_unchanged_path_task(tmp_path: Path) ->
     check = _machine_check(
         task_source={"path": str(task_root)},
         included=["task-a"],
-        tasks=[{"name": "task-a", "memory_mb": 512, "digest": digest}],
+        tasks=[{"name": "task-a", "memory_mb": 512, "digest": f"sha256:{digest}"}],
     )
     job = replace(
         _job(include=("task-a",)),

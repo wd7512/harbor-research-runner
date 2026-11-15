@@ -16,6 +16,7 @@ from harbor_research_runner.docker_host.host_lock import (
 )
 from harbor_research_runner.docker_host.processes import pids_naming_run
 from harbor_research_runner.docker_host.profile import profile_differences
+from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.harness.manifest import (
     ImageEntry,
     ManifestError,
@@ -23,7 +24,6 @@ from harbor_research_runner.harness.manifest import (
     verify_arm,
 )
 from harbor_research_runner.harness.request_path import request_path
-from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.job_config.job_file import Job
 from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.records.limits import Limits, host_breach
