@@ -25,7 +25,7 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _stub_docker_env(tmp_path: Path, calls_path: Path) -> dict[str, str]:
+def _stub_docker_dir(tmp_path: Path, calls_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     docker = bin_dir / "docker"
@@ -37,7 +37,7 @@ def _stub_docker_env(tmp_path: Path, calls_path: Path) -> dict[str, str]:
         encoding="utf-8",
     )
     docker.chmod(0o755)
-    return {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    return bin_dir
 
 
 def _session(tmp_path: Path, upstream_url: str) -> RunSession:
@@ -155,7 +155,9 @@ def test_services_start_sample_and_stop(tmp_path: Path, monkeypatch: pytest.Monk
     upstream_url = upstream.start()
     session = _session(tmp_path, upstream_url)
     docker_calls = tmp_path / "docker-calls.txt"
-    monkeypatch.setenv("PATH", _stub_docker_env(tmp_path, docker_calls)["PATH"])
+    monkeypatch.setenv(
+        "PATH", f"{_stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+    )
     try:
         session.start_services(restart=False)
         with urllib.request.urlopen(
