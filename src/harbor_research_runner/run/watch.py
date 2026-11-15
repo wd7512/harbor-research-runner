@@ -200,12 +200,11 @@ def _build_snapshot(
         (index for index, row in enumerate(events) if row.get("type") == "resume"),
         default=-1,
     )
-    verdicts = [
-        row
-        for index, row in enumerate(events)
-        if index > latest_resume and row.get("type") == "trial_verdict"
+    verdict_rows = [
+        (index, row) for index, row in enumerate(events) if row.get("type") == "trial_verdict"
     ]
-    judged = {row["trial"] for row in verdicts if isinstance(row.get("trial"), str)}
+    verdicts_since_resume = [row for index, row in verdict_rows if index > latest_resume]
+    judged = {row["trial"] for _index, row in verdict_rows if isinstance(row.get("trial"), str)}
     opens: set[str] = set()
     closed: set[str] = set()
     for row in rows:
@@ -238,7 +237,7 @@ def _build_snapshot(
     return run_health.RunSnapshot(
         now=now,
         ledger_rows_since_pass_start=rows,
-        verdicts=verdicts,
+        verdicts=verdicts_since_resume,
         open_trials=len(opens - closed),
         proxy_alive=proxy_alive,
         oom_watch_alive=session.oom_watch_alive(),
