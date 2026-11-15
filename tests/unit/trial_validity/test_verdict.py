@@ -183,8 +183,12 @@ def _judge(
         [] if samples is None else samples,
         DEFAULT_LIMITS,
         earlier,
-        oom_events,
-        memory_watch_events,
+        oom_events
+        if isinstance(oom_events, ReadResult)
+        else ReadResult(list(oom_events), False, []),
+        memory_watch_events
+        if isinstance(memory_watch_events, ReadResult)
+        else ReadResult(list(memory_watch_events), False, []),
         resource_problems=resource_problems,
         sampler_interval_s=10,
     )
@@ -480,6 +484,8 @@ def test_bad_host_sample_line_overlapping_trial_window_makes_trial_unmeasured():
         samples.rows,
         DEFAULT_LIMITS,
         (),
+        ReadResult([], False, []),
+        ReadResult([], False, []),
         resource_problems=samples,
         sampler_interval_s=10,
     )
@@ -522,6 +528,8 @@ def test_host_breach_wins_over_damaged_host_sample_line():
         samples.rows,
         DEFAULT_LIMITS,
         (),
+        ReadResult([], False, []),
+        ReadResult([], False, []),
         resource_problems=samples,
         sampler_interval_s=10,
     )
@@ -538,6 +546,132 @@ def test_agent_phase_failure_without_requests_is_valid_failure():
     assert verdict.valid
     assert set(verdict.labels) == {"timed_out", "no_requests"}
     assert verdict.measured
+
+
+def _telemetry_read(tmp_path, name, rows, malformed_line):
+    path = tmp_path / name
+    lines = [json.dumps(row, sort_keys=True) for row in rows]
+    lines.insert(malformed_line - 1, '{"t":')
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return read_rows(path)
+
+
+def _memory_sample(t, trial=TRIAL):
+    return {
+        "type": "sample",
+        "t": t,
+        "trial": trial,
+        "location": "harbor-job",
+        "container": "container-a",
+        "used_mb": 42.5,
+        "limit_mb": 128,
+        "reader": "docker_stats",
+    }
+
+
+def _docker_oom_event(t, trial=TRIAL):
+    return {
+        "Type": "container",
+        "Action": "oom",
+        "Actor": {"Attributes": {"com.docker.compose.project": f"{trial.lower()}__env"}},
+        "time": int(t),
+        "timeNano": int(t * 1_000_000_000),
+    }
+
+
+def test_memory_watch_damage_overlapping_trial_window_makes_trial_unmeasured(tmp_path):
+    memory = _telemetry_read(
+        tmp_path, "memory-watch.jsonl", [_memory_sample(2), _memory_sample(6)], 2
+    )
+
+    verdict = _judge(memory_watch_events=memory)
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "telemetry_damaged"
+
+
+def test_half_written_last_memory_watch_row_keeps_trial_measured(tmp_path):
+    path = tmp_path / "memory-watch.jsonl"
+    complete = json.dumps(_memory_sample(2), sort_keys=True) + "\n"
+    in_flight = json.dumps(_memory_sample(6), sort_keys=True)[:20]
+    path.write_text(complete + in_flight, encoding="utf-8")
+
+    verdict = _judge(memory_watch_events=read_rows(path))
+
+    assert verdict.measured is True
+
+
+def test_memory_watch_damage_outside_trial_window_keeps_trial_measured(tmp_path):
+    memory = _telemetry_read(
+        tmp_path, "memory-watch.jsonl", [_memory_sample(0), _memory_sample(2)], 2
+    )
+
+    verdict = _judge(memory_watch_events=memory)
+
+    assert verdict.measured is True
+
+
+def test_oom_event_damage_overlapping_trial_window_makes_trial_unmeasured(tmp_path):
+    oom = _telemetry_read(
+        tmp_path,
+        "docker-oom-events.jsonl",
+        [_docker_oom_event(2), _docker_oom_event(6)],
+        2,
+    )
+    resources = [_sample(0), _sample(10)]
+
+    verdict = judge_trial(
+        _facts(),
+        _clean_ledger(),
+        ReadResult(_clean_ledger(), False, []),
+        resources,
+        DEFAULT_LIMITS,
+        (),
+        oom,
+        ReadResult([], False, []),
+        resource_problems=ReadResult(resources, False, []),
+        sampler_interval_s=10,
+    )
+
+    assert verdict.measured is False
+    assert verdict.unmeasured_reason == "telemetry_damaged"
+
+
+def test_oom_event_damage_outside_trial_window_keeps_trial_measured(tmp_path):
+    oom = _telemetry_read(
+        tmp_path,
+        "docker-oom-events.jsonl",
+        [_docker_oom_event(0), _docker_oom_event(2)],
+        2,
+    )
+    resources = [_sample(0), _sample(10)]
+
+    verdict = judge_trial(
+        _facts(),
+        _clean_ledger(),
+        ReadResult(_clean_ledger(), False, []),
+        resources,
+        DEFAULT_LIMITS,
+        (),
+        oom,
+        ReadResult([], False, []),
+        resource_problems=ReadResult(resources, False, []),
+        sampler_interval_s=10,
+    )
+
+    assert verdict.measured is True
+
+
+def test_watchdog_kill_wins_over_damaged_memory_watch_line(tmp_path):
+    memory = _telemetry_read(
+        tmp_path, "memory-watch.jsonl", [_memory_sample(2), _memory_sample(6)], 2
+    )
+    memory.rows.append({**_memory_sample(4), "type": "kill"})
+
+    verdict = _judge(memory_watch_events=memory)
+
+    assert verdict.labels[0] == "oom_killed"
+    assert verdict.oom_source == "watchdog"
 
 
 def test_exception_before_verifier_is_labelled_as_agent_exit():

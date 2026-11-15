@@ -12,6 +12,36 @@ class ReadResult:
     bad_lines: list[int]
 
 
+def bad_line_time_spans(
+    result: ReadResult, timestamp_field: str = "t", scale: float = 1.0
+) -> list[tuple[float, float]]:
+    bad_lines = set(result.bad_lines)
+    total = len(result.rows) + len(bad_lines)
+    positions = [line for line in range(1, total + 1) if line not in bad_lines]
+    entries = list(zip(result.rows, positions, strict=False))
+    spans = []
+    for bad_line in sorted(bad_lines):
+        before = [row.get(timestamp_field) for row, position in entries if position < bad_line]
+        after = [row.get(timestamp_field) for row, position in entries if position > bad_line]
+        before_times = [
+            value * scale
+            for value in before
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        ]
+        after_times = [
+            value * scale
+            for value in after
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        ]
+        spans.append(
+            (
+                float(max(before_times)) if before_times else float("-inf"),
+                float(min(after_times)) if after_times else float("inf"),
+            )
+        )
+    return spans
+
+
 def open_for_append(path: Path) -> int:
     return os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
 

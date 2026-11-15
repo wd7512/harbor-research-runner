@@ -154,6 +154,45 @@ def test_trial_rows_include_memory_peak_and_task_limit(tmp_path: Path) -> None:
     assert measured.oom_source is None
 
 
+def test_memory_damage_in_trial_window_nulls_peak_memory(tmp_path: Path) -> None:
+    folder = tmp_path / "clean"
+    shutil.copytree(FIXTURES / "clean", folder)
+    target = next(row for row in build_trial_rows(folder) if row.location == "harbor-job")
+    first = target.agent_started_t + 1
+    second = target.agent_finished_t - 1
+    samples = [
+        {
+            "type": "sample",
+            "t": first,
+            "trial": target.trial,
+            "location": "harbor-job",
+            "container": "container-a",
+            "used_mb": 42.5,
+            "limit_mb": 128,
+            "reader": "docker_stats",
+        },
+        '{"t":',
+        {
+            "type": "sample",
+            "t": second,
+            "trial": target.trial,
+            "location": "harbor-job",
+            "container": "container-a",
+            "used_mb": 48.5,
+            "limit_mb": 128,
+            "reader": "docker_stats",
+        },
+    ]
+    lines = [
+        item if isinstance(item, str) else json.dumps(item, sort_keys=True) for item in samples
+    ]
+    (folder / "memory-watch.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    row = next(row for row in build_trial_rows(folder) if row.trial == target.trial)
+
+    assert row.peak_memory_mb is None
+
+
 def test_canary_trial_evidence_uses_its_recorded_memory_limit(tmp_path: Path) -> None:
     folder = tmp_path / "clean"
     shutil.copytree(FIXTURES / "clean", folder)
