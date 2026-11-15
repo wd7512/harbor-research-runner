@@ -1,0 +1,1 @@
+The halt-and-resume drill now accepts `no_open_row` for a trial killed before it reached the proxy, as well as `close_not_recorded` ([#176](https://github.com/wd7512/harbor-research-runner/issues/176)).
