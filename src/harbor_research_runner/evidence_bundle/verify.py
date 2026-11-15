@@ -8,6 +8,7 @@ from pathlib import Path
 
 from harbor_research_runner.records.jsonl import read_rows
 from harbor_research_runner.records.manifest import verify_manifest
+from harbor_research_runner.records.trials import CAP_EXEMPT_REASONS
 
 
 @dataclass(frozen=True)
@@ -169,7 +170,7 @@ def verify(bundle_dir: Path) -> list[Problem]:
     cap = limits.get("max_set_asides_per_slot", 2 * repetitions)
     set_aside_counts: dict[tuple[str, str], int] = {}
     for event in events:
-        if event.get("type") != "set_aside" or event.get("reason") == "deferred":
+        if event.get("type") != "set_aside" or event.get("reason") in CAP_EXEMPT_REASONS:
             continue
         slot = (event["task"], event["arm"])
         set_aside_counts[slot] = set_aside_counts.get(slot, 0) + 1

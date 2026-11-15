@@ -1019,3 +1019,38 @@ def test_unparseable_non_stream_body_is_not_ok(tmp_path):
     assert end["upstream_status"] == "truncated"
     assert end["first_chunk_s"] is not None
     assert end["completion_chars"] == 0
+
+
+def test_paced_request_with_unknown_completion_tokens_records_estimate(tmp_path):
+    recorded = []
+
+    class RecordingPacer:
+        def wait_for(self, estimated_tokens):
+            return 0.0, "reservation"
+
+        def record(self, reservation, actual_tokens):
+            recorded.append(actual_tokens)
+
+    events = [
+        _event({"model": "served-model", "choices": [{"delta": {"content": "hi"}}]}),
+        _event({"model": "served-model", "choices": [], "usage": {"prompt_tokens": 100}}),
+        b"data: [DONE]\n\n",
+    ]
+    upstream = FakeUpstream([RawResponse(events)], model="served-model")
+    base_url = upstream.start()
+    deps, ledger, client = _deps(tmp_path, base_url, pacer=RecordingPacer())
+    try:
+        response = relay(_request_body(True), {}, "trial-1", deps, ChatAdapter())
+        list(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    end = _rows(tmp_path)[-1]
+    assert (end["type"], end["prompt_tokens"], end["completion_tokens"]) == (
+        "request_end",
+        100,
+        None,
+    )
+    assert len(recorded) == 1 and recorded[0] > 0

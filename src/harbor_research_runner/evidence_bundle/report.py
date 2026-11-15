@@ -61,6 +61,7 @@ def render_report(
     repetitions: int,
     *,
     machine_check: MachineCheck,
+    unjudged_trials: int,
 ) -> str:
     arms = [arm["label"] for arm in metadata["arms"]]
     task_names = sorted({task for task, _arm in planned_slots})
@@ -109,6 +110,7 @@ def render_report(
             f"| Slots complete | {complete.slots_complete} |",
             f"| Slots incomplete | {complete.slots_incomplete} |",
             f"| Valid trials | {complete.trials_valid} |",
+            f"| Trials not yet judged | {unjudged_trials} |",
             f"| Unmeasured trials | {complete.trials_unmeasured} |",
             f"| Tokens spent on set-aside trials | {complete.set_aside_tokens} |",
             "",

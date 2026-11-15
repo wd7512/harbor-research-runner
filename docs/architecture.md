@@ -126,6 +126,8 @@ Every row has `seq` (integer, starts at 1, +1 per row, never reused across proxy
 | `refused` | A request arrives for a trial that is closed or was never opened | `trial`, `reason` (`closed` or `not_open`) |
 | `close` | On `POST /control/close` | `trial` |
 
+`prompt_tokens` and `completion_tokens` are null when the upstream omits the corresponding counter, reports null, or provides a non-numeric value. A wholly absent usage object records null for all token counters. An `ok` request with either prompt or completion tokens unknown makes its trial unmeasured with reason `usage_incomplete`.
+
 `upstream_status` is one of:
 
 | Value | Meaning | Counts against the trial |
@@ -206,11 +208,11 @@ Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_outp
 
 Host: `min_spare_memory_mb` [2048], `memory_reserve_mb` [4096], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` field. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
 
-Run: `max_set_asides_per_slot` [2 x repetitions], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
+Run: `max_set_asides_per_slot` [2 x repetitions; `deferred` and `run_halted` set-asides do not count toward the cap], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
 
 ### 4.7 `trials.jsonl` (evidence bundle)
 
-One row per trial, including set-aside trials and canary trials. Sorted by `task`, `arm`, `agent_started_t`, `trial`.
+One row per judged trial, including set-aside trials and canary trials. Unjudged trial folders in an unfinished run are skipped and counted in `report.md`; a finished run with any unjudged trial folder is refused. Sorted by `task`, `arm`, `agent_started_t`, `trial`.
 
 Identity: `trial`, `task`, `arm`, `harness`, `commit`, `model`, `location` (`harbor-job`, `set-aside-trials` or `canary-job`), `is_first_attempt`, `is_final`.
 
@@ -303,13 +305,13 @@ Rules, first match wins:
 | 6 | any resource sample between `agent` start and `verifier` finish (or `agent` finish if the verifier never started) breaches a host limit, or has `docker_ok` false | invalid, `host_fault`, host |
 | 7 | the trial's last `request_end` (highest `seq`) has a status that counts against the trial | invalid, `upstream_terminal_error`, proxy |
 | 8 | counted errors > max(`tolerated_errors`, floor(`tolerated_error_fraction` x N)), where N is the trial's `request_end` rows excluding `client_disconnect` | invalid, `upstream_errors`, proxy |
-| 9 | the trial has at least one `ok` row with `completion_tokens > 0`, and total completion tokens / total `duration_s` over `ok` rows < `trial_output_rate_min` | invalid, `upstream_slow`, proxy |
+| 9 | every `ok` row has a known completion token count, the trial has at least one `ok` row with `completion_tokens > 0`, and total completion tokens / total `duration_s` over `ok` rows < `trial_output_rate_min` | invalid, `upstream_slow`, proxy |
 | 10 | `reward` is null and the failed phase is not `verifier` | invalid, `no_verdict`, harbor |
 | 11 | otherwise | valid |
 
 Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`).
 
-`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); or a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`). An unmeasured trial is not re-run; it stops the run from exiting 0.
+`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`); or any `ok` request has a null prompt or completion token count (`usage_incomplete`). An unmeasured trial is not re-run; it stops the run from exiting 0.
 
 Validity never reads `reward`, except rule 10, which reads only whether a reward exists.
 
@@ -339,7 +341,7 @@ Harbor's exception labels are never an input to a halt rule.
 3. Canary: one Harbor job in `canary-job/` running the bundled task `say-hello` (Harbor selects a local task by its folder name; it records the trial under `[task].name`, `canary/say-hello`) once per arm against the real model. The task lives at `run/canary_task/say-hello/`: its instruction creates `/app/hello.txt` containing `hello`, its environment is `python:3.12-slim` pinned by digest, its agent timeout is 120 s and its verifier timeout is 60 s, and its verifier accepts exactly `hello` or `hello\n`. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
 4. Pass 0: `harbor run` with the generated `harbor-job-config.yaml`.
 5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules. The memory watcher samples each running `harbor-job` and `canary-job` trial container every 2 seconds and kills it when measured use exceeds its task memory limit. Watchdog kill rows only label main-job verdicts.
-6. On halt: stop Harbor's process group, stop the proxy and sampler, judge every remaining trial folder, write `halt`, exit 2. On a `deadline` halt, a remaining trial with no `result.json` and no ledger `open` row (Harbor made its folder but never started it) is judged invalid with reason `deferred` and no instrument. Its set-aside on resume does not count toward `max_set_asides_per_slot`.
+6. On halt: stop Harbor's process group, stop the proxy and sampler, judge every remaining trial folder, write `halt`, exit 2. A remaining trial with a ledger `open` row and no `close` row whose verdict would otherwise be valid is judged invalid with reason `run_halted` and no instrument; an already invalid verdict stays unchanged. On a `deadline` halt, a remaining trial with no `result.json` and no ledger `open` row (Harbor made its folder but never started it) is judged invalid with reason `deferred` and no instrument. Neither reason counts toward `max_set_asides_per_slot` when set aside on resume.
 7. When Harbor exits on its own: judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
 8. Finish: stop the proxy and sampler, write `finish`, make the run folder read-only, exit 0 or 3.
 
@@ -426,13 +428,14 @@ built_at = "2026-12-01"
 
 ## 9. Evidence bundle
 
-`hrr build-evidence RUN_ID` is a pure function of the run folder: the same run folder gives byte-identical files. It can run on an unfinished run folder and then covers the trials judged so far.
+`hrr build-evidence RUN_ID` is a pure function of the run folder: the same run folder gives byte-identical files. It can run on an unfinished run folder and then covers the trials judged so far; `report.md` lists `Trials not yet judged` in its completeness table. A run with a `finish` event must have a `trial_verdict` for every trial folder in `harbor-job/`, `set-aside-trials/` and `canary-job/`; otherwise evidence building refuses and names the trials.
 
 - `trials.jsonl`: section 4.7.
 - `proxy-requests.jsonl.gz`: one row per request, `request_start` and `request_end` merged on `request_id`, sorted by `seq` of the start row; gzip with `mtime=0`.
+- Rows with invalid types in request accounting fields are excluded from trial usage totals and merged request rows.
 - `resource-stats.jsonl.gz`, `docker-oom-events.jsonl`, `run-events.jsonl`, `run-metadata.json`: copied.
 - `memory-watch.jsonl`: copied.
-- `report.md`: generated from `statistics`; `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, and the loaded `MachineCheck` record.
+- `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged`. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
 The results explorer verifies every bundle file against `manifest.json` before loading the bundle. A missing or altered file refuses the bundle and is reported with the manifest problems.
