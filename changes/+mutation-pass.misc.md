@@ -1,0 +1,1 @@
+Add a rerunnable mutmut pass for the agreed validity, launch, evidence and record modules, with baseline, exit-code and source-inspection guards. Results are written to `.agent/mutation-results.json` for review.
