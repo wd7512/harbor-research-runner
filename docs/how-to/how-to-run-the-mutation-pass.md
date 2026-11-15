@@ -71,6 +71,7 @@ Equivalent mutants:
 
 ### harbor_research_runner.run.checks
 
+- `x_run_checks__mutmut_3`: `machine_check_error` is read only when the machine check failed to load, and that path always reassigns it.
 - `x__bind_port__mutmut_4`: omitting the socket type uses Python's default `SOCK_STREAM`.
 - `x__bind_port__mutmut_11`: `SO_REUSEADDR` accepts any nonzero value, so `2` enables the same option as `1`.
 - `x_run_checks__mutmut_104`: valid parsed jobs have a path only when `tasks.kind == "path"`, so changing `and` to `or` does not change the branch for valid jobs.
@@ -92,7 +93,7 @@ Message-text mutants:
 
 ### harbor_research_runner.run.checks
 
-48 survivors change only human-readable check details; launch decisions do not depend on that wording.
+49 survivors change only human-readable check details; launch decisions do not depend on that wording. Where a mutant puts `None` into a detail list, the join raises inside `_evaluate`, which still records the check as failed.
 
 ### harbor_research_runner.records.proxy_ledger
 
