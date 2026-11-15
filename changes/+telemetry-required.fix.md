@@ -1,0 +1,1 @@
+Missing telemetry files are omitted from evidence bundles and reported as invariant problems after Harbor starts. Trials judged after a missing Docker OOM or memory-watch file are marked unmeasured with `telemetry_missing`.

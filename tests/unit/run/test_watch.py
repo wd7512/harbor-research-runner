@@ -128,6 +128,25 @@ def test_finished_clean_trial_writes_one_valid_verdict(tmp_path: Path) -> None:
     assert _events(run_dir)[0]["valid"] is True
 
 
+def test_missing_memory_telemetry_marks_trial_unmeasured(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    _trial(job_dir, "trial-a")
+    (run_dir / "proxy-ledger.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "docker-oom-events.jsonl").write_text("", encoding="utf-8")
+    _append_event(run_dir, SimpleNamespace(to_row=lambda: {"type": "harbor_start", "t": 1}))
+
+    judge_finished(_session(run_dir), job_dir, set(), 10.0)
+
+    event = _events(run_dir)[-1]
+    assert event["valid"] is True
+    assert event["measured"] is False
+    assert event["unmeasured_reason"] == "telemetry_missing"
+
+
 def test_finished_trial_is_judged_once(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()

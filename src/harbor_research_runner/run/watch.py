@@ -52,6 +52,9 @@ def _trial_verdict(
         if (session.run_dir / "memory-watch.jsonl").exists()
         else [],
     )
+    telemetry_missing = any(event.get("type") == "harbor_start" for event in events) and (
+        not oom_path.exists() or not (session.run_dir / "memory-watch.jsonl").exists()
+    )
     boundaries = {row.get("type") for row in ledger.rows if row.get("trial") == facts.trial} & {
         "open",
         "close",
@@ -71,8 +74,8 @@ def _trial_verdict(
         reason="deferred" if deferred else "run_halted" if run_halted else result.reason,
         instrument=None if deferred or run_halted else result.instrument,
         labels=list(result.labels),
-        measured=result.measured,
-        unmeasured_reason=result.unmeasured_reason,
+        measured=False if telemetry_missing else result.measured,
+        unmeasured_reason=("telemetry_missing" if telemetry_missing else result.unmeasured_reason),
         oom_source=result.oom_source,
     )
     session.event(event)
