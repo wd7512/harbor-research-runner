@@ -249,10 +249,10 @@ def test_slow_consumer_receives_queued_chunks_without_a_gap_stall(tmp_path):
     assert end["upstream_status"] == "ok"
 
 
-def test_request_latency_stall_is_stalled(tmp_path):
-    upstream = FakeUpstream(["gap:3"], model="served-model")
+def test_request_latency_stall_allows_two_seconds_for_headers(tmp_path):
+    upstream = FakeUpstream(["gap:4"], model="served-model")
     base_url = upstream.start()
-    deps, ledger, client = _deps(tmp_path, base_url, request_latency_max_s=1.0)
+    deps, ledger, client = _deps(tmp_path, base_url, request_latency_max_s=2.0)
     try:
         response = relay(_request_body(), {}, "trial-1", deps, ChatAdapter())
         started = time.monotonic()
@@ -265,7 +265,7 @@ def test_request_latency_stall_is_stalled(tmp_path):
 
     end = _end_row(tmp_path)
     assert response.http_status == 200
-    assert elapsed < 2.0
+    assert elapsed < 3.0
     assert len(chunks) < 5
     assert end["http_status"] == 200
     assert end["upstream_status"] == "stalled"
