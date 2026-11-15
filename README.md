@@ -1,8 +1,8 @@
 # harbor-research-runner
 
-`hrr` compares versions of a coding-agent harness on benchmark tasks against a nominal model service. Every model request passes through a local proxy that records it. Independent instruments judge trial validity, and `hrr build-evidence` produces evidence bundles for comparison.
+`hrr` compares versions of a coding-agent harness. It runs each version on the same benchmark tasks, through [Harbor](https://pypi.org/project/harbor/), against a nominal model service, and sends every model request through a local proxy that records it. Independent instruments judge whether each trial was disturbed by something other than the harness. The result is an evidence bundle: a pass rate per version, the token use behind it, and the record of which trials were valid.
 
-**Status: 0.1.0.** It has run a pilot study on a single Docker host: 10/10 trials completed, and all 12 verdicts were valid. The paid study has not run yet.
+**Status: 0.1.0.** It has run a pilot study (5 tasks, two harness versions) on a single Docker host, with every trial valid. The paid study has not run yet.
 
 ## Commands
 

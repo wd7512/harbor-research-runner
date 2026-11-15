@@ -47,7 +47,7 @@ git merge --no-ff origin/dev
 git push --set-upstream origin release/0.1.0
 ```
 
-Open a pull request from `release/0.1.0` to `main` and select the merge-commit option. CI runs for that pull request. It must show successful `gate` jobs on Ubuntu and macOS and all five Docker end-to-end shards: `e2e (lifecycle)`, `e2e (lifecycle_resume)`, `e2e (stop_launching_at)`, `e2e (harbor_contract)`, and `e2e (upstream_and_refusals)`. The merge to `main` runs those same CI jobs again. A pull request targeting `dev` additionally runs `uv run check --checks changelog-fragment`; CI does not run that extra check for `main`.
+Open a pull request from `release/0.1.0` to `main` and select the merge-commit option. CI runs for that pull request. It must show successful `gate` jobs on Ubuntu and macOS (each running the repository-check command) and all five Docker end-to-end shards: `e2e (lifecycle)`, `e2e (lifecycle_resume)`, `e2e (stop_launching_at)`, `e2e (harbor_contract)`, and `e2e (upstream_and_refusals)`. The merge to `main` runs those same CI jobs again. A pull request targeting `dev` additionally runs `uv run check --checks changelog-fragment`; CI does not run that extra check for `main`.
 
 Run the same checks locally before opening the pull request:
 
