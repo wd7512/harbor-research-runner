@@ -127,6 +127,42 @@ def test_resultless_trial_is_judged_as_never_finished(tmp_path: Path) -> None:
     assert _events(run_dir)[0]["reason"] == "never_finished"
 
 
+def test_deadline_deferred_trial_has_deferred_verdict(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    _trial(job_dir, "trial-a", result=False)
+    (run_dir / "proxy-ledger.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+    _append_event(run_dir, SimpleNamespace(to_row=lambda: {"type": "halt", "reason": "deadline"}))
+
+    judge_all_remaining(_session(run_dir), job_dir, set(), 10.0, halt_reason="deadline")
+
+    event = _events(run_dir)[-1]
+    assert event["valid"] is False
+    assert event["reason"] == "deferred"
+    assert event["instrument"] is None
+
+
+def test_deadline_trial_opened_at_proxy_keeps_never_finished_verdict(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job_dir = run_dir / "harbor-job"
+    job_dir.mkdir()
+    _trial(job_dir, "trial-a", result=False)
+    (run_dir / "proxy-ledger.jsonl").write_text(
+        json.dumps({"type": "open", "trial": "trial-a"}) + "\n", encoding="utf-8"
+    )
+    (run_dir / "resource-stats.jsonl").write_text("", encoding="utf-8")
+
+    judge_all_remaining(_session(run_dir), job_dir, set(), 10.0, halt_reason="deadline")
+
+    event = _events(run_dir)[0]
+    assert event["reason"] == "never_finished"
+    assert event["instrument"] == "harbor"
+
+
 def test_rebuilt_judged_set_prevents_rejudging(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()

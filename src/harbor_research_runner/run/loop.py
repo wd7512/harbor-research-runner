@@ -354,7 +354,7 @@ def slots_status(
     valid_counts: dict[tuple[str, str], int] = {}
     set_aside_counts: dict[tuple[str, str], int] = {}
     for event in set_aside_events:
-        if event.get("type") == "set_aside":
+        if event.get("type") == "set_aside" and event.get("reason") != "deferred":
             slot = (event["task"], event["arm"])
             set_aside_counts[slot] = set_aside_counts.get(slot, 0) + 1
 
@@ -634,7 +634,13 @@ def _pass_loop(
         session.event(HarborExit(deps.now(), pass_number, returncode, "main"))
         if result.kind == "halted":
             judged = watch.judged_trials(session.run_dir)
-            watch.judge_all_remaining(session, session.run_dir / "harbor-job", judged, deps.now())
+            watch.judge_all_remaining(
+                session,
+                session.run_dir / "harbor-job",
+                judged,
+                deps.now(),
+                halt_reason=result.halt_reason,
+            )
             deps.stop_services(session)
             return 2
         judged = watch.judged_trials(session.run_dir)
