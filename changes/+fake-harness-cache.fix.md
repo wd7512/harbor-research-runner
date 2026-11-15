@@ -1,0 +1,1 @@
+The fake harness reuses one script folder per script content instead of creating a new temporary folder on every trial, and tests keep the harness cache in their own temporary folder instead of the user's `~/.cache`.

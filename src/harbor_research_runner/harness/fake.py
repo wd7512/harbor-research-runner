@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import shlex
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -11,11 +12,8 @@ from harbor.agents.installed.base import BaseInstalledAgent
 from harbor.agents.options import InstalledAgentOptions
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from harbor_research_runner.harness.agents import (
-    AgentSettings,
-    PinnedHarness,
-    _extraction_workdir,
-)
+from harbor_research_runner.harness import agents
+from harbor_research_runner.harness.agents import AgentSettings, PinnedHarness
 from harbor_research_runner.harness.opencode_eras import HarnessFacts
 
 _SCRIPT = "/usr/local/fake_script.py"
@@ -70,10 +68,16 @@ class FakeHarnessAgent(PinnedHarness, BaseInstalledAgent):
         self.fake = behavior if behavior is not None else FakeBehavior()
 
     def harness_files(self) -> Path:
-        workdir = _extraction_workdir()
-        workdir.mkdir(parents=True, exist_ok=True)
-        local_root = Path(tempfile.mkdtemp(prefix="fake-", dir=workdir))
-        shutil.copyfile(Path(__file__).with_name("fake_script.py"), local_root / "fake_script.py")
+        script = Path(__file__).with_name("fake_script.py").read_bytes()
+        local_root = agents._extraction_workdir() / f"fake-{hashlib.sha256(script).hexdigest()}"
+        target = local_root / "fake_script.py"
+        if target.is_file() and target.read_bytes() == script:
+            return local_root
+        local_root.mkdir(parents=True, exist_ok=True)
+        descriptor, staged = tempfile.mkstemp(dir=local_root, prefix=".fake_script-")
+        with os.fdopen(descriptor, "wb") as staged_file:
+            staged_file.write(script)
+        os.replace(staged, target)
         return local_root
 
     def config_files(self, facts: HarnessFacts, model: str, proxy_base_url: str) -> dict[str, str]:
