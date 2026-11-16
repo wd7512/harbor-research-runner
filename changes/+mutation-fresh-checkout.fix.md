@@ -1,0 +1,1 @@
+The mutation pass creates `mutants/src` before mutmut starts, so a fresh checkout imports the mutated package instead of failing the first test run ([#146](https://github.com/wd7512/harbor-research-runner/issues/146)).

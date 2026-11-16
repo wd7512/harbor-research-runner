@@ -21,6 +21,19 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
             (marker_dir / f"{os.getpid()}.json").write_text(json.dumps(mutant), encoding="utf-8")
 
 
+def mutation_environment(root: Path, environment: dict[str, str]) -> dict[str, str]:
+    mutated_sources = root / "mutants" / "src"
+    mutated_sources.mkdir(parents=True, exist_ok=True)
+    existing_pythonpath = environment.get("PYTHONPATH")
+    return environment | {
+        "UV_PROJECT_ENVIRONMENT": str(root / ".venv"),
+        "UV_NO_SYNC": "1",
+        "PYTHONPATH": os.pathsep.join(
+            [str(mutated_sources), *([existing_pythonpath] if existing_pythonpath else [])]
+        ),
+    }
+
+
 def main() -> int:
     root = Path.cwd()
     marker_dir = root / ".agent" / "mutation-timeouts"
@@ -28,23 +41,19 @@ def main() -> int:
     for marker in marker_dir.glob("*.json"):
         marker.unlink()
 
-    environment = os.environ.copy()
-    environment["UV_PROJECT_ENVIRONMENT"] = str(root / ".venv")
     sync = subprocess.run(
         ["uv", "sync", "--all-extras", "--group", "mutation", "--locked"],
         check=False,
-        env=environment,
+        env=os.environ | {"UV_PROJECT_ENVIRONMENT": str(root / ".venv")},
     )
     if sync.returncode != 0:
         return sync.returncode
 
-    environment["UV_NO_SYNC"] = "1"
-    mutated_sources = str(root / "mutants" / "src")
-    existing_pythonpath = environment.get("PYTHONPATH")
-    environment["PYTHONPATH"] = os.pathsep.join(
-        [mutated_sources, *([existing_pythonpath] if existing_pythonpath else [])]
+    process = subprocess.run(
+        ["uv", "run", "mutmut", "run"],
+        check=False,
+        env=mutation_environment(root, dict(os.environ)),
     )
-    process = subprocess.run(["uv", "run", "mutmut", "run"], check=False, env=environment)
     if process.returncode != 0:
         return process.returncode
 
