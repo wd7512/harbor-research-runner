@@ -166,6 +166,12 @@ def _host_window_damaged(
 def _trial_telemetry_damaged(
     row: dict, oom: ReadResult, memory: ReadResult, *, finished: bool
 ) -> bool:
+    spans = bad_line_time_spans(oom, "timeNano", 1e-9, finished=finished)
+    spans.extend(bad_line_time_spans(memory, finished=finished))
+    return _trial_window_overlaps(row, spans)
+
+
+def _trial_window_overlaps(row: dict, spans: list[tuple[float, float]]) -> bool:
     start = row.get("agent_started_t")
     end = (
         row.get("verifier_finished_t")
@@ -179,8 +185,6 @@ def _trial_telemetry_damaged(
         or isinstance(end, bool)
     ):
         return False
-    spans = bad_line_time_spans(oom, "timeNano", 1e-9, finished=finished)
-    spans.extend(bad_line_time_spans(memory, finished=finished))
     return any(span_start <= end and span_end >= start for span_start, span_end in spans)
 
 
@@ -426,11 +430,10 @@ def verify(bundle_dir: Path) -> list[Problem]:
         }:
             continue
         samples.setdefault(sample["trial"], []).append(sample["used_mb"])
+    memory_bad_spans = bad_line_time_spans(memory_rows_result, finished=finished)
     for row in trials:
         values = samples.get(row["trial"], [])
-        damaged = _trial_telemetry_damaged(
-            row, oom_rows_result, memory_rows_result, finished=finished
-        )
+        damaged = _trial_window_overlaps(row, memory_bad_spans)
         if values or damaged:
             expected = None if damaged else max(values)
             actual = row.get("peak_memory_mb")
