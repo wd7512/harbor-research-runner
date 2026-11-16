@@ -224,3 +224,6 @@ __marimo__/
 runs/
 .worktrees/
 .agent/
+
+# mutmut working copy (scripts/mutation_pass.py)
+mutants/

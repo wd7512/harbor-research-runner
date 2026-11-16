@@ -3,19 +3,33 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
+import signal
+import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import yaml
 from harbor.job import Job
-from harbor.models.job.config import JobConfig
+from harbor.models.job.config import DatasetConfig, JobConfig
 from harbor.viewer.scanner import JobScanner
 
+from harbor_research_runner.harbor_adapter.commands import job_config as harbor_job_config
+from harbor_research_runner.harbor_adapter.commands import run_command
+from harbor_research_runner.harbor_adapter.job_folder import read_trial
+from harbor_research_runner.harbor_adapter.task_files import task_content_hash
+from harbor_research_runner.job_config.job_file import load_job
 from harbor_research_runner.records.jsonl import read_rows
+from harbor_research_runner.records.machine_check import MachineCheck
+from harbor_research_runner.run.checks import resolve_tasks
+from harbor_research_runner.trial_validity.phase_table import failed_phase
 
 pytestmark = pytest.mark.contract
 logger = logging.getLogger(__name__)
+TASK_SOURCE = Path(__file__).parents[2] / "src/harbor_research_runner/run/canary_task/say-hello"
 
 
 def _trial_dirs(job_dir: Path) -> list[Path]:
@@ -30,6 +44,79 @@ def _trial_result(trial_dir: Path) -> dict:
 
 def _timestamp(value: str) -> float:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+def _git_task_source(tmp_path: Path) -> tuple[str, str]:
+    repository = tmp_path / "task-repository"
+    repository.mkdir()
+    shutil.copytree(TASK_SOURCE, repository / "say-hello")
+    _git("init", str(repository))
+    _git("-C", str(repository), "config", "user.email", "contract@example.invalid")
+    _git("-C", str(repository), "config", "user.name", "Harbor Contract")
+    _git("-C", str(repository), "add", "say-hello")
+    _git("-C", str(repository), "commit", "-m", "Canary task")
+    commit = _git("-C", str(repository), "rev-parse", "HEAD").strip()
+    bare_repository = tmp_path / "task-repository.git"
+    _git("clone", "--bare", str(repository), str(bare_repository))
+    return bare_repository.as_uri(), commit
+
+
+def _machine_check(task_source: dict) -> MachineCheck:
+    return MachineCheck(
+        created_t=0.0,
+        tool_version="test",
+        harbor_version="0.23.0",
+        host_fingerprint="test",
+        task_source=task_source,
+        concurrency=1,
+        tasks=[{"name": "say-hello"}],
+        included=["say-hello"],
+        verifier_timeout_multiplier=1.0,
+    )
+
+
+def _git_harbor_config(harbor_job, tmp_path: Path, url: str, commit: str) -> dict:
+    existing = yaml.safe_load(
+        (harbor_job.run_dir / "harbor-job-config.yaml").read_text(encoding="utf-8")
+    )
+    agent = existing["agents"][0]
+    job_file = tmp_path / "git-job.yaml"
+    job_file.write_text(
+        yaml.safe_dump(
+            {
+                "name": "contract-git-job",
+                "model": "fake/model",
+                "repetitions": 1,
+                "concurrency": 1,
+                "task_order": "slowest_first",
+                "tasks": {
+                    "git": {"url": url, "commit": commit},
+                    "include": ["say-hello"],
+                },
+                "machine_check": "checks/unused.json",
+                "arms": [{"label": "fake-arm", "harness": "fake", "commit": "0" * 40}],
+                "proxy": {
+                    "host": "127.0.0.1",
+                    "port": 8766,
+                    "container_host": "host.docker.internal",
+                },
+                "limits": {},
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    job = load_job(job_file)
+    return harbor_job_config(
+        job,
+        ["say-hello"],
+        [(agent["import_path"], agent["kwargs"])],
+        verifier_timeout_multiplier=1.0,
+    )
 
 
 def test_resume_with_neutral_filter_deletes_no_result_bearing_trial(harbor_job):
@@ -187,3 +274,192 @@ def test_harbor_viewer_scanner_reads_job_and_set_aside_folders(harbor_job):
         path.name for path in _trial_dirs(harbor_job.job_dir)
     ]
     assert scanner.list_trials("set-aside-trials") == [trial_dir.name]
+
+
+def test_empty_task_names_selects_every_local_task(tmp_path: Path):
+    tasks = tmp_path / "tasks"
+    tasks.mkdir()
+    source = Path(__file__).parents[2] / "src/harbor_research_runner/run/canary_task/say-hello"
+    for name in ("alpha", "beta"):
+        shutil.copytree(source, tasks / name)
+
+    empty_filter = asyncio.run(DatasetConfig(path=tasks, task_names=[]).get_task_configs())
+    named_filter = asyncio.run(DatasetConfig(path=tasks, task_names=["alpha"]).get_task_configs())
+
+    assert {task.get_task_id().get_name() for task in empty_filter} == {"alpha", "beta"}
+    assert [task.get_task_id().get_name() for task in named_filter] == ["alpha"]
+
+
+def test_local_trial_path_and_lock_digest_match_harbor(harbor_job):
+    trial_dir = _trial_dirs(harbor_job.job_dir)[0]
+    config = json.loads((trial_dir / "config.json").read_text(encoding="utf-8"))
+    lock = json.loads((trial_dir / "lock.json").read_text(encoding="utf-8"))
+    task_path = Path(config["task"]["path"])
+
+    assert task_path.name == "say-hello"
+    assert lock["task"]["digest"] == task_content_hash(task_path)
+
+
+def test_hrr_local_task_filter_matches_harbor_resolution(harbor_job, tmp_path: Path):
+    config = yaml.safe_load(
+        (harbor_job.run_dir / "harbor-job-config.yaml").read_text(encoding="utf-8")
+    )
+    dataset = DatasetConfig.model_validate(config["datasets"][0])
+    source = Path(dataset.path)
+    copied_source = tmp_path / "tasks"
+    shutil.copytree(source, copied_source)
+    shutil.copytree(source / "say-hello", copied_source / "decoy")
+    dataset = dataset.model_copy(update={"path": copied_source})
+
+    resolved = asyncio.run(dataset.get_task_configs())
+    job_definition = load_job(harbor_job.run_dir.parent / "job.yaml")
+    hrr_tasks = resolve_tasks(job_definition, _machine_check({"path": str(source)}))
+    trial_tasks = {
+        json.loads((trial / "config.json").read_text(encoding="utf-8"))["task"]["path"]
+        for trial in _trial_dirs(harbor_job.job_dir)
+    }
+
+    assert set(hrr_tasks) == {task.get_task_id().get_name() for task in resolved} == {"say-hello"}
+    assert len(trial_tasks) == 1
+
+
+@pytest.mark.parametrize("harbor_job", [{"defer_run": True}], indirect=True)
+def test_git_task_download_map_and_lock_digest_match_harbor(harbor_job, tmp_path: Path):
+    url, commit = _git_task_source(tmp_path)
+    config = _git_harbor_config(harbor_job, tmp_path, url, commit)
+    config_path = harbor_job.run_dir / "harbor-job-config.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=True), encoding="utf-8")
+    harbor_config = JobConfig.model_validate(config)
+    resolved_job = asyncio.run(Job.create(harbor_config))
+    job_definition = load_job(tmp_path / "git-job.yaml")
+    hrr_tasks = resolve_tasks(
+        job_definition, _machine_check({"git": {"url": url, "commit": commit}})
+    )
+    harbor_tasks = [task.get_task_id().get_name() for task in resolved_job._task_configs]
+    task_config = harbor_config.tasks[0]
+    task_id = task_config.get_task_id()
+    downloaded = resolved_job._task_download_results[task_id]
+
+    assert list(resolved_job._task_download_results) == [task_id]
+    assert hrr_tasks == harbor_tasks == ["say-hello"]
+    assert downloaded.path == task_id.get_local_path()
+    assert (downloaded.path / "task.toml").is_file()
+
+    result = harbor_job._run(
+        run_command(harbor_job.run_dir, harbor_job.job_name, harbor_job.proxy_url, "slowest_first")
+    )
+    assert result.returncode == 0, result.stdout
+    trial_dir = _trial_dirs(harbor_job.job_dir)[0]
+    lock = json.loads((trial_dir / "lock.json").read_text(encoding="utf-8"))
+
+    assert lock["task"]["digest"] == task_content_hash(downloaded.path)
+
+
+@pytest.mark.parametrize("harbor_job", [{"defer_run": True}], indirect=True)
+def test_environment_setup_failure_folder_matches_harbor(harbor_job, tmp_path: Path):
+    tasks = tmp_path / "tasks"
+    tasks.mkdir()
+    failed_task = tasks / "say-hello"
+    shutil.copytree(TASK_SOURCE, failed_task)
+    (failed_task / "environment" / "Dockerfile").write_text("INVALID\n", encoding="utf-8")
+    config_path = harbor_job.run_dir / "harbor-job-config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["datasets"][0]["path"] = str(tasks)
+    config_path.write_text(yaml.safe_dump(config, sort_keys=True), encoding="utf-8")
+
+    result = harbor_job.run()
+    trial_dir = _trial_dirs(harbor_job.job_dir)[0]
+    trial_result = _trial_result(trial_dir)
+    facts = read_trial(trial_dir)
+    trial_files = {
+        path.relative_to(trial_dir).as_posix() for path in trial_dir.rglob("*") if path.is_file()
+    }
+
+    assert result.returncode == 0, result.stdout
+    assert trial_files == {
+        "config.json",
+        "lock.json",
+        "result.json",
+        "trial.log",
+        "exception.txt",
+        "artifacts/manifest.json",
+    }
+    assert trial_result["exception_info"]["exception_type"] == "RuntimeError"
+    assert trial_result["environment_setup"]["started_at"] is not None
+    assert trial_result["environment_setup"]["finished_at"] is not None
+    assert trial_result["agent_setup"] is None
+    assert trial_result["agent_execution"] is None
+    assert trial_result["verifier"] is None
+    assert failed_phase(facts) == "environment_setup"
+
+
+@pytest.mark.parametrize(
+    "harbor_job", [{"defer_run": True, "fake": {"sleep_s": 120}}], indirect=True
+)
+def test_interrupted_job_keeps_harbor_trial_folder(harbor_job):
+    process = harbor_job.start()
+    deadline = time.monotonic() + 60
+    opened = None
+    while time.monotonic() < deadline:
+        rows = read_rows(harbor_job.ledger_path).rows
+        opened = next((row for row in rows if row.get("type") == "open"), None)
+        if opened is not None:
+            break
+        if process.poll() is not None:
+            output, _ = process.communicate()
+            raise AssertionError(f"Harbor exited before opening the trial: {output}")
+        time.sleep(0.05)
+    assert opened is not None, "Harbor did not open a trial before the deadline"
+
+    os.killpg(process.pid, signal.SIGINT)
+    result = harbor_job.wait(timeout=60)
+    trial_dir = harbor_job.job_dir / opened["trial"]
+    trial_result = _trial_result(trial_dir)
+    facts = read_trial(trial_dir)
+
+    assert result.returncode == 128 + signal.SIGINT, result.stdout
+    assert trial_dir.is_dir()
+    assert {
+        path.relative_to(trial_dir).as_posix() for path in trial_dir.rglob("*") if path.is_file()
+    } == {
+        "artifacts/manifest.json",
+        "lock.json",
+        "result.json",
+        "config.json",
+        "agent/harness-facts.json",
+        "trial.log",
+        "exception.txt",
+    }
+    assert {path.name for path in harbor_job.job_dir.iterdir() if path != trial_dir} == {
+        "job.log",
+        "lock.json",
+        "result.json",
+        "config.json",
+    }
+    assert trial_result["exception_info"]["exception_type"] == "CancelledError"
+    assert trial_result["verifier_result"] is None
+    assert facts.exception_type == "CancelledError"
+    assert failed_phase(facts) == "agent"
+
+
+@pytest.mark.parametrize(
+    ("harbor_job", "exception"),
+    [
+        ({"fake": {"exit_code": 1}}, "NonZeroAgentExitCodeError"),
+        ({"fake": {"solve": False}}, None),
+    ],
+    ids=["agent-failure", "verifier-failure"],
+    indirect=["harbor_job"],
+)
+def test_failed_trial_keeps_harbor_phase_result_and_lock(harbor_job, exception):
+    trial_dir = _trial_dirs(harbor_job.job_dir)[0]
+    result = _trial_result(trial_dir)
+    lock = json.loads((trial_dir / "lock.json").read_text(encoding="utf-8"))
+
+    assert (trial_dir / "config.json").is_file()
+    assert isinstance(lock["task"]["digest"], str)
+    if exception is None:
+        assert result["exception_info"] is None
+        assert result["verifier_result"]["rewards"] == {"reward": 0.0}
+    else:
+        assert result["exception_info"]["exception_type"] == exception

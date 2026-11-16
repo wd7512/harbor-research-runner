@@ -3,24 +3,34 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import os
 import shutil
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
-from harbor_research_runner.evidence_bundle.manifest import write_manifest
 from harbor_research_runner.evidence_bundle.report import render_report
 from harbor_research_runner.evidence_bundle.secret_scan import key_values, scan
-from harbor_research_runner.evidence_bundle.trials import build_trial_rows
+from harbor_research_runner.evidence_bundle.trials import (
+    build_trial_rows,
+    unjudged_trial_names,
+)
+from harbor_research_runner.evidence_bundle.verify import malformed_jsonl_count, verify
 from harbor_research_runner.records.jsonl import append_row, read_rows
 from harbor_research_runner.records.machine_check import read as read_machine_check
+from harbor_research_runner.records.manifest import write_manifest
+from harbor_research_runner.records.proxy_ledger import is_valid_row
+
+logger = logging.getLogger(__name__)
 
 
 def merged_requests(ledger_rows: list[dict]) -> list[dict]:
     starts: dict[str, dict] = {}
     ends: dict[str, dict] = {}
     for row in ledger_rows:
+        if not is_valid_row(row):
+            continue
         if row.get("type") == "request_start":
             starts[row["request_id"]] = row
         elif row.get("type") == "request_end":
@@ -93,6 +103,10 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
     events = read_rows(events_path).rows
     repetitions = metadata["job"]["repetitions"]
     planned_slots = _planned_slots(metadata, rows)
+    resource_path = run_dir / "resource-stats.jsonl"
+    resource_data = resource_path.read_bytes() if resource_path.exists() else b""
+    oom_path = run_dir / "docker-oom-events.jsonl"
+    memory_path = run_dir / "memory-watch.jsonl"
     report = render_report(
         rows,
         metadata,
@@ -100,24 +114,29 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
         planned_slots,
         repetitions,
         machine_check=machine_check,
+        unjudged_trials=len(unjudged_trial_names(run_dir)),
+        malformed_resource_samples=malformed_jsonl_count(resource_data),
+        malformed_oom_events=(
+            malformed_jsonl_count(oom_path.read_bytes()) if oom_path.exists() else None
+        ),
+        malformed_memory_watch_samples=(
+            malformed_jsonl_count(memory_path.read_bytes()) if memory_path.exists() else None
+        ),
     )
     ledger_rows = read_rows(run_dir / "proxy-ledger.jsonl").rows
-    resource_path = run_dir / "resource-stats.jsonl"
-    resource_bytes = resource_path.read_bytes() if resource_path.exists() else b""
-    oom_path = run_dir / "docker-oom-events.jsonl"
-    oom_bytes = oom_path.read_bytes() if oom_path.exists() else b""
-    memory_path = run_dir / "memory-watch.jsonl"
-    memory_bytes = memory_path.read_bytes() if memory_path.exists() else b""
     files = {
         "trials.jsonl": _jsonl([row.to_row() for row in rows]),
         "proxy-requests.jsonl.gz": _gzip(_jsonl(merged_requests(ledger_rows))),
-        "resource-stats.jsonl.gz": _gzip(resource_bytes),
-        "docker-oom-events.jsonl": oom_bytes,
-        "memory-watch.jsonl": memory_bytes,
         "run-events.jsonl": events_bytes,
         "run-metadata.json": metadata_bytes,
         "report.md": (report + "\n").encode("utf-8"),
     }
+    if resource_path.exists():
+        files["resource-stats.jsonl.gz"] = _gzip(resource_data)
+    if oom_path.exists():
+        files["docker-oom-events.jsonl"] = oom_path.read_bytes()
+    if memory_path.exists():
+        files["memory-watch.jsonl"] = memory_path.read_bytes()
     if scan(files, key_values(metadata["model_card"], environment)):
         return 4
 
@@ -147,4 +166,9 @@ def build(run_dir: Path, out_dir: Path, environment: Mapping[str, str]) -> int:
             shutil.rmtree(temporary)
         if backup.exists():
             shutil.rmtree(backup)
+    problems = verify(out_dir)
+    if problems:
+        for problem in problems:
+            logger.error("evidence verification failed: %s", problem)
+        return 5
     return 0

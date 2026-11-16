@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import shutil
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +21,9 @@ from harbor_research_runner.records.resource_stats import Sample
 from harbor_research_runner.run.checks import (
     CheckDeps,
     CheckResult,
+    host_resources_check,
     machine_check_launch_checks,
+    proxy_port_free_check,
     resolve_tasks,
     run_checks,
     task_source_record,
@@ -134,7 +137,7 @@ def _sample(
 def _deps(
     tmp_path: Path,
     *,
-    measure=lambda: (_sample(), 0),
+    measure=lambda **_kwargs: (_sample(), 0),
     inventory=lambda: Inventory(True, "ok", (), (), (), ()),
     live_run=lambda _runs_dir: None,
     host_lock: HostLock | None = None,
@@ -211,6 +214,26 @@ def test_model_card_check_passes_for_available_card(tmp_path: Path) -> None:
 
 def test_prebuilt_dataset_task_source_record_omits_image_mode() -> None:
     assert task_source_record(_job()) == {"dataset": "bench/tasks"}
+
+
+def test_built_dataset_task_source_record_includes_image_mode() -> None:
+    job = replace(
+        _job(),
+        tasks=TaskSource("dataset", "bench/tasks", None, None, None, (), (), "build"),
+    )
+
+    assert task_source_record(job) == {"dataset": "bench/tasks", "images": "build"}
+
+
+def test_git_task_source_record_includes_url_and_commit() -> None:
+    job = replace(
+        _job(),
+        tasks=TaskSource("git", None, None, "https://example.invalid/tasks.git", "abc123", (), ()),
+    )
+
+    assert task_source_record(job) == {
+        "git": {"url": "https://example.invalid/tasks.git", "commit": "abc123"}
+    }
 
 
 def test_keys_present_check_names_missing_variable(tmp_path: Path) -> None:
@@ -307,8 +330,47 @@ def test_memory_fits_asks_for_a_new_machine_check_when_the_file_predates_memory(
     result = _by_name(_run(tmp_path, deps=deps), "memory_fits")
 
     assert not result.ok
-    assert "check-machine" in result.detail
+    assert result.detail == (
+        "the machine check predates task memory recording; rerun `hrr check-machine`"
+    )
     assert "unbounded" not in result.detail
+
+
+def test_memory_fits_rejects_boolean_task_memory(tmp_path: Path) -> None:
+    machine_check = _machine_check(
+        tasks=[{"name": "task-a", "memory_mb": True}],
+        included=["task-a"],
+    )
+    deps = _deps(tmp_path, read_machine_check=lambda _path: machine_check)
+
+    result = _by_name(_run(tmp_path, deps=deps), "memory_fits")
+
+    assert not result.ok
+    assert "declares no memory limit" in result.detail
+
+
+def test_memory_fits_fails_when_docker_memory_cannot_be_read(tmp_path: Path) -> None:
+    def unavailable() -> int:
+        raise RuntimeError("docker memory unavailable")
+
+    result = _by_name(
+        _run(tmp_path, deps=_deps(tmp_path, read_docker_memory=unavailable)), "memory_fits"
+    )
+
+    assert not result.ok
+    assert "docker memory unavailable" in result.detail
+
+
+def test_memory_fits_fails_when_machine_check_is_unavailable(tmp_path: Path) -> None:
+    def missing(_path: Path) -> MachineCheck:
+        raise FileNotFoundError("machine check missing")
+
+    result = _by_name(
+        _run(tmp_path, deps=_deps(tmp_path, read_machine_check=missing)), "memory_fits"
+    )
+
+    assert not result.ok
+    assert "machine check is unavailable" in result.detail
 
 
 def test_proxy_port_free_check_fails_when_bind_fails(tmp_path: Path) -> None:
@@ -327,6 +389,18 @@ def test_proxy_port_free_check_passes_when_bind_succeeds(tmp_path: Path) -> None
     result = _by_name(results, "proxy_port_free")
 
     assert result.ok
+
+
+def test_proxy_port_free_check_uses_the_configured_host_and_port(tmp_path: Path) -> None:
+    job = _job()
+
+    def bind(host: str, port: int) -> None:
+        if (host, port) != (job.proxy_host, job.proxy_port):
+            raise OSError("wrong address")
+
+    result = proxy_port_free_check(job, _deps(tmp_path, bind_port=bind))
+
+    assert result[0]
 
 
 def test_proxy_port_free_is_a_run_check_and_not_a_machine_check(tmp_path: Path) -> None:
@@ -613,6 +687,65 @@ def test_single_run_check_fails_when_another_session_holds_the_host_lock(
     assert "run-holder" in result.detail
 
 
+def test_single_run_check_uses_runs_directory_to_find_lock_holder(tmp_path: Path) -> None:
+    lock_path = tmp_path / "host.lock"
+    holder = HostLock(lock_path)
+    holder.acquire()
+    expected_runs_dir = tmp_path / "runs"
+    try:
+        deps = _deps(
+            tmp_path,
+            host_lock=HostLock(lock_path),
+            live_run=lambda path: "run-holder" if path == expected_runs_dir else None,
+        )
+        result = _by_name(_run(tmp_path, deps=deps), "single_run")
+    finally:
+        holder.release()
+
+    assert not result.ok
+    assert "run-holder" in result.detail
+
+
+def test_single_run_check_fails_closed_when_lock_holder_is_unknown(tmp_path: Path) -> None:
+    lock_path = tmp_path / "host.lock"
+    holder = HostLock(lock_path)
+    holder.acquire()
+    try:
+        deps = _deps(
+            tmp_path,
+            host_lock=HostLock(lock_path),
+            live_run=lambda _runs_dir: "unknown",
+        )
+        result = _by_name(_run(tmp_path, deps=deps), "single_run")
+    finally:
+        holder.release()
+
+    assert not result.ok
+    assert "unknown" in result.detail
+
+
+def test_single_run_check_fails_when_lock_holder_lookup_errors(tmp_path: Path) -> None:
+    lock_path = tmp_path / "host.lock"
+    holder = HostLock(lock_path)
+    holder.acquire()
+
+    def unavailable(_runs_dir: Path) -> str:
+        raise RuntimeError("process lookup unavailable")
+
+    try:
+        deps = _deps(
+            tmp_path,
+            host_lock=HostLock(lock_path),
+            live_run=unavailable,
+        )
+        result = _by_name(_run(tmp_path, deps=deps), "single_run")
+    finally:
+        holder.release()
+
+    assert result.ok is False
+    assert "host lock is held" in result.detail
+
+
 def test_single_run_check_reports_unsupported_lock_distinctly(tmp_path: Path) -> None:
     def unsupported_flock(_fd: int, _operation: int) -> None:
         raise OSError(errno.ENOLCK, "locking unsupported")
@@ -634,7 +767,7 @@ def test_single_run_check_passes_and_keeps_lock_held(tmp_path: Path) -> None:
 
 
 def test_host_resources_check_fails_when_host_breaches_limits(tmp_path: Path) -> None:
-    deps = _deps(tmp_path, measure=lambda: (_sample(mem_available_mb=1024), 0))
+    deps = _deps(tmp_path, measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0))
     result = _by_name(_run(tmp_path, deps=deps), "host_resources")
 
     assert not result.ok
@@ -647,7 +780,38 @@ def test_host_resources_check_passes_when_host_is_within_limits(tmp_path: Path) 
     assert result.ok
 
 
+def test_host_resources_check_measures_runs_directory(tmp_path: Path) -> None:
+    paths = []
+    deps = _deps(tmp_path, measure=lambda *, disk_path: (paths.append(disk_path) or _sample(), 0))
+
+    _run(tmp_path, deps=deps)
+
+    assert paths == [tmp_path / "runs"]
+
+
+def test_host_resources_check_passes_before_the_runs_directory_exists(tmp_path: Path) -> None:
+    def measure(*, disk_path: Path) -> tuple[Sample, int]:
+        shutil.disk_usage(disk_path)
+        return _sample(), 0
+
+    assert not (tmp_path / "runs").exists()
+    result = _by_name(_run(tmp_path, deps=_deps(tmp_path, measure=measure)), "host_resources")
+
+    assert result.ok, result.detail
+
+
+def test_host_resources_check_creates_missing_parent_directories(tmp_path: Path) -> None:
+    disk_path = tmp_path / "runs" / "nested"
+    deps = _deps(tmp_path)
+
+    result = host_resources_check(_job(), deps, 1.0, disk_path)
+
+    assert result[0]
+    assert disk_path.is_dir()
+
+
 def test_host_resources_check_ignores_swapouts_before_launch(tmp_path: Path) -> None:
+    (tmp_path / "runs").mkdir()
     vm_stat = (Path(__file__).parents[2] / "fixtures" / "vm_stat-macos.txt").read_text(
         encoding="utf-8"
     )
@@ -666,7 +830,7 @@ def test_host_resources_check_ignores_swapouts_before_launch(tmp_path: Path) -> 
 
     deps = _deps(
         tmp_path,
-        measure=lambda: measure_host(run=run, read_text=read_text, disk_path=tmp_path),
+        measure=lambda **kwargs: measure_host(run=run, read_text=read_text, **kwargs),
     )
     result = _by_name(_run(tmp_path, deps=deps), "host_resources")
 
@@ -686,6 +850,19 @@ def test_machine_check_present_fails_when_file_is_missing(tmp_path: Path) -> Non
     assert "machine check" in result.detail
 
 
+def test_machine_check_matches_fails_when_file_is_missing(tmp_path: Path) -> None:
+    def missing(_path: Path) -> MachineCheck:
+        raise FileNotFoundError("missing machine check")
+
+    result = _by_name(
+        _run(tmp_path, deps=_deps(tmp_path, read_machine_check=missing)),
+        "machine_check_matches",
+    )
+
+    assert not result.ok
+    assert "machine check is unavailable" in result.detail
+
+
 def test_machine_check_present_fails_when_file_is_unparseable(tmp_path: Path) -> None:
     def invalid(_path: Path) -> MachineCheck:
         raise ValueError("invalid machine check JSON")
@@ -703,6 +880,20 @@ def test_machine_check_present_passes_when_file_parses(tmp_path: Path) -> None:
     result = _by_name(_run(tmp_path), "machine_check_present")
 
     assert result.ok
+
+
+def test_run_checks_reads_machine_check_from_configured_path(tmp_path: Path) -> None:
+    job = _job()
+
+    def read_machine_check(path: Path) -> MachineCheck:
+        if path != job.machine_check:
+            raise FileNotFoundError(path)
+        return _machine_check()
+
+    results = _run(tmp_path, job=job, deps=_deps(tmp_path, read_machine_check=read_machine_check))
+
+    assert _by_name(results, "machine_check_present").ok
+    assert _by_name(results, "machine_check_matches").ok
 
 
 @pytest.mark.parametrize(
@@ -758,8 +949,77 @@ def test_machine_check_matches_refuses_when_path_task_content_changes(tmp_path: 
     )
 
     assert not result.ok
-    assert "task-a" in result.detail
-    assert "rerun `hrr check-machine`" in result.detail
+    assert result.detail == (
+        "path task content differs from the machine check for task-a; rerun `hrr check-machine`"
+    )
+
+
+def test_machine_check_matches_lists_every_missing_path_task(tmp_path: Path) -> None:
+    task_root = tmp_path / "tasks"
+    task_root.mkdir()
+    check = _machine_check(
+        task_source={"path": str(task_root)},
+        included=["task-a", "task-b"],
+        tasks=[
+            {"name": "task-a", "memory_mb": 512},
+            {"name": "task-b", "memory_mb": 512},
+        ],
+    )
+    job = replace(
+        _job(include=("task-a", "task-b")),
+        tasks=TaskSource("path", None, str(task_root), None, None, ("task-a", "task-b"), ()),
+    )
+
+    result = _by_name(
+        _run(tmp_path, job=job, deps=_deps(tmp_path, read_machine_check=lambda _path: check)),
+        "machine_check_matches",
+    )
+
+    assert not result.ok
+    assert result.detail == (
+        "path task content differs from the machine check for task-a, task-b; "
+        "rerun `hrr check-machine`"
+    )
+
+
+def test_machine_check_matches_reports_path_tasks_that_are_not_folders(
+    tmp_path: Path,
+) -> None:
+    task_root = tmp_path / "tasks"
+    task_root.mkdir()
+    (task_root / "task-a").write_text("not a task folder", encoding="utf-8")
+    check = _machine_check(
+        task_source={"path": str(task_root)},
+        included=["task-a", "task-b"],
+        tasks=[
+            {"name": "task-a", "memory_mb": 512, "digest": "sha256:0"},
+            {"name": "task-b", "memory_mb": 512, "digest": "sha256:0"},
+        ],
+    )
+    job = replace(
+        _job(include=("task-a", "task-b")),
+        tasks=TaskSource("path", None, str(task_root), None, None, ("task-a", "task-b"), ()),
+    )
+
+    result = _by_name(
+        _run(tmp_path, job=job, deps=_deps(tmp_path, read_machine_check=lambda _path: check)),
+        "machine_check_matches",
+    )
+
+    assert not result.ok
+    assert result.detail == (
+        "path task content differs from the machine check for task-a, task-b; "
+        "rerun `hrr check-machine`"
+    )
+
+
+def test_withdrawn_model_card_without_reason_has_default_detail(tmp_path: Path) -> None:
+    card = replace(_card(withdrawn=True), reason=None)
+
+    result = _by_name(_run(tmp_path, card=card), "model_card")
+
+    assert not result.ok
+    assert result.detail == "model card is withdrawn"
 
 
 def test_machine_check_matches_passes_for_unchanged_path_task(tmp_path: Path) -> None:
@@ -798,7 +1058,9 @@ def test_machine_check_matches_refuses_check_without_host_profile(tmp_path: Path
     )
 
     assert not result.ok
-    assert "rerun `hrr check-machine`" in result.detail
+    assert result.detail == (
+        "the machine check predates host profile recording; rerun `hrr check-machine`"
+    )
 
 
 def test_machine_check_matches_names_each_different_profile_field(tmp_path: Path) -> None:
@@ -838,11 +1100,38 @@ def test_empty_task_include_means_all_included_tasks_pass(tmp_path: Path) -> Non
     assert result.ok
 
 
+@pytest.mark.parametrize(
+    ("included", "include", "exclude", "reason"),
+    [
+        ([], (), (), "machine check included no tasks"),
+        (["task-a", "task-b"], (), ("task-a", "task-b"), "every included task"),
+        (["task-a", "task-b"], ("task-c",), (), "not included in the machine check: task-c"),
+    ],
+)
+def test_tasks_included_check_refuses_an_empty_resolved_selection(
+    tmp_path: Path,
+    included: list[str],
+    include: tuple[str, ...],
+    exclude: tuple[str, ...],
+    reason: str,
+) -> None:
+    check = _machine_check(included=included)
+    deps = _deps(tmp_path, read_machine_check=lambda _path: check)
+
+    result = _by_name(
+        _run(tmp_path, job=_job(include=include, exclude=exclude), deps=deps),
+        "tasks_included",
+    )
+
+    assert not result.ok
+    assert reason in result.detail
+
+
 def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path) -> None:
     deps = _deps(
         tmp_path,
         inventory=lambda: Inventory(True, "ok", ("trial__env-main-1",), (), (), ()),
-        measure=lambda: _sample(mem_available_mb=1024),
+        measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0),
     )
     results = _run(tmp_path, card=_card(withdrawn=True), deps=deps)
 
@@ -904,7 +1193,7 @@ def test_machine_check_launch_checks_reports_each_failure(tmp_path: Path) -> Non
     deps = _deps(
         tmp_path,
         inventory=lambda: Inventory(True, "ok", ("residue",), (), (), ()),
-        measure=lambda: _sample(mem_available_mb=1024),
+        measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0),
     )
 
     results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
@@ -918,3 +1207,33 @@ def test_machine_check_launch_checks_reports_each_failure(tmp_path: Path) -> Non
     assert results[1].ok
     assert not results[2].ok
     deps.host_lock.release()
+
+
+def test_machine_check_single_run_reports_the_lock_holder(tmp_path: Path) -> None:
+    lock_path = tmp_path / "host.lock"
+    holder = HostLock(lock_path)
+    holder.acquire()
+    runs_dir = tmp_path / "runs"
+    try:
+        deps = _deps(
+            tmp_path,
+            host_lock=HostLock(lock_path),
+            live_run=lambda path: "run-holder" if path == runs_dir else None,
+        )
+        results = machine_check_launch_checks(_job(), runs_dir, deps)
+    finally:
+        holder.release()
+
+    assert not results[1].ok
+    assert results[1].detail == "host lock is held by run run-holder"
+
+
+@pytest.mark.parametrize("message", ["docker unavailable", ""])
+def test_failed_check_records_exception_message_or_type(tmp_path: Path, message: str) -> None:
+    def unavailable() -> Inventory:
+        raise RuntimeError(message)
+
+    result = _by_name(_run(tmp_path, deps=_deps(tmp_path, inventory=unavailable)), "docker_clean")
+
+    assert result.ok is False
+    assert result.detail == (message or "RuntimeError")

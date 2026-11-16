@@ -311,10 +311,12 @@ class _RelayState:
         finally:
             if self.deps.pacer is not None and not self._pacer_recorded:
                 self._pacer_recorded = True
-                usage = self.observation.usage
+                usage = self.observation.usage or {}
+                prompt_tokens = usage.get("prompt_tokens")
+                completion_tokens = usage.get("completion_tokens")
                 actual = self.estimated_tokens
-                if usage is not None:
-                    actual = usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+                if prompt_tokens is not None and completion_tokens is not None:
+                    actual = prompt_tokens + completion_tokens
                 self.deps.pacer.record(self.reservation, actual)
         return http_status
 
@@ -747,6 +749,7 @@ def _stream_chunks(
                 translated: list[str] = []
                 for line in raw.decode("utf-8", "replace").splitlines():
                     translated.extend(translator.feed_line(line))
+                translator.end_event()
                 observation.usage = ledger_usage or translator.usage
                 observation.served_model = translator.served_model
                 observation.completion_chars = translator.completion_chars

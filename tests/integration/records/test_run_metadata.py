@@ -21,6 +21,7 @@ def _metadata(index: int) -> RunMetadata:
         host={},
         proxy={"host": "localhost", "port": 1},
         limits={},
+        sampler_interval_s=10.0,
     )
 
 

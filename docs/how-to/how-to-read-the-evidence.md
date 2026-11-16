@@ -2,6 +2,26 @@
 
 An evidence bundle is a plain directory produced from a run folder. Start with `manifest.json` to check the bundle files and `report.md` for the summary.
 
+## Verify a bundle
+
+Run `hrr verify-evidence BUNDLE_DIR` to check these documented invariants (the evidence record and bundle rules in `docs/architecture.md` sections 4.7, 6, 9, and the set-aside rule in D11):
+
+- The manifest covers every bundle file.
+- Trial ids are unique, each trial has exactly one verdict event, and verdict fields agree.
+- Set-aside trials are invalid; canary trials do not count toward slots.
+- Non-canary tasks and all arms belong to the metadata task and arm sets; the task set is non-empty.
+- Report slot and unmeasured counts agree with the trial rows and metadata.
+- The malformed resource, Docker OOM-event and memory-watch row counts in `report.md` agree with their telemetry files.
+- A malformed OOM-event or memory-watch line whose inferred time span overlaps a trial's agent-to-verifier window makes that trial unmeasured with `telemetry_damaged`. A torn final line is treated as a write in progress unless the last `telemetry_stopped` event follows the last `harbor_start`; after that marker, it is damage and any amended verdict remains in force through `trial_measurement_amended`.
+- Finish counts agree with recomputed slot completeness; exit code 0 has no incomplete slots.
+- Set-aside events stay within the effective per-slot cap, excluding deferred events.
+- Trial memory peaks equal the maximum recorded sample, or are null when a malformed memory-watch line overlaps the trial window.
+- Trial request and token totals agree with proxy request rows. Before a `finish` event, distinct request trial ids absent from `trials.jsonl` are counted as unjudged, as unfinished run folders may not have a verdict yet. After `finish`, each proxy request must identify an evidence trial or a documented non-trial id.
+- Measured trials have no unfinished proxy requests.
+- When `run-events.jsonl` contains `harbor_start`, the bundle contains `resource-stats.jsonl.gz`, `docker-oom-events.jsonl` and `memory-watch.jsonl`; each missing file is reported as `telemetry_present`.
+
+The command exits 0 when the bundle is consistent, 1 when it finds invariant problems, and 2 when the bundle cannot be read. `hrr build-evidence` runs the same checks after writing; it exits 5 when the bundle was written but has invariant problems.
+
 1. **Check the manifest and report.** `manifest.json` lists each file's byte length and SHA-256 digest. `report.md` summarizes completeness, pass rates, paired results, usage, labels, set-aside reasons, and halt/resume history.
 
 2. **Inspect the source records.** The run metadata and event log preserve the job, pinned model and task sources, machine information, launch checks, Harbor passes, trial verdicts, halts, resumes, and finish status.
@@ -9,7 +29,7 @@ An evidence bundle is a plain directory produced from a run folder. Start with `
 - `trials.jsonl` has one row per canary, main, and set-aside trial. It records task, arm, reward, phase times, validity, labels, token use, request counts, and other measured behaviour.
 - `proxy-requests.jsonl.gz` merges each request's start and end ledger rows, ordered by request start. It is useful for inspecting status, timing, token counts, model served, and failovers.
 - `resource-stats.jsonl.gz` contains the host resource samples.
-- `memory-watch.jsonl` records every main and canary trial-container memory sample (`location`, `used_mb`, task `limit_mb`, and the `docker_stats`, `proc_pss` or `proc_rss` reader) and any watchdog kill. `trials.jsonl` adds `peak_memory_mb` and `memory_limit_mb` for each trial.
+- `memory-watch.jsonl` records every main and canary trial-container memory sample (`location`, `used_mb`, task `limit_mb`, and the `docker_stats`, `proc_pss` or `proc_rss` reader), first over-limit process lists, and successful or failed watchdog kills. A `kill_failed` row still records a watchdog breach and is attributed as `oom_source: watchdog` during verdict judgement.
 - `run-events.jsonl` records launch checks and run lifecycle events.
 - `run-metadata.json` is the immutable record of the job, model card, arms, task set, machine check, host, and limits.
 
@@ -40,8 +60,9 @@ JSONL files contain one UTF-8 JSON object per line. Gzip files are compressed JS
 | `upstream_errors` | Counted upstream errors exceeded the configured tolerance. |
 | `upstream_slow` | Successful responses with completion tokens had an aggregate output rate below the configured floor. |
 | `no_verdict` | There is no grader reward and the failure was not in the verifier phase. |
+| `run_halted` | The run halted while the proxy trial was open, so the otherwise valid result is rerun. |
 
-   The instrument identifies the source of an invalid verdict: Harbor, the host, or the proxy. A trial can also be unmeasured. The `unmeasured_reason` values are `request_not_recorded` (a request start has no matching end although the trial closed), `close_not_recorded` (the trial finished but the proxy never recorded its close, so its deadline was not enforced), `ledger_damaged` (a ledger line or sequence gap falls within the trial), and `no_open_row` (requests exist without a trial-open row). Unmeasured trials are not rerun and prevent a run from being complete.
+   The instrument identifies the source of an invalid verdict: Harbor, the host, or the proxy. A trial can also be unmeasured. The `unmeasured_reason` values include `request_not_recorded`, `close_not_recorded`, `ledger_damaged`, `no_open_row`, `phase_times_missing`, `usage_incomplete`, `host_samples_damaged`, `telemetry_damaged`, and `telemetry_missing`. Malformed lines are placed between the timestamps of parsed rows on either side; a missing side extends the span to infinity. The post-run pass appends `telemetry_stopped` after any amendments. Evidence readers use the finished-file rule only when the last such marker follows the last `harbor_start`; while live, or after a resumed run has restarted Harbor, a torn final telemetry line is ignored. Once stopped, it spans from the latest parsed timestamp (or negative infinity) to positive infinity and may amend a measured verdict. Missing or non-numeric upstream token counters are recorded as null; an absent usage object leaves all token counters unknown. Token totals in `trials.jsonl` sum the values that are known, while `measured: false` and `unmeasured_reason` identify incomplete usage. Unmeasured trials are not rerun and prevent a run from being complete.
 
 5. **Interpret labels on valid trials.**
 
@@ -56,4 +77,4 @@ JSONL files contain one UTF-8 JSON object per line. Gzip files are compressed JS
 | `oom_killed` | The kernel or memory watchdog killed the trial container during the agent or verifier window. `oom_source` is `kernel` or `watchdog`; the trial remains a valid failure or pass according to its reward. |
 | `refused_after_close` | The proxy refused one or more requests because the trial was already closed. |
 
-   The report's label summary shows timed out, nonzero exit, verifier failed, harness could not start, no requests, possible bypass, and OOM-killed counts. Inspect `trials.jsonl` for any `refused_after_close` labels. `docker-oom-events.jsonl` preserves kernel OOM events; `memory-watch.jsonl` preserves watchdog samples and kills.
+   The report's label summary shows timed out, nonzero exit, verifier failed, harness could not start, no requests, possible bypass, and OOM-killed counts. Inspect `trials.jsonl` for any `refused_after_close` labels. `docker-oom-events.jsonl` preserves kernel OOM events; `memory-watch.jsonl` preserves watchdog samples, process lists, and kill outcomes.

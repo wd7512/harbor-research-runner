@@ -11,7 +11,7 @@ from harbor_research_runner.docker_host.host_lock import HostLock
 from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
 from harbor_research_runner.records.machine_check import read
 from harbor_research_runner.records.resource_stats import Sample
-from harbor_research_runner.run.checks import CheckDeps
+from harbor_research_runner.run.checks import CheckDeps, docker_clean_check
 from harbor_research_runner.run.machine_check import (
     MachineCheckDeps,
     included_tasks,
@@ -50,7 +50,7 @@ def _job() -> Job:
 def _checks(tmp_path: Path) -> CheckDeps:
     return CheckDeps(
         select_adapter=lambda *_: object(),
-        measure=lambda: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
+        measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
         inventory=lambda: Inventory(True, "ok", (), (), (), ()),
         live_run=lambda _path: None,
         host_lock=HostLock(tmp_path / "host.lock"),
@@ -198,6 +198,7 @@ def test_run_machine_check_writes_results_and_keeps_the_host_lock(
         _fake_harbor(tmp_path, checks.host_lock),
         lambda: 1_800_000_000.0,
         host_arch=lambda: "arm64",
+        cleanup_projects=lambda _projects: None,
     )
     out = tmp_path / "checks" / "machine-check.json"
 
@@ -217,6 +218,161 @@ def test_run_machine_check_writes_results_and_keeps_the_host_lock(
         "container_network": "bridge",
     }
     assert checks.host_lock.held
+    assert list((tmp_path / "runs").iterdir()) == []
+    checks.host_lock.release()
+
+
+def test_run_machine_check_cleans_its_network_residue_and_fails_if_it_remains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_cache = tmp_path / "cache" / "tasks" / "packages"
+    task_dir = package_cache / "terminal-bench" / "bn-fit-modify" / TASK_DIGEST
+    task_dir.mkdir(parents=True)
+    shutil.copyfile(FIXTURE_ROOT / "task-tomls" / "bn-fit-modify.task.toml", task_dir / "task.toml")
+    monkeypatch.setattr(harbor_task_id, "PACKAGE_CACHE_DIR", package_cache)
+    checks = _checks(tmp_path)
+    network = "pass-bn-fit__env_default"
+    assert docker_clean_check(
+        replace(
+            checks,
+            inventory=lambda: Inventory(True, "ok", (), (network,), (), (network,)),
+        )
+    ) == (False, f"Docker residue found: {network}")
+    state = {"after_harbor": False}
+    checks = replace(
+        checks,
+        inventory=lambda: Inventory(
+            True,
+            "ok",
+            (),
+            (network,) if state["after_harbor"] else (),
+            (),
+            (network,) if state["after_harbor"] else (),
+        ),
+    )
+    run_harbor = _fake_harbor(tmp_path, checks.host_lock)
+
+    def harbor_with_residue(argv: list[str], cwd: Path) -> int:
+        result = run_harbor(argv, cwd)
+        state["after_harbor"] = True
+        return result
+
+    cleaned: list[set[str]] = []
+    deps = MachineCheckDeps(
+        checks,
+        harbor_with_residue,
+        lambda: 1_800_000_000.0,
+        host_arch=lambda: "arm64",
+        cleanup_projects=lambda projects: cleaned.append(projects),
+    )
+    out = tmp_path / "checks" / "machine-check.json"
+
+    with pytest.raises(RuntimeError, match=f"{network}.*hrr clean-docker --apply"):
+        run_machine_check(_job(), out, False, tmp_path / "runs", deps)
+
+    assert read(out).included == [TASK]
+    assert cleaned == [{"pass-bn-fit"}]
+    kept = list((tmp_path / "runs").glob("machine-check-*"))
+    assert len(kept) == 1
+    assert (kept[0] / "harbor-job").is_dir()
+    checks.host_lock.release()
+
+
+def test_run_machine_check_rescans_after_cleaning_its_network_residue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_cache = tmp_path / "cache" / "tasks" / "packages"
+    task_dir = package_cache / "terminal-bench" / "bn-fit-modify" / TASK_DIGEST
+    task_dir.mkdir(parents=True)
+    shutil.copyfile(FIXTURE_ROOT / "task-tomls" / "bn-fit-modify.task.toml", task_dir / "task.toml")
+    monkeypatch.setattr(harbor_task_id, "PACKAGE_CACHE_DIR", package_cache)
+    checks = _checks(tmp_path)
+    network = "pass-bn-fit__env_default"
+    state = {"after_harbor": False}
+    checks = replace(
+        checks,
+        inventory=lambda: Inventory(
+            True,
+            "ok",
+            (),
+            (network,) if state["after_harbor"] else (),
+            (),
+            (network,) if state["after_harbor"] else (),
+        ),
+    )
+    run_harbor = _fake_harbor(tmp_path, checks.host_lock)
+
+    def harbor_with_residue(argv: list[str], cwd: Path) -> int:
+        result = run_harbor(argv, cwd)
+        state["after_harbor"] = True
+        return result
+
+    cleaned: list[set[str]] = []
+
+    def clean_owned_projects(projects: set[str]) -> None:
+        cleaned.append(projects)
+        state["after_harbor"] = False
+
+    deps = MachineCheckDeps(
+        checks,
+        harbor_with_residue,
+        lambda: 1_800_000_000.0,
+        host_arch=lambda: "arm64",
+        cleanup_projects=clean_owned_projects,
+    )
+
+    result = run_machine_check(
+        _job(), tmp_path / "checks" / "machine-check.json", False, tmp_path / "runs", deps
+    )
+
+    assert result.included == [TASK]
+    assert cleaned == [{"pass-bn-fit"}]
+    checks.host_lock.release()
+
+
+def test_run_machine_check_does_not_clean_another_compose_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_cache = tmp_path / "cache" / "tasks" / "packages"
+    task_dir = package_cache / "terminal-bench" / "bn-fit-modify" / TASK_DIGEST
+    task_dir.mkdir(parents=True)
+    shutil.copyfile(FIXTURE_ROOT / "task-tomls" / "bn-fit-modify.task.toml", task_dir / "task.toml")
+    monkeypatch.setattr(harbor_task_id, "PACKAGE_CACHE_DIR", package_cache)
+    checks = _checks(tmp_path)
+    network = "unrelated__env_default"
+    state = {"after_harbor": False}
+    checks = replace(
+        checks,
+        inventory=lambda: Inventory(
+            True,
+            "ok",
+            (),
+            (network,) if state["after_harbor"] else (),
+            (),
+            (network,) if state["after_harbor"] else (),
+        ),
+    )
+    cleaned: list[set[str]] = []
+
+    def harbor_with_residue(argv: list[str], cwd: Path) -> int:
+        result = _fake_harbor(tmp_path, checks.host_lock)(argv, cwd)
+        state["after_harbor"] = True
+        return result
+
+    deps = MachineCheckDeps(
+        checks,
+        harbor_with_residue,
+        lambda: 1_800_000_000.0,
+        host_arch=lambda: "arm64",
+        cleanup_projects=lambda projects: cleaned.append(projects),
+    )
+
+    result = run_machine_check(
+        _job(), tmp_path / "checks" / "machine-check.json", False, tmp_path / "runs", deps
+    )
+
+    assert result.included == [TASK]
+    assert cleaned == [{"pass-bn-fit"}]
     checks.host_lock.release()
 
 
@@ -260,6 +416,7 @@ def test_run_machine_check_excludes_environment_setup_failures(
         run_harbor,
         lambda: 1_800_000_000.0,
         host_arch=lambda: "arm64",
+        cleanup_projects=lambda _projects: None,
     )
     job = replace(
         _job(),
@@ -322,7 +479,13 @@ def test_run_machine_check_still_rejects_incomplete_agent_phase_exception(
             result_path.write_text(json.dumps(result), encoding="utf-8")
         return 0
 
-    deps = MachineCheckDeps(checks, run_harbor, lambda: 1_800_000_000.0, host_arch=lambda: "arm64")
+    deps = MachineCheckDeps(
+        checks,
+        run_harbor,
+        lambda: 1_800_000_000.0,
+        host_arch=lambda: "arm64",
+        cleanup_projects=lambda _projects: None,
+    )
     job = replace(
         _job(),
         tasks=TaskSource(
@@ -358,7 +521,13 @@ def test_run_machine_check_reports_setup_errors_when_no_task_is_included(
         )
         return 0
 
-    deps = MachineCheckDeps(checks, run_harbor, lambda: 1_800_000_000.0, host_arch=lambda: "arm64")
+    deps = MachineCheckDeps(
+        checks,
+        run_harbor,
+        lambda: 1_800_000_000.0,
+        host_arch=lambda: "arm64",
+        cleanup_projects=lambda _projects: None,
+    )
     job = replace(
         _job(),
         tasks=TaskSource(
@@ -424,6 +593,7 @@ def _run_local_task_machine_check(
         lambda: 1_800_000_000.0,
         host_arch=lambda: "arm64",
         image_arch=lambda _image: image_arch,
+        cleanup_projects=lambda _projects: None,
     )
     job = replace(
         _job(),

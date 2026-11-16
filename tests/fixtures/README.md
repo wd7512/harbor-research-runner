@@ -56,9 +56,10 @@ Every file in this folder has one line here saying where it came from. No file o
 | `memory_watch/docker-stats-all-containers.jsonl` | Docker Desktop 29.8.0 `docker stats --no-stream --format '{{json .}}'` with no container argument, as the memory watcher calls it, captured 13 Nov 2026. With no argument, `Container` holds the full 64-character ID, not the name. |
 | `memory_watch/docker-inspect-state.json` | Docker Desktop 29.8.0 `docker inspect --format '{{json .State}}'` output for the captured trial container, 13 Nov 2026. |
 | `memory_watch/docker-inspect-labels.json` | Docker Desktop 29.8.0 `docker inspect --format '{{json .Config.Labels}}'` output for the captured trial container, 13 Nov 2026. |
+| `memory_watch/docker-top-macos.txt` | Docker Desktop 29.8.0 `docker top hrr-fixture-top -eo pid,rss,args` for an `alpine:latest` container running two `sleep 120` processes, captured 15 Nov 2026. |
 | `memory_watch/proc-status-sh.txt` | `/proc/1/status` from the captured trial container on Docker Desktop 29.8.0, 13 Nov 2026. |
 | `memory_watch/proc-children-1.txt` | `/proc/1/task/1/children` from the captured trial container on Docker Desktop 29.8.0, 13 Nov 2026. |
 | `memory_watch/proc-smaps-rollup.txt` | Linux `/proc/<pid>/smaps_rollup` format fixture with the approved `Rss: 920 kB` and `Pss: 916 kB` values and adjacent `Pss_Dirty` and shared/private fields for parser coverage. |
 
-- `run_folders/`: hand-made compact run-folder samples for `evidence_bundle.trials`, covering a clean two-task/two-arm run and a set-aside, unmeasured, unfinished, and canary trial.
+- `run_folders/`: hand-made compact run-folder samples for `evidence_bundle.trials`, covering a clean two-task/two-arm run and a set-aside, unmeasured, unfinished, and canary trial; the metadata records the 10-second sampler interval.
 - `run_folders/{clean,retries}/machine-check.json` and `expected-report.md`: hand-made five-task machine-check records and the resulting evidence report goldens; each includes three tasks and excludes two.

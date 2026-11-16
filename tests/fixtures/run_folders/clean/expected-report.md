@@ -18,7 +18,9 @@
 | Slots complete | 4 |
 | Slots incomplete | 0 |
 | Valid trials | 4 |
+| Trials not yet judged | 0 |
 | Unmeasured trials | 0 |
+| Malformed resource samples | 0 |
 | Tokens spent on set-aside trials | 0 |
 
 Set aside by reason:

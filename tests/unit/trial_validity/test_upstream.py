@@ -111,6 +111,15 @@ def test_zero_completion_tokens_is_not_slow():
     assert upstream_reason(rows, LIMITS) is None
 
 
+def test_unknown_completion_tokens_are_not_treated_as_zero_for_rate():
+    rows = [
+        _end(1, completion_tokens=10, duration_s=1.0),
+        _end(2, completion_tokens=None, duration_s=10.0),
+    ]
+
+    assert upstream_reason(rows, LIMITS) is None
+
+
 def test_zero_duration_rows_are_excluded_from_output_rate():
     rows = [
         _end(1, completion_tokens=10, duration_s=10.0),

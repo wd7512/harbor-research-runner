@@ -2,8 +2,10 @@ import os
 
 from harbor_research_runner.records.jsonl import (
     JsonlTail,
+    ReadResult,
     append_newline,
     append_row,
+    bad_line_time_spans,
     open_for_append,
     read_rows,
 )
@@ -101,3 +103,54 @@ def test_jsonl_tail_classifies_damaged_lines_like_read_rows(tmp_path):
     tail = JsonlTail(path)
 
     assert tail.read() == read_rows(path)
+
+
+def test_bad_line_time_span_uses_nearest_valid_timestamps():
+    result = ReadResult(
+        [{"t": 1.0}, {"t": 4.0}, {"t": 8.0}, {"t": 12.0}],
+        False,
+        [3],
+    )
+
+    assert bad_line_time_spans(result, finished=False) == [(4.0, 8.0)]
+
+
+def test_bad_line_time_span_ignores_invalid_neighbor_timestamps():
+    result = ReadResult(
+        [{"t": True}, {"t": "bad"}, {"t": 8.0}],
+        False,
+        [2],
+    )
+
+    assert bad_line_time_spans(result, finished=False) == [(float("-inf"), 8.0)]
+
+
+def test_bad_line_time_span_scales_timestamp_fields():
+    result = ReadResult([{"timeNano": 1_000_000_000}, {"timeNano": 3_000_000_000}], False, [2])
+
+    assert bad_line_time_spans(result, "timeNano", 1e-9, finished=False) == [(1.0, 3.0)]
+
+
+def test_bad_line_time_span_without_neighboring_timestamp_uses_infinite_bounds():
+    result = ReadResult([{"t": "bad"}, {"t": 2.0}], False, [1])
+
+    assert bad_line_time_spans(result, finished=False) == [(float("-inf"), 2.0)]
+
+
+def test_bad_line_time_span_without_following_timestamp_uses_positive_infinity():
+    result = ReadResult([{"t": 2.0}], False, [2])
+
+    assert bad_line_time_spans(result, finished=False) == [(2.0, float("inf"))]
+
+
+def test_torn_final_line_spans_after_last_row_only_when_finished():
+    result = ReadResult([{"t": 2.0}, {"t": 5.0}], True, [])
+
+    assert bad_line_time_spans(result, finished=True) == [(5.0, float("inf"))]
+    assert bad_line_time_spans(result, finished=False) == []
+
+
+def test_finished_torn_final_line_without_rows_spans_from_negative_infinity():
+    result = ReadResult([], True, [])
+
+    assert bad_line_time_spans(result, finished=True) == [(float("-inf"), float("inf"))]

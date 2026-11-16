@@ -16,11 +16,21 @@ def as_int(value: Any) -> int:
         return 0
 
 
+def as_optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        logger.warning("ignoring non-numeric usage value %r", value)
+        return None
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def normalize_usage_dict(raw: Any) -> dict[str, int]:
+def normalize_usage_dict(raw: Any) -> dict[str, Any]:
     """Coerce an already-extracted usage dict to ledger fields."""
     raw = _as_dict(raw)
     prompt_details = _as_dict(raw.get("prompt_tokens_details"))
@@ -30,15 +40,17 @@ def normalize_usage_dict(raw: Any) -> dict[str, int]:
     else:
         cached = prompt_details.get("cached_tokens", input_details.get("cached_tokens", 0))
     return {
-        "prompt_tokens": as_int(raw.get("prompt_tokens", raw.get("input_tokens", 0))),
-        "completion_tokens": as_int(raw.get("completion_tokens", raw.get("output_tokens", 0))),
+        "prompt_tokens": as_optional_int(raw.get("prompt_tokens", raw.get("input_tokens"))),
+        "completion_tokens": as_optional_int(
+            raw.get("completion_tokens", raw.get("output_tokens"))
+        ),
         "cached_read_tokens": as_int(cached),
         "prompt_chars": as_int(raw.get("prompt_chars", 0)),
         "completion_chars": as_int(raw.get("completion_chars", 0)),
     }
 
 
-def normalize_usage(obj: Any) -> dict[str, int] | None:
+def normalize_usage(obj: Any) -> dict[str, Any] | None:
     """Normalize a response envelope to ledger fields, None when absent."""
     if not isinstance(obj, dict):
         return None

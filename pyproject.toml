@@ -25,6 +25,7 @@ dev = [
     "ty==0.0.78",
     "wills-agentic-tools",
 ]
+mutation = ["mutmut==3.7.0"]
 
 [build-system]
 requires = ["hatchling==1.32.4"]
@@ -64,6 +65,28 @@ markers = [
     "replay: replays the new rules on OLD's committed evidence; needs HRR_OLD_REPO, not in the gate",
 ]
 
+[tool.mutmut]
+source_paths = ["src"]
+only_mutate = [
+    "src/harbor_research_runner/trial_validity/verdict.py",
+    "src/harbor_research_runner/run/loop.py",
+    "src/harbor_research_runner/run/checks.py",
+    "src/harbor_research_runner/evidence_bundle/trials.py",
+    "src/harbor_research_runner/evidence_bundle/build.py",
+    "src/harbor_research_runner/evidence_bundle/verify.py",
+    "src/harbor_research_runner/records/proxy_ledger.py",
+    "src/harbor_research_runner/records/jsonl.py",
+]
+also_copy = ["scripts/", "README.md", "LICENSE", ".github/"]
+pytest_add_cli_args = ["-p", "scripts.mutation_pass"]
+pytest_add_cli_args_test_selection = [
+    "tests/unit",
+    "tests/integration",
+    "--deselect=tests/unit/test_cli.py::test_cli_does_not_read_environment_variables_by_name",
+    "--ignore=tests/unit/test_import_rule.py",
+    "--ignore=tests/integration/test_import_rule.py",
+]
+
 [tool.devtools.gate]
 source = "src/"
 tests = ["tests/unit", "tests/integration"]
@@ -75,6 +98,7 @@ unit_tests = "tests/unit"
 tests_dir = "tests"
 mirror_exceptions = [
     "tests/unit/test_skeleton.py",
+    "tests/unit/scripts/test_mutation_pass.py",
     "tests/unit/test_import_rule.py",
     "tests/integration/test_import_rule.py",
     "src/harbor_research_runner/cli.py",

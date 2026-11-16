@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from harbor_research_runner.docker_host import cleanup
 from harbor_research_runner.docker_host.cleanup import (
     Inventory,
 )
@@ -48,7 +49,7 @@ class CheckResult:
 @dataclass(frozen=True)
 class CheckDeps:
     select_adapter: Callable[[str, str], object]
-    measure: Callable[[], tuple[Sample, int]]
+    measure: Callable[..., tuple[Sample, int]]
     inventory: Callable[[], Inventory]
     live_run: Callable[[Path], str | None]
     host_lock: HostLock
@@ -75,7 +76,7 @@ def docker_clean_check(deps: CheckDeps) -> tuple[bool, str]:
     inventory = deps.inventory()
     if not inventory.daemon_ok:
         return False, inventory.daemon_detail
-    residue = (*inventory.residue_containers, *inventory.leaked_networks)
+    residue = cleanup.residue_names(inventory)
     if residue:
         return False, f"Docker residue found: {', '.join(residue)}"
     return True, "Docker inventory is clean"
@@ -99,9 +100,12 @@ def single_run_check(runs_dir: Path, deps: CheckDeps) -> tuple[bool, str]:
     return True, "this process holds the host lock"
 
 
-def host_resources_check(job: Job, deps: CheckDeps, multiplier: float) -> tuple[bool, str]:
+def host_resources_check(
+    job: Job, deps: CheckDeps, multiplier: float, disk_path: Path
+) -> tuple[bool, str]:
     limits = Limits.from_dict(job.limit_overrides, job.repetitions, multiplier)
-    sample, _ = deps.measure()
+    disk_path.mkdir(parents=True, exist_ok=True)
+    sample, _ = deps.measure(disk_path=disk_path)
     if host_breach(sample.to_row(), limits):
         return False, "host resource limits are breached"
     return True, "host resources meet the job limits"
@@ -128,7 +132,7 @@ def machine_check_launch_checks(job: Job, runs_dir: Path, deps: CheckDeps) -> li
     return [
         _evaluate("docker_clean", lambda: docker_clean_check(deps)),
         _evaluate("single_run", lambda: single_run_check(runs_dir, deps)),
-        _evaluate("host_resources", lambda: host_resources_check(job, deps, 1.0)),
+        _evaluate("host_resources", lambda: host_resources_check(job, deps, 1.0, runs_dir)),
     ]
 
 
@@ -245,12 +249,16 @@ def run_checks(
         return True, "machine check matches this job and host"
 
     def tasks_included_check() -> tuple[bool, str]:
-        if not job.tasks.include:
-            return True, "empty task include selects all machine-check included tasks"
         included = set(machine_check.included if machine_check is not None else ())
         missing = [task for task in job.tasks.include if task not in included]
         if missing:
             return False, f"task(s) are not included in the machine check: {', '.join(missing)}"
+        if machine_check is not None and not resolve_tasks(job, machine_check):
+            if not included:
+                return False, "machine check included no tasks"
+            return False, "every included task was excluded by tasks.exclude"
+        if not job.tasks.include:
+            return True, "empty task include selects all machine-check included tasks"
         return True, "all requested tasks are included in the machine check"
 
     def memory_fits_check() -> tuple[bool, str]:
@@ -323,6 +331,7 @@ def run_checks(
                 job,
                 deps,
                 machine_check.verifier_timeout_multiplier if machine_check else 1.0,
+                runs_dir,
             ),
         ),
         _evaluate("machine_check_present", machine_check_present_check),

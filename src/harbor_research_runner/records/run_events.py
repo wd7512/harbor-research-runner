@@ -75,6 +75,20 @@ class TrialVerdict(_Event):
 
 
 @dataclass(frozen=True)
+class TrialMeasurementAmended(_Event):
+    t: float
+    trial: str
+    unmeasured_reason: str
+    type: str = "trial_measurement_amended"
+
+
+@dataclass(frozen=True)
+class TelemetryStopped(_Event):
+    t: float
+    type: str = "telemetry_stopped"
+
+
+@dataclass(frozen=True)
 class SetAside(_Event):
     t: float
     trial: str
@@ -119,12 +133,52 @@ _EVENT_TYPES = {
         HarborExit,
         StopLaunchingAt,
         TrialVerdict,
+        TrialMeasurementAmended,
+        TelemetryStopped,
         SetAside,
         Halt,
         Resume,
         Finish,
     )
 }
+
+
+def telemetry_finished(events: list[dict]) -> bool:
+    last_harbor_start = max(
+        (index for index, event in enumerate(events) if event.get("type") == "harbor_start"),
+        default=-1,
+    )
+    last_telemetry_stopped = max(
+        (index for index, event in enumerate(events) if event.get("type") == "telemetry_stopped"),
+        default=-1,
+    )
+    return last_telemetry_stopped > last_harbor_start
+
+
+def final_verdicts(events: list[dict]) -> dict[str, dict]:
+    verdicts = {
+        event["trial"]: dict(event)
+        for event in events
+        if event.get("type") == "trial_verdict" and isinstance(event.get("trial"), str)
+    }
+    for event in events:
+        if event.get("type") != "trial_measurement_amended":
+            continue
+        trial = event.get("trial")
+        verdict = verdicts.get(trial) if isinstance(trial, str) else None
+        reason = event.get("unmeasured_reason")
+        if (
+            verdict is not None
+            and verdict.get("measured") is True
+            and reason
+            in {
+                "telemetry_damaged",
+                "host_samples_damaged",
+            }
+        ):
+            verdict["measured"] = False
+            verdict["unmeasured_reason"] = reason
+    return verdicts
 
 
 def parse_event(row: dict):

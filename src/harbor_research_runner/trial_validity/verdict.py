@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-from harbor_research_runner.records.jsonl import ReadResult
+from harbor_research_runner.records.jsonl import ReadResult, bad_line_time_spans
 from harbor_research_runner.records.limits import Limits, host_breach
-from harbor_research_runner.records.proxy_ledger import parse_row, rows_for_trial
+from harbor_research_runner.records.proxy_ledger import is_valid_row, rows_for_trial
 from harbor_research_runner.trial_validity.phase_table import failed_phase
 from harbor_research_runner.trial_validity.upstream import upstream_reason
 
@@ -36,14 +36,6 @@ class Verdict:
     oom_source: str | None = None
 
 
-def _valid(row: dict) -> bool:
-    try:
-        parse_row(row)
-    except ValueError:
-        return False
-    return True
-
-
 def _physical_positions(problems: ReadResult) -> list[int]:
     total = len(problems.rows) + len(problems.bad_lines) + (1 if problems.torn_last_line else 0)
     bad_lines = set(problems.bad_lines)
@@ -60,7 +52,7 @@ def _physical_positions(problems: ReadResult) -> list[int]:
 def _view(problems: ReadResult) -> list[tuple[dict, int, bool]]:
     positions = _physical_positions(problems)
     return [
-        (row, position, _valid(row))
+        (row, position, is_valid_row(row))
         for row, position in zip(problems.rows, positions, strict=False)
     ]
 
@@ -116,7 +108,7 @@ def _measurement(
     valid_rows = []
     damaged = False
     for row in trial_rows:
-        if _valid(row):
+        if is_valid_row(row):
             valid_rows.append(row)
         else:
             damaged = True
@@ -167,8 +159,14 @@ def _measurement(
     if has_close and started_ids - ended_ids:
         return False, "request_not_recorded"
 
-    if not has_open and (starts or ends):
+    if not has_open and (has_result or starts or ends):
         return False, "no_open_row"
+    if any(
+        row.get("upstream_status") == "ok"
+        and (row.get("prompt_tokens") is None or row.get("completion_tokens") is None)
+        for row in ends
+    ):
+        return False, "usage_incomplete"
     return True, None
 
 
@@ -189,6 +187,67 @@ def _host_fault(facts: TrialFacts, resource_rows: list[dict], limits: Limits) ->
         if start <= t <= end and host_breach(sample, limits):
             return True
     return False
+
+
+def host_samples_damaged(
+    facts: TrialFacts,
+    problems: ReadResult,
+    interval_s: float,
+    *,
+    finished: bool,
+) -> bool:
+    start = facts.phase_started.get("agent")
+    end = (
+        facts.phase_finished.get("verifier")
+        if facts.phase_started.get("verifier") is not None
+        else facts.phase_finished.get("agent")
+    )
+    if start is None or end is None:
+        return False
+    threshold = 3 * interval_s
+    samples = sorted(
+        (
+            row
+            for row in problems.rows
+            if row.get("type") == "sample"
+            and isinstance(row.get("t"), (int, float))
+            and not isinstance(row.get("t"), bool)
+        ),
+        key=lambda row: row["t"],
+    )
+    sample_times = [float(row["t"]) for row in samples]
+    if not sample_times:
+        return True
+    for previous, current in zip(sample_times, sample_times[1:], strict=False):
+        if current - previous > threshold and previous <= end and current >= start:
+            return True
+    for edge in (start, end):
+        if sample_times and min(abs(edge - timestamp) for timestamp in sample_times) > threshold:
+            return True
+    for span_start, span_end in bad_line_time_spans(problems, finished=finished):
+        if span_start <= end and span_end >= start:
+            return True
+    return False
+
+
+def trial_telemetry_damaged(
+    facts: TrialFacts,
+    oom_events: ReadResult,
+    memory_watch_events: ReadResult,
+    *,
+    finished: bool,
+) -> bool:
+    start = facts.phase_started.get("agent")
+    end = (
+        facts.phase_finished.get("verifier")
+        if facts.phase_started.get("verifier") is not None
+        else facts.phase_finished.get("agent")
+    )
+    if start is None or end is None:
+        return False
+    spans = bad_line_time_spans(oom_events, "timeNano", 1e-9, finished=finished)
+    spans.extend(bad_line_time_spans(memory_watch_events, finished=finished))
+    return any(span_start <= end and span_end >= start for span_start, span_end in spans)
 
 
 def _labels(
@@ -227,26 +286,42 @@ def judge_trial(
     resource_rows: list[dict],
     limits: Limits,
     earlier_set_aside_reasons: tuple[str, ...],
-    oom_events: list[dict] | tuple[()] = (),
-    memory_watch_events: list[dict] | tuple[()] = (),
+    oom_events: ReadResult,
+    memory_watch_events: ReadResult,
+    *,
+    resource_problems: ReadResult,
+    sampler_interval_s: float,
 ) -> Verdict:
     """Decide one trial's validity, applying rules 1 to 11 in order."""
     phase = failed_phase(facts)
     trial_rows = rows_for_trial(ledger_rows, facts.trial)
-    usable_rows = [row for row in trial_rows if _valid(row)]
+    usable_rows = [row for row in trial_rows if is_valid_row(row)]
     measured, unmeasured_reason = _measurement(
         facts.trial, trial_rows, ledger_problems, facts.has_result
     )
+    if measured and trial_telemetry_damaged(facts, oom_events, memory_watch_events, finished=False):
+        measured, unmeasured_reason = False, "telemetry_damaged"
+    if measured and host_samples_damaged(
+        facts, resource_problems, sampler_interval_s, finished=False
+    ):
+        measured, unmeasured_reason = False, "host_samples_damaged"
     start = facts.phase_started.get("agent")
     end = (
         facts.phase_finished.get("verifier")
         if facts.phase_started.get("verifier") is not None
         else facts.phase_finished.get("agent")
     )
+    if (
+        measured
+        and facts.has_result
+        and phase not in ("environment_setup", "agent_setup")
+        and (start is None or end is None)
+    ):
+        measured, unmeasured_reason = False, "phase_times_missing"
     oom_project = compose_project(facts.trial)
     oom_sources = []
     if start is not None and end is not None:
-        for event in oom_events:
+        for event in oom_events.rows:
             if not isinstance(event, dict):
                 continue
             event_time = event.get("timeNano")
@@ -259,11 +334,10 @@ def judge_trial(
                 timestamp = event_time / 1_000_000_000
                 if start <= timestamp <= end:
                     oom_sources.append((timestamp, "kernel"))
-        for event in memory_watch_events:
+        for event in memory_watch_events.rows:
             if (
                 isinstance(event, dict)
-                and event.get("type") == "kill"
-                and event.get("location") == "harbor-job"
+                and event.get("type") in {"kill", "kill_failed"}
                 and event.get("trial") == facts.trial
                 and isinstance(event.get("t"), (int, float))
                 and not isinstance(event.get("t"), bool)

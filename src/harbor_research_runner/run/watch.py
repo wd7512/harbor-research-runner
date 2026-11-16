@@ -8,7 +8,13 @@ from pathlib import Path
 from harbor_research_runner.harbor_adapter import job_folder, set_aside
 from harbor_research_runner.records import jsonl, machine_check
 from harbor_research_runner.records.jsonl import JsonlTail
-from harbor_research_runner.records.run_events import Halt, TrialVerdict
+from harbor_research_runner.records.run_events import (
+    Halt,
+    TelemetryStopped,
+    TrialMeasurementAmended,
+    TrialVerdict,
+    final_verdicts,
+)
 from harbor_research_runner.run import process_group
 from harbor_research_runner.trial_validity import run_health, verdict
 
@@ -37,7 +43,8 @@ def _trial_verdict(
     ledger = ledger_tail.read()
     resources = resource_tail.read()
     oom_path = session.run_dir / "docker-oom-events.jsonl"
-    oom_events = jsonl.read_rows(oom_path).rows if oom_path.exists() else []
+    oom_events = jsonl.read_rows(oom_path)
+    memory_path = session.run_dir / "memory-watch.jsonl"
     events = _read_events(session.run_dir)
     earlier = set_aside.earlier_reasons(events, facts.task, facts.arm)
     result = verdict.judge_trial(
@@ -48,28 +55,34 @@ def _trial_verdict(
         session.limits,
         earlier,
         oom_events,
-        jsonl.read_rows(session.run_dir / "memory-watch.jsonl").rows
-        if (session.run_dir / "memory-watch.jsonl").exists()
-        else [],
+        jsonl.read_rows(memory_path),
+        resource_problems=resources,
+        sampler_interval_s=session.metadata.sampler_interval_s,
     )
+    telemetry_missing = any(event.get("type") == "harbor_start" for event in events) and (
+        not oom_path.exists() or not memory_path.exists()
+    )
+    boundaries = {row.get("type") for row in ledger.rows if row.get("trial") == facts.trial} & {
+        "open",
+        "close",
+    }
     deferred = (
         halt_reason == "deadline"
         and not (trial_dir / "result.json").exists()
-        and not any(
-            row.get("type") == "open" and row.get("trial") == facts.trial for row in ledger.rows
-        )
+        and "open" not in boundaries
     )
+    run_halted = halt_reason is not None and boundaries == {"open"} and result.valid
     event = TrialVerdict(
         t=now,
         trial=facts.trial,
         task=facts.task,
         arm=facts.arm,
-        valid=result.valid,
-        reason="deferred" if deferred else result.reason,
-        instrument=None if deferred else result.instrument,
+        valid=False if run_halted else result.valid,
+        reason="deferred" if deferred else "run_halted" if run_halted else result.reason,
+        instrument=None if deferred or run_halted else result.instrument,
         labels=list(result.labels),
-        measured=result.measured,
-        unmeasured_reason=result.unmeasured_reason,
+        measured=False if telemetry_missing else result.measured,
+        unmeasured_reason=("telemetry_missing" if telemetry_missing else result.unmeasured_reason),
         oom_source=result.oom_source,
     )
     session.event(event)
@@ -129,6 +142,43 @@ def judge_all_remaining(
         JsonlTail(session.run_dir / "resource-stats.jsonl"),
         halt_reason,
     )
+
+
+def amend_finished_measurements(session, now: float) -> None:
+    events = _read_events(session.run_dir)
+    verdicts = final_verdicts(events)
+    facts_by_trial = {}
+    for location in ("harbor-job", "set-aside-trials", "canary-job"):
+        for trial_dir in job_folder.trial_folders(session.run_dir / location):
+            if trial_dir.name not in verdicts:
+                continue
+            try:
+                facts = job_folder.read_trial(trial_dir)
+            except job_folder.HarborFolderError:
+                continue
+            facts_by_trial[facts.trial] = facts
+    oom_events = jsonl.read_rows(session.run_dir / "docker-oom-events.jsonl")
+    memory_events = jsonl.read_rows(session.run_dir / "memory-watch.jsonl")
+    resource_events = jsonl.read_rows(session.run_dir / "resource-stats.jsonl")
+    for trial, verdict_row in verdicts.items():
+        facts = facts_by_trial.get(trial)
+        if facts is None or verdict_row.get("measured") is not True:
+            continue
+        if verdict.trial_telemetry_damaged(facts, oom_events, memory_events, finished=True):
+            reason = "telemetry_damaged"
+        elif verdict.host_samples_damaged(
+            facts,
+            resource_events,
+            session.metadata.sampler_interval_s,
+            finished=True,
+        ):
+            reason = "host_samples_damaged"
+        else:
+            continue
+        session.event(TrialMeasurementAmended(now, trial, reason))
+        verdict_row["measured"] = False
+        verdict_row["unmeasured_reason"] = reason
+    session.event(TelemetryStopped(now))
 
 
 def _judge_all_remaining(
@@ -308,8 +358,8 @@ def watch(
         halt = run_health.should_halt(snapshot, session.limits, poll_s)
         if halt is not None:
             reason, detail = halt
-            process_group.stop_group(harbor_process, grace_s=process_group.HARBOR_STOP_GRACE_S)
             session.event(Halt(current_t, reason, detail))
+            process_group.stop_group(harbor_process, grace_s=process_group.HARBOR_STOP_GRACE_S)
             return WatchResult("halted", None, reason, detail)
         returncode = harbor_process.poll()
         if returncode is not None:

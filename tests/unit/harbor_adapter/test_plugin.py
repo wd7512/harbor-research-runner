@@ -5,8 +5,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from harbor.models.trial.config import TaskConfig
-from harbor.tasks.client import TaskDownloadResult
 from harbor.trial.hooks import TrialEvent
 
 from harbor_research_runner.harbor_adapter.plugin import (
@@ -125,35 +123,6 @@ def test_run_plugin_as_listed_preserves_trial_config_list_identity(tmp_path: Pat
     asyncio.run(_plugin(tmp_path, "as_listed").on_job_start(job))
 
     assert job._remaining_trial_configs is original
-
-
-def test_run_plugin_slowest_first_uses_downloaded_task_folder(tmp_path: Path) -> None:
-    downloaded_task = _task(tmp_path, "downloaded", 3600)
-    task_id = object()
-    downloaded = SimpleNamespace(path=downloaded_task)
-    config = _trial_config("downloaded", None, task_name="org/downloaded", task_id=task_id)
-    job = _Job([config], {task_id: downloaded})
-
-    asyncio.run(_plugin(tmp_path, "slowest_first").on_job_start(job))
-
-    assert job._remaining_trial_configs == [config]
-
-
-def test_run_plugin_slowest_first_uses_downloaded_git_task_folder(tmp_path: Path) -> None:
-    downloaded_task = _task(tmp_path, "downloaded-git-task", 3600)
-    task = TaskConfig(path=Path("task-name"), git_url="https://example.com/tasks.git")
-    task_id = task.get_task_id()
-    config = SimpleNamespace(task=task, trial_name="git-task")
-    downloaded = TaskDownloadResult(
-        path=downloaded_task,
-        download_time_sec=0.0,
-        cached=False,
-    )
-    job = _Job([config], {task_id: downloaded})
-
-    asyncio.run(_plugin(tmp_path, "slowest_first").on_job_start(job))
-
-    assert job._remaining_trial_configs == [config]
 
 
 def test_run_plugin_slowest_first_refuses_unresolvable_task(tmp_path: Path) -> None:

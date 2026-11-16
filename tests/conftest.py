@@ -133,3 +133,9 @@ def _no_sleep_process_or_network(request: pytest.FixtureRequest, monkeypatch: py
     monkeypatch.setattr(os, "fork", _banned("os.fork"))
     monkeypatch.setattr(socket.socket, "connect", _banned("socket connect"))
     monkeypatch.setattr(socket.socket, "bind", _banned("socket bind"))
+
+
+@pytest.fixture(autouse=True)
+def _home_in_tmp(request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    if tier_of(Path(str(request.node.path))) in ("unit", "integration"):
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
