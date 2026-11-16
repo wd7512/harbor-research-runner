@@ -227,3 +227,7 @@ runs/
 
 # mutmut working copy (scripts/mutation_pass.py)
 mutants/
+
+# Study outputs belong in the private study folder, never in this repo
+/evidence/
+/checks/
