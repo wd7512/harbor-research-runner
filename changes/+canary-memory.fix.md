@@ -1,1 +1,0 @@
-The canary task's memory budget is 1024 MB, up from 512 MB. With the watchdog able to see `docker exec` processes (#154), the OpenCode agent's canary on arm64 measured 491-726 MB of PSS (406-546 MB anonymous), so 512 MB killed a healthy canary.

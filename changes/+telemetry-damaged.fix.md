@@ -1,1 +1,0 @@
-Malformed Docker OOM-event and memory-watch rows now make overlapping trials unmeasured, and evidence verification re-derives the damage and malformed-row counts. Memory peaks are null when malformed memory-watch data overlaps the trial window.

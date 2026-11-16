@@ -1,1 +1,0 @@
-Unknown upstream prompt or completion token counts remain null in the proxy ledger. Trials with incomplete successful-request usage are marked unmeasured, and evidence documents totals as sums of known values.
