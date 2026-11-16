@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import stat
 from collections.abc import Callable
 from dataclasses import replace
@@ -108,6 +110,53 @@ def test_slots_status_marks_fully_valid_slots_complete() -> None:
     assert status.incomplete == []
 
 
+def test_slots_status_ignores_non_verdict_rows_with_trial_names() -> None:
+    status = slots_status(
+        [("task-a", "arm-a")],
+        1,
+        [
+            {"type": "launch", "trial": "trial-a", "task": "task-a", "arm": "arm-a"},
+            verdict("trial-b", "task-a", "arm-a", valid=True),
+        ],
+        [],
+        {"trial-a", "trial-b"},
+        Limits(max_set_asides_per_slot=2, verifier_timeout_multiplier=1.0),
+    )
+
+    assert status.complete == [("task-a", "arm-a")]
+    assert status.unmeasured_final == []
+
+
+def test_slots_status_allows_first_set_aside_at_a_cap_of_one() -> None:
+    status = slots_status(
+        [("task-a", "arm-a")],
+        1,
+        [verdict("trial-a", "task-a", "arm-a", valid=False)],
+        [],
+        {"trial-a"},
+        Limits(max_set_asides_per_slot=1, verifier_timeout_multiplier=1.0),
+    )
+
+    assert status.to_set_aside == ["trial-a"]
+    assert status.incomplete == [("task-a", "arm-a")]
+
+
+def test_slots_status_uses_each_remaining_set_aside_at_the_cap() -> None:
+    status = slots_status(
+        [("task-a", "arm-a")],
+        1,
+        [
+            verdict("trial-a", "task-a", "arm-a", valid=False),
+            verdict("trial-b", "task-a", "arm-a", valid=False),
+        ],
+        [],
+        {"trial-a", "trial-b"},
+        Limits(max_set_asides_per_slot=2, verifier_timeout_multiplier=1.0),
+    )
+
+    assert status.to_set_aside == ["trial-a", "trial-b"]
+
+
 def test_slots_status_sets_aside_invalid_trial_below_cap() -> None:
     status = slots_status(
         [("task-a", "arm-a")],
@@ -139,6 +188,19 @@ def test_slots_status_does_not_count_deferred_trial_against_set_aside_cap() -> N
                 unmeasured_reason=None,
             ).to_row()
         ],
+        [SetAside(1.0, "trial-old", "task-a", "arm-a", "deferred").to_row()],
+        {"trial-a"},
+        Limits(max_set_asides_per_slot=1, verifier_timeout_multiplier=1.0),
+    )
+
+    assert status.to_set_aside == ["trial-a"]
+
+
+def test_slots_status_does_not_charge_deferred_set_asides_to_later_invalid_trials() -> None:
+    status = slots_status(
+        [("task-a", "arm-a")],
+        1,
+        [verdict("trial-a", "task-a", "arm-a", valid=False)],
         [SetAside(1.0, "trial-old", "task-a", "arm-a", "deferred").to_row()],
         {"trial-a"},
         Limits(max_set_asides_per_slot=1, verifier_timeout_multiplier=1.0),
@@ -252,6 +314,21 @@ def test_run_folder_finish_clears_owner_write_bit(tmp_path: Path) -> None:
     make_read_only(run_dir)
 
     assert stat.S_IMODE(file_path.stat().st_mode) & stat.S_IWUSR == 0
+
+
+def test_run_folder_finish_clears_write_bits_from_nested_directories(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    deepest = run_dir / "harbor-job" / "trial-a" / "verifier"
+    deepest.mkdir(parents=True)
+    (deepest / "link").symlink_to(tmp_path / "outside")
+    (deepest / "reward.txt").write_text("1", encoding="utf-8")
+    directories = (run_dir, run_dir / "harbor-job", run_dir / "harbor-job" / "trial-a", deepest)
+    expected_modes = {path: stat.S_IMODE(path.stat().st_mode) & ~0o222 for path in directories}
+
+    make_read_only(run_dir)
+
+    assert {path: stat.S_IMODE(path.stat().st_mode) for path in directories} == expected_modes
+    assert stat.S_IMODE((deepest / "reward.txt").stat().st_mode) == 0o444
 
 
 def _chmod_refused_for(monkeypatch: pytest.MonkeyPatch, refused: Path) -> None:
@@ -504,6 +581,7 @@ def test_finish_returns_three_when_slot_stays_incomplete(tmp_path: Path) -> None
     finish = next(row for row in events if row["type"] == "finish")
     assert result == 3
     assert finish["exit_code"] == 3
+    assert finish["t"] == 1.0
 
 
 def test_nonzero_harbor_exit_with_every_trial_folder_finishes(tmp_path: Path) -> None:
@@ -672,6 +750,37 @@ def test_run_job_refuses_empty_resolved_tasks_before_starting_services(tmp_path:
     assert started == []
 
 
+def test_run_job_records_task_and_arm_metadata_and_detaches_its_log(
+    tmp_path: Path,
+) -> None:
+    machine_check = _machine_check_including(
+        [{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}], ["task-a"]
+    )
+
+    result, _started = _launch_with_machine_check(tmp_path, machine_check)
+
+    assert result.run_dir is not None
+    metadata = json.loads((result.run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+    assert metadata["task_set"] == {
+        "ref": "bench/tasks",
+        "tasks": [{"name": "task-a", "digest": "sha256:task"}],
+    }
+    assert metadata["arms"] == [
+        {
+            "label": "arm",
+            "harness": "fake",
+            "commit": "a" * 40,
+            "image_ref": "",
+            "image_digest": "",
+            "build_method": "",
+        }
+    ]
+    log_path = result.run_dir / "runner.log"
+    log_before = log_path.read_bytes()
+    logging.getLogger("harbor_research_runner.run.loop").warning("after run")
+    assert log_path.read_bytes() == log_before
+
+
 def _finished_session(
     tmp_path: Path, *, repetitions: int = 1, finished: bool = True
 ) -> tuple[Path, Path, MachineCheck]:
@@ -812,6 +921,75 @@ def test_resume_refuses_run_stopped_after_failed_canary_without_appending_events
     assert "hrr run <job file>" in log
 
 
+def test_resume_refuses_when_another_holder_owns_the_host_lock(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    holder = HostLock(tmp_path / "resume-host.lock")
+    holder.acquire()
+    before = (run_dir / "run-events.jsonl").read_bytes()
+    deps = _resume_dependencies(tmp_path, machine_check, lambda *_args: None, [], [])
+
+    try:
+        result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+    finally:
+        holder.release()
+
+    assert result == RunOutcome(1, None)
+    assert (run_dir / "run-events.jsonl").read_bytes() == before
+    assert not (run_dir / "runner.log").exists()
+
+
+def test_resume_repairs_a_set_aside_move_without_its_event(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    _record_main_start(run_dir)
+    (run_dir / "harbor-job").mkdir()
+    _trial_dir(run_dir, "trial-complete")
+    stranded = run_dir / "set-aside-trials" / "trial-old"
+    stranded.mkdir(parents=True)
+    fd = jsonl.open_for_append(run_dir / "run-events.jsonl")
+    try:
+        jsonl.append_row(fd, _trial_verdict("trial-old", valid=False).to_row())
+        jsonl.append_row(fd, _trial_verdict("trial-complete", valid=True).to_row())
+    finally:
+        import os
+
+        os.close(fd)
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        [],
+        [],
+    )
+    stopped_run = tmp_path / "stopped-run"
+
+    def stop_services(session) -> None:
+        stopped_run.write_text("none" if session is None else session.run_dir.name)
+
+    deps = replace(
+        deps,
+        start_services=lambda *_args: None,
+        stop_services=stop_services,
+    )
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    events = jsonl.read_rows(run_dir / "run-events.jsonl").rows
+    repaired = [row for row in events if row.get("type") == "set_aside"]
+    assert repaired == [
+        {
+            "type": "set_aside",
+            "t": 2.0,
+            "trial": "trial-old",
+            "task": "task-a",
+            "arm": "arm-a",
+            "reason": "upstream_errors",
+        }
+    ]
+    assert result.exit_code == 0
+    assert result.run_dir == run_dir
+    assert stopped_run.read_text(encoding="utf-8") == run_dir.name
+
+
 def test_resume_refuses_run_stopped_after_passed_canary_without_appending_events(
     tmp_path: Path,
 ) -> None:
@@ -855,6 +1033,84 @@ def test_resume_of_finished_run_returns_one_without_appending(tmp_path: Path) ->
     assert "already finished" in (run_dir / "runner.log").read_text(encoding="utf-8")
 
 
+def test_resume_finishes_when_every_slot_has_a_valid_trial(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    (run_dir / "harbor-job").mkdir()
+    _record_main_start(run_dir)
+    _trial_dir(run_dir, "trial-valid")
+    fd = jsonl.open_for_append(run_dir / "run-events.jsonl")
+    try:
+        jsonl.append_row(fd, _trial_verdict("trial-valid", valid=True).to_row())
+    finally:
+        import os
+
+        os.close(fd)
+    stopped: list[bool] = []
+    commands: list[list[str]] = []
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        commands,
+        stopped,
+    )
+    deps = replace(
+        deps,
+        start_services=lambda *_args: None,
+        stop_services=lambda _session: stopped.append(True),
+    )
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    events = jsonl.read_rows(run_dir / "run-events.jsonl").rows
+    finish = next(row for row in events if row["type"] == "finish")
+    assert result == RunOutcome(0, run_dir)
+    assert commands == []
+    assert stopped == [True]
+    assert finish["slots_complete"] == 1
+    assert finish["slots_incomplete"] == 0
+
+
+def test_resume_sets_aside_invalid_trial_before_next_pass(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    (run_dir / "harbor-job").mkdir()
+    _record_main_start(run_dir)
+    _trial_dir(run_dir, "trial-invalid")
+    fd = jsonl.open_for_append(run_dir / "run-events.jsonl")
+    try:
+        jsonl.append_row(fd, _trial_verdict("trial-invalid", valid=False).to_row())
+    finally:
+        import os
+
+        os.close(fd)
+    commands: list[list[str]] = []
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        commands,
+        [],
+    )
+    deps = replace(deps, start_services=lambda *_args: None)
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    events = jsonl.read_rows(run_dir / "run-events.jsonl").rows
+    set_aside = next(row for row in events if row["type"] == "set_aside")
+    assert result == RunOutcome(1, run_dir)
+    assert commands == []
+    assert not (run_dir / "harbor-job" / "trial-invalid").exists()
+    assert (run_dir / "set-aside-trials" / "trial-invalid").is_dir()
+    assert set_aside == {
+        "type": "set_aside",
+        "t": 2.0,
+        "trial": "trial-invalid",
+        "task": "task-a",
+        "arm": "arm-a",
+        "reason": "upstream_errors",
+    }
+
+
 def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_trials(
     tmp_path: Path,
 ) -> None:
@@ -878,8 +1134,10 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
 
     commands: list[list[str]] = []
     stopped: list[bool] = []
+    observed_deadlines: list[tuple[str | None, float | None]] = []
 
     def watch_fn(current, _process, _job_dir, _started):
+        observed_deadlines.append((current.stop_launching_at, current.stop_launching_at_epoch))
         new_trial = run_dir / "harbor-job" / "trial-resumed"
         new_trial.mkdir()
         (new_trial / "config.json").write_text("{}", encoding="utf-8")
@@ -892,7 +1150,15 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
     deps = replace(deps, tool=ToolIdentity("0.1.1", "b" * 40))
     metadata_before = (run_dir / "run-metadata.json").read_bytes()
 
-    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+    stop_launching_at = "2026-12-01T10:00:00+00:00"
+    result = resume_run(
+        run_dir.name,
+        run_dir.parent,
+        manifest_path,
+        {},
+        deps,
+        stop_launching_at=stop_launching_at,
+    )
 
     events = jsonl.read_rows(events_path).rows
     resume_event = next(row for row in events if row.get("type") == "resume")
@@ -907,6 +1173,14 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
     assert resume_event["tool_commit"] == "b" * 40
     assert (run_dir / "run-metadata.json").read_bytes() == metadata_before
     assert commands[0][3:5] == ["jobs", "resume"]
+    assert commands[0][-2:] == ["--pk", f"stop_launching_at={stop_launching_at}"]
+    assert len(observed_deadlines) == 1
+    assert observed_deadlines[0][0] == stop_launching_at
+    assert observed_deadlines[0][1] is not None
+    assert any(
+        row.get("type") == "stop_launching_at" and row.get("time") == stop_launching_at
+        for row in events
+    )
     assert start_index < finish_index
 
 
@@ -1001,7 +1275,10 @@ def _inputs(tmp_path: Path):
 
 
 def _create(
-    tmp_path: Path, check_results: list[CheckResult] | None = None, job: Job | None = None
+    tmp_path: Path,
+    check_results: list[CheckResult] | None = None,
+    job: Job | None = None,
+    host: dict | None = None,
 ) -> RunSession:
     default_job, card, manifest_path, machine_check = _inputs(tmp_path)
     job = job or default_job
@@ -1026,7 +1303,7 @@ def _create(
         machine_check=machine_check,
         now=lambda: 1794480000.123456,
         tool=ToolIdentity("0.1.0", "a" * 40),
-        host=_HOST,
+        host=_HOST if host is None else host,
     )
 
 
@@ -1038,10 +1315,43 @@ def test_create_writes_launch_checks_and_metadata(tmp_path: Path) -> None:
     ]
     metadata = json.loads((session.run_dir / "run-metadata.json").read_text())
     assert [event["type"] for event in events] == ["launch", "launch_check"]
+    assert events[0]["t"] == 1794480000.123456
+    assert events[0]["tool_version"] == "0.1.0"
     assert events[0]["tool_commit"] == "a" * 40
+    assert events[0]["pid"] == os.getpid()
     assert events[1]["name"] == "ready"
     assert metadata["host"] == _HOST
     assert metadata["tool_version"] == "0.1.0"
+    assert metadata["harbor_version"] == "0.23.0"
+    assert session.manifest_path == tmp_path / "harness-manifest.toml"
+
+
+def test_create_records_job_arm_task_and_proxy_metadata(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+
+    metadata = json.loads((session.run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+
+    assert metadata["run_id"] == session.run_dir.name
+    assert metadata["created_t"] == 1794480000.123456
+    assert metadata["job"]["path"] == str(session.job.path)
+    assert metadata["job"]["machine_check"] == str(session.job.machine_check)
+    assert metadata["job_file_sha256"] == hashlib.sha256(session.job.path.read_bytes()).hexdigest()
+    assert metadata["arms"] == [
+        {
+            "label": "arm-a",
+            "harness": "fake",
+            "commit": "a" * 40,
+            "image_ref": "",
+            "image_digest": "",
+            "build_method": "",
+        }
+    ]
+    assert metadata["task_set"] == {
+        "ref": "bench/tasks",
+        "tasks": [{"name": "task-a", "digest": "sha256:task"}],
+    }
+    assert metadata["proxy"] == {"host": "127.0.0.1", "port": 8766}
+    assert metadata["sampler_interval_s"] == 10.0
 
 
 def test_create_keeps_the_checked_machine_check_in_the_run_folder(tmp_path: Path) -> None:
@@ -1072,6 +1382,31 @@ def test_create_refuses_failed_checks_without_metadata(tmp_path: Path) -> None:
     assert not (run_dir / "run-metadata.json").exists()
 
 
+def test_create_refuses_a_host_profile_with_missing_fields(tmp_path: Path) -> None:
+    host = {key: value for key, value in _HOST.items() if key != "hostname"}
+
+    with pytest.raises(ValueError, match=r"missing=\['hostname'\], extra=\[\]"):
+        _create(tmp_path, host=host)
+
+    assert not (tmp_path / "runs").exists()
+
+
+def test_create_refuses_a_host_profile_with_extra_fields(tmp_path: Path) -> None:
+    host = {**_HOST, "unexpected": "value"}
+
+    with pytest.raises(ValueError, match=r"missing=\[\], extra=\['unexpected'\]"):
+        _create(tmp_path, host=host)
+
+    assert not (tmp_path / "runs").exists()
+
+
+def test_create_leaves_stop_deadline_fields_unset(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+
+    assert session.stop_launching_at is None
+    assert session.stop_launching_at_epoch is None
+
+
 def test_load_does_not_change_metadata_or_append_event(tmp_path: Path) -> None:
     session = _create(tmp_path)
     metadata_path = session.run_dir / "run-metadata.json"
@@ -1083,6 +1418,26 @@ def test_load_does_not_change_metadata_or_append_event(tmp_path: Path) -> None:
     assert loaded.run_dir == session.run_dir
     assert metadata_path.read_bytes() == before
     assert (session.run_dir / "run-events.jsonl").read_bytes() == events_before
+
+
+def test_load_preserves_the_job_file_paths(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+
+    loaded = RunSession.load(session.run_dir, {"MODEL_KEY": "configured"})
+
+    assert loaded.job.path == session.job.path
+    assert loaded.job.machine_check == session.job.machine_check
+    assert loaded.tool == ToolIdentity("0.1.0", "a" * 40)
+
+
+def test_stopping_an_unstarted_session_is_safe(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+
+    session.stop_services()
+
+    assert session.proxy_alive() is False
+    assert session.oom_watch_alive() is False
+    assert session.memory_watch_alive() is False
 
 
 def test_resume_keeps_absolute_task_path_from_stored_job(tmp_path: Path) -> None:
