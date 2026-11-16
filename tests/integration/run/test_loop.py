@@ -16,8 +16,8 @@ import yaml
 from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
 from harbor_research_runner.harbor_adapter.task_files import task_content_hash
-from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records import jsonl
+from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
 from harbor_research_runner.records.run_events import HarborStart, TrialVerdict
 from harbor_research_runner.run.checks import CheckDeps
