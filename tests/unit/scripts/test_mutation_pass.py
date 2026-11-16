@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
-from scripts.mutation_pass import pytest_runtest_logreport
+from scripts.mutation_pass import mutation_environment, pytest_runtest_logreport
 
 
 def test_wall_budget_breach_marks_mutant_unverified(monkeypatch, tmp_path):
@@ -32,3 +34,13 @@ def test_wall_budget_breach_marks_mutant_unverified(monkeypatch, tmp_path):
     markers = list((tmp_path / ".agent" / "mutation-timeouts").glob("*.json"))
     assert len(markers) == 1
     assert markers[0].read_text(encoding="utf-8") == f'"{mutant}"'
+
+
+def test_mutated_sources_exist_before_mutmut_starts(tmp_path):
+    environment = mutation_environment(tmp_path, {"PYTHONPATH": "elsewhere"})
+
+    mutated_sources = tmp_path / "mutants" / "src"
+    assert mutated_sources.is_dir()
+    assert environment["PYTHONPATH"].split(os.pathsep) == [str(mutated_sources), "elsewhere"]
+    assert environment["UV_NO_SYNC"] == "1"
+    assert environment["UV_PROJECT_ENVIRONMENT"] == str(tmp_path / ".venv")
