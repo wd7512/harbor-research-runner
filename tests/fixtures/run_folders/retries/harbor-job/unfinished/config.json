@@ -1,0 +1,12 @@
+{
+  "agent": {
+    "kwargs": {
+      "arm_label": "alpha",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "task": {
+    "name": "task/a"
+  },
+  "trial_name": "unfinished"
+}

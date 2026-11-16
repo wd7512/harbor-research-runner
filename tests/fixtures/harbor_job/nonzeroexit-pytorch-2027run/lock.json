@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "task": {
+    "name": "terminal-bench/pytorch-model-cli",
+    "type": "package",
+    "digest": "sha256:6f11544dcc81a380dc4611902961f5520259c462d9fceb413419d66ab9a96c79",
+    "source": "terminal-bench/terminal-bench-2-1"
+  },
+  "timeout_multiplier": 1.0
+}

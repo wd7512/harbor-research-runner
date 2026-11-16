@@ -1,0 +1,846 @@
+{
+  "schema_version": "…",
+  "session_id": "…",
+  "agent": {
+    "name": "…",
+    "version": "…",
+    "model_name": "…"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "source": "…",
+      "message": "…"
+    },
+    {
+      "step_id": 2,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "read",
+          "arguments": {
+            "filePath": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 7908,
+        "completion_tokens": 81,
+        "cached_tokens": 7025
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 3,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 8023,
+        "completion_tokens": 129,
+        "cached_tokens": 7537
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 4,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…",
+            "timeout": 180000
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 8191,
+        "completion_tokens": 138,
+        "cached_tokens": 7537
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 5,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…",
+            "timeout": 600000
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 8454,
+        "completion_tokens": 140,
+        "cached_tokens": 8049
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 6,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 9086,
+        "completion_tokens": 132,
+        "cached_tokens": 8049
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 7,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 10023,
+        "completion_tokens": 523,
+        "cached_tokens": 9073
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 8,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 11396,
+        "completion_tokens": 853,
+        "cached_tokens": 9585
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 9,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 12938,
+        "completion_tokens": 2772,
+        "cached_tokens": 11121
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 10,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 18228,
+        "completion_tokens": 3195,
+        "cached_tokens": 12657
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 11,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 18866,
+        "completion_tokens": 3194,
+        "cached_tokens": 17777
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 12,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 19445,
+        "completion_tokens": 3548,
+        "cached_tokens": 18801
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 13,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 21392,
+        "completion_tokens": 3923,
+        "cached_tokens": 19313
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 14,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 21574,
+        "completion_tokens": 2677,
+        "cached_tokens": 21361
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 15,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "todowrite",
+          "arguments": {
+            "todos": [
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              }
+            ]
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 22133,
+        "completion_tokens": 2877,
+        "cached_tokens": 21361
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 16,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 22557,
+        "completion_tokens": 2727,
+        "cached_tokens": 21873
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 17,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 22792,
+        "completion_tokens": 1655,
+        "cached_tokens": 22385
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 18,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 23462,
+        "completion_tokens": 1123,
+        "cached_tokens": 22385
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 19,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 24119,
+        "completion_tokens": 1244,
+        "cached_tokens": 23409
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 20,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 26599,
+        "completion_tokens": 2510,
+        "cached_tokens": 23921
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 21,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 27475,
+        "completion_tokens": 1718,
+        "cached_tokens": 26481
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 22,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 27932,
+        "completion_tokens": 3996,
+        "cached_tokens": 26993
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 23,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "todowrite",
+          "arguments": {
+            "todos": [
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              }
+            ]
+          }
+        },
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          },
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 29286,
+        "completion_tokens": 1384,
+        "cached_tokens": 27505
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 24,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "bash",
+          "arguments": {
+            "command": "…"
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 30119,
+        "completion_tokens": 1149,
+        "cached_tokens": 29041
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 25,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "tool_calls": [
+        {
+          "tool_call_id": "…",
+          "function_name": "todowrite",
+          "arguments": {
+            "todos": [
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              },
+              {
+                "content": "…",
+                "priority": "…",
+                "status": "…"
+              }
+            ]
+          }
+        }
+      ],
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "…",
+            "content": "…"
+          }
+        ]
+      },
+      "metrics": {
+        "prompt_tokens": 30509,
+        "completion_tokens": 870,
+        "cached_tokens": 30065
+      },
+      "llm_call_count": 1
+    },
+    {
+      "step_id": 26,
+      "timestamp": "…",
+      "source": "…",
+      "model_name": "…",
+      "message": "…",
+      "metrics": {
+        "prompt_tokens": 30929,
+        "completion_tokens": 1203,
+        "cached_tokens": 30065
+      },
+      "llm_call_count": 1
+    }
+  ],
+  "final_metrics": {
+    "total_prompt_tokens": 493436,
+    "total_completion_tokens": 43761,
+    "total_cached_tokens": 463369,
+    "total_steps": 26
+  }
+}

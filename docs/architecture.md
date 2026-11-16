@@ -6,21 +6,22 @@ Names used throughout: the package is `harbor_research_runner`, the command is `
 
 ## 1. Modules
 
-A study flows top to bottom through six steps. Five helper modules are shared.
+A study flows top to bottom through six steps. Six helper modules are shared.
 
 | Kind | Module | Owns | May import (ours) |
 |---|---|---|---|
 | helper | `records` | The format of every file we write, the proxy control messages, the limits record | nothing |
+| helper | `local_http` | Loopback HTTP server base: backlog, no reverse DNS lookup on bind | nothing |
 | helper | `job_config` | The job file and model cards | nothing |
 | helper | `trial_validity` | The verdict for one trial; the halt rules for a run | `records` |
 | helper | `statistics` | Pass rates, intervals, paired comparison, completeness table | `records` |
-| helper | `harbor_adapter` | Harbor command lines, reading Harbor's job folder, the set-aside move, the Harbor plugin | `records`, `job_config` |
-| helper | `docker_host` | Docker cleanup, resource check, resource sampler | `records` |
-| step | `harness` | Commit manifest, image build, extraction, `PinnedHarness`, `OpenCodeAgent`, the fake harness | `records` |
-| step | `run` | Launch checks, canary, machine check, the run loop | `job_config`, `records`, `trial_validity`, `harbor_adapter`, `docker_host`, `harness` |
-| step | `model_proxy` | The relay between harness and model; writes the proxy ledger | `records` |
+| helper | `harbor_adapter` | Harbor command lines, reading Harbor's job folder, the set-aside move, the Harbor plugin | `records`, `job_config`, `trial_validity`, `docker_host` |
+| helper | `docker_host` | Host lock, Docker image operations and cleanup, resource check, resource sampler, container memory readers and kill | `records` |
+| step | `harness` | Commit manifest, image build, extraction, `PinnedHarness`, `OpenCodeAgent`, the fake harness | `records`, `docker_host` |
+| step | `run` | Launch checks, canary, machine check, the run loop, memory watcher | `job_config`, `records`, `trial_validity`, `harbor_adapter`, `docker_host`, `harness` |
+| step | `model_proxy` | The relay between harness and model; writes the proxy ledger | `records`, `local_http` |
 | step | `evidence_bundle` | Run folder to evidence bundle, secret scan, report | `records`, `statistics`, `harbor_adapter` |
-| step | `results_explorer` | Read-only comparison server and page | `records`, `statistics` |
+| step | `results_explorer` | Read-only comparison server and page | `records`, `statistics`, `local_http` |
 | wiring | `cli` | Commands | any module |
 
 Rules, enforced by `tests/unit/test_import_rule.py`:
@@ -28,7 +29,7 @@ Rules, enforced by `tests/unit/test_import_rule.py`:
 1. A step never imports another step. The one exception is `run` importing `harness`.
 2. A helper never imports a step.
 3. `records` and `job_config` import nothing of ours.
-4. Harbor's Python package is imported in exactly three files: `harness/agents.py`, `harness/fake.py` and `harbor_adapter/plugin.py`.
+4. Harbor's Python package is imported in exactly four files: `harness/agents.py`, `harness/fake.py`, `harbor_adapter/plugin.py` and `harbor_adapter/task_files.py`.
 5. `run` starts `model_proxy` as a child process (`python -m harbor_research_runner.model_proxy --config FILE`). It never imports it.
 
 Source layout:
@@ -36,20 +37,21 @@ Source layout:
 ```
 src/harbor_research_runner/
   cli.py
+  local_http.py
   records/          jsonl.py  proxy_ledger.py  proxy_control.py  run_metadata.py
-                    run_events.py  resource_stats.py  trials.py  limits.py  machine_check.py
+                    run_events.py  resource_stats.py  trials.py  limits.py  machine_check.py  manifest.py
   job_config/       job_file.py  model_cards.py  model_cards/<provider>/<model>.json
   trial_validity/   verdict.py  upstream.py  phase_table.py  run_health.py
   statistics/       rates.py  paired.py  completeness.py  cost.py
   harbor_adapter/   job_folder.py  commands.py  set_aside.py  plugin.py
-  docker_host/      cleanup.py  resources.py  sampler.py
+  docker_host/      host_lock.py  cleanup.py  resources.py  sampler.py
   harness/          manifest.py  extract.py  agents.py  opencode_eras.py  fake.py  fake_script.py
                     build.py  build/
   model_proxy/      __main__.py  server.py  ledger.py  relay.py  status.py  usage.py
                     chars.py  timing.py  pacing.py  keys.py  control.py  bodies.py  adapters/
   run/              checks.py  canary.py  machine_check.py  loop.py  watch.py  process_group.py
                     canary_task/say-hello/
-  evidence_bundle/  build.py  trials.py  manifest.py  secret_scan.py  report.py
+  evidence_bundle/  build.py  trials.py  secret_scan.py  report.py
   results_explorer/ loader.py  server.py  page.html
 tests/  unit/  integration/  e2e/  live/  fixtures/  support/
 ```
@@ -60,12 +62,13 @@ Unit tests mirror the source path: `src/harbor_research_runner/records/jsonl.py`
 
 | Command | Does | Exit codes |
 |---|---|---|
-| `hrr build-harness --harness opencode --commit SHA` | Builds the image for one commit and adds it to the commit manifest | 0 ok, 1 failed |
-| `hrr check-machine --job JOB.yaml --out FILE` | Runs the oracle check for the job's task set on this machine | 0 ok, 1 failed |
-| `hrr run JOB.yaml` / `hrr run --resume RUN_ID` | Launches or resumes a run | 0 complete, 1 refused to start or internal error, 2 halted and resumable, 3 finished incomplete |
-| `hrr build-evidence RUN_ID` | Builds the evidence bundle from a run folder | 0 ok, 1 failed, 4 secret found (nothing written) |
+| `hrr build-harness --harness opencode --commit SHA [--arch amd64|arm64]` | Builds the image for one commit and adds it to the commit manifest; `--arch` defaults to the Docker host architecture | 0 ok, 1 failed |
+| `hrr check-machine --job JOB.yaml --out FILE` | Runs the oracle check for the job's task set on this machine, then removes and rechecks residue from its Harbor compose projects | 0 ok, 1 failed |
+| `hrr run JOB.yaml [--stop-launching-at TIME]` / `hrr run --resume RUN_ID [--stop-launching-at TIME]` | Launches or resumes a run | 0 complete, 1 refused to start or internal error, 2 halted and resumable, 3 finished incomplete |
+| `hrr build-evidence RUN_ID` | Builds the evidence bundle from a run folder | 0 ok, 1 failed, 4 secret found (nothing written), 5 evidence invariants failed (bundle written) |
+| `hrr verify-evidence BUNDLE_DIR` | Checks an evidence bundle's internal invariants | 0 clean, 1 problems found, 2 unreadable bundle |
 | `hrr explore [PATH ...]` | Starts the results explorer over evidence bundles | 0 |
-| `hrr clean-docker [--apply]` | Lists or removes leftover trial containers and networks | 0 clean, 1 residue found (without `--apply`) |
+| `hrr clean-docker [--apply]` | Lists or removes leftover trial containers and networks | 0 clean, 1 residue found (without `--apply`) or refused because the host lock is held or a process names a live run folder (`--apply`) |
 
 Exit code 0 from `hrr run` means: every planned slot has its full number of valid, measured trials.
 
@@ -74,6 +77,7 @@ Exit code 0 from `hrr run` means: every planned slot has its full number of vali
 ```
 runs/<run-id>/                         evidence/<run-id>/
   run-metadata.json   written once       manifest.json
+  machine-check.json  written once
   run-events.jsonl                       run-metadata.json
   runner.log                             run-events.jsonl
   harbor-job-config.yaml                 trials.jsonl
@@ -82,6 +86,8 @@ runs/<run-id>/                         evidence/<run-id>/
   set-aside-trials/<trial>/              report.md
   proxy-config.json
   proxy-ledger.jsonl
+  docker-oom-events.jsonl
+  memory-watch.jsonl
   proxy.log
   resource-stats.jsonl
   request-bodies/<trial>.jsonl[.gz]
@@ -100,12 +106,15 @@ All `.jsonl` files hold one JSON object per line, UTF-8, keys sorted, no trailin
 ```python
 def append_row(fd: int, row: dict) -> None        # one os.write of a full line
 def read_rows(path: Path) -> ReadResult            # rows, plus problems
+def bad_line_time_spans(result, timestamp_field="t", scale=1.0, *, finished: bool)
 @dataclass(frozen=True)
 class ReadResult:
     rows: list[dict]
-    torn_last_line: bool          # final line unparseable: tolerated, reported
+    torn_last_line: bool          # final line incomplete or unparseable, reported
     bad_lines: list[int]          # 1-based numbers of unparseable non-final lines
 ```
+
+`bad_line_time_spans` receives `finished` explicitly. Live judgement passes `False`, treating a torn final line as a write in progress. After telemetry writers stop, `True` adds a damage span from the latest parsed timestamp (or negative infinity when there are no parsed rows) to positive infinity.
 
 ### 4.1 `proxy-ledger.jsonl`
 
@@ -120,6 +129,8 @@ Every row has `seq` (integer, starts at 1, +1 per row, never reused across proxy
 | `refused` | A request arrives for a trial that is closed or was never opened | `trial`, `reason` (`closed` or `not_open`) |
 | `close` | On `POST /control/close` | `trial` |
 
+`prompt_tokens` and `completion_tokens` are null when the upstream omits the corresponding counter, reports null, or provides a non-numeric value. A wholly absent usage object records null for all token counters. An `ok` request with either prompt or completion tokens unknown makes its trial unmeasured with reason `usage_incomplete`.
+
 `upstream_status` is one of:
 
 | Value | Meaning | Counts against the trial |
@@ -129,14 +140,19 @@ Every row has `seq` (integer, starts at 1, +1 per row, never reused across proxy
 | `quota_exhausted` | The provider says the account quota is used up | yes |
 | `server_error` | 5xx reached the harness | yes |
 | `stalled` | The proxy cut the request: no first chunk within `first_chunk_max_s`, a gap over `inter_chunk_gap_max_s`, or total over `request_latency_max_s` | yes |
-| `truncated` | The stream ended without its terminator | yes |
+| `truncated` | The stream ended without a terminal-OK event | yes |
 | `transport_error` | Connection to the upstream failed | yes |
-| `client_error` | Other 4xx: the harness sent a bad request | no |
+| `upstream_auth` | 401, 402 or 403 from the upstream: the proxy's own key, billing or account was refused | yes |
+| `client_error` | Other 4xx (except 401, 402, 403 and 429): the harness sent a bad request | no |
 | `client_disconnect` | The harness closed the connection first | no |
 
 A failover that the proxy absorbed (a later key or endpoint answered) is an `ok` row with `failovers > 0`.
 
+A Responses body, including the response carried by a `response.completed` stream event, must have a terminal-OK `status` (`completed` or `incomplete`) and an `output` list. Missing or invalid fields are decode failures and are recorded as `truncated`. In identity streams, only `response.completed` or `response.incomplete` events with a status in that set terminate successfully; `response.failed` and other statuses count as unsuccessful termination.
+
 Write policy: flush after every row; `fsync` after every `close` row and at least every 5 seconds, from a background thread. If a write or flush fails, the proxy stops serving (every later request gets HTTP 503 with body `proxy ledger unavailable`) and exits with code 70.
+
+Each relayed response owns its upstream connection. Closing the response, or closing its chunk iterator, releases that connection even before iteration begins. The proxy server calls `close()` from a `finally`.
 
 ### 4.2 Proxy control (`records/proxy_control.py`)
 
@@ -150,13 +166,15 @@ The harness reaches the model at `http://<host>:<port>/trial/<trial>/v1/...`. `<
 
 A request for a trial that is not open gets HTTP 410 with body `{"error": {"message": "trial closed", "type": "trial_closed"}}`. The words `rate limit`, `too many requests`, `quota`, `usage limit` and `credits` must not appear in any proxy-generated error body (Harbor matches those in agent output).
 
-`proxy-config.json` fields: `host`, `port`, `ledger_path`, `bodies_dir` (or null), `model` (the model card, embedded), `limits` (section 4.6), `restart_cooldown_s`.
+`proxy-config.json` fields: `host`, `port`, `ledger_path`, `bodies_dir` (or null), `model` (the model card, embedded), `limits` (section 4.6), `restart_cooldown_s`, `session_id`. The runner derives `session_id` as `uuid.uuid5(uuid.NAMESPACE_URL, "hrr-run:" + run_folder_name).hex`, so it is stable across resume and proxy restart.
 
 ### 4.3 `run-metadata.json`
 
-Written once, atomically (write temp file, `fsync`, rename), before anything else starts. Never rewritten.
+Written once, atomically, before anything else starts: write a temporary file in the same folder, `fsync` it, then link it into place without replacing any existing destination. An existing destination, including a dangling symlink, raises `FileExistsError` and is left unchanged. Never rewritten.
 
-Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`.
+Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds).
+
+`tool_version` is the installed `harbor-research-runner` package version. `tool_commit` is the 40-hex commit of the checkout containing the package, with `+dirty` appended when tracked files have changes; it is `none` when Git is unavailable or the package is not in a Git checkout.
 
 ### 4.4 `run-events.jsonl`
 
@@ -168,21 +186,27 @@ Each row has `t` and `type`:
 | `launch_check` | `name`, `ok`, `detail` |
 | `harbor_start` | `pass` (0 for `harbor run`, then 1, 2, ...), `command`, `job` (`canary` or `main`) |
 | `harbor_exit` | `pass`, `returncode`, `job` |
-| `trial_verdict` | `trial`, `task`, `arm`, `valid` (bool), `reason`, `instrument`, `labels` (list), `measured` (bool), `unmeasured_reason` |
+| `stop_launching_at` | `pass`, `time` (timezone-aware ISO-8601 timestamp) |
+| `trial_verdict` | `trial`, `task`, `arm`, `valid` (bool), `reason`, `instrument`, `labels` (list), `measured` (bool), `unmeasured_reason`, `oom_source` (`kernel`, `watchdog`, or null) |
+| `trial_measurement_amended` | `trial`, `unmeasured_reason` (`telemetry_damaged` or `host_samples_damaged`) |
 | `set_aside` | `trial`, `task`, `arm`, `reason` |
 | `halt` | `reason`, `detail` |
 | `resume` | `tool_version`, `tool_commit`, `pid` |
 | `finish` | `exit_code`, `slots_complete`, `slots_incomplete` |
 
-A `trial_verdict` is written exactly once per trial, by `run`, when the trial has finished or is found unfinished at a halt or resume. Nothing else decides validity.
+A `trial_verdict` is written exactly once per trial, by `run`, when the trial has finished or is found unfinished at a halt or resume. Nothing else decides validity. The event includes `oom_source` (`kernel`, `watchdog`, or null); if both OOM records fall within the trial's agent/verifier window, the earlier record determines the source. A watchdog `kill` or `kill_failed` row for the trial counts as a watchdog breach at any location.
+
+After the telemetry writers stop on a halt or normal finish, `run` re-reads the telemetry files and appends one `trial_measurement_amended` event for each still-measured trial whose finished-file damage span overlaps its window. The `trial_verdict` remains unchanged; evidence readers apply amendments in order, with the first amendment taking precedence.
 
 ### 4.5 `resource-stats.jsonl`
 
-One row every 10 seconds, `type` = `sample`: `t`, `mem_available_mb`, `swap_used_mb`, `disk_free_gb`, `load1`, `trial_containers`, `docker_ok` (bool).
+One row every 10 seconds, `type` = `sample`: `t`, `mem_available_mb`, `swapped_out_pages`, `disk_free_gb`, `load1`, `trial_containers`, `docker_ok` (bool). `swapped_out_pages` is the increase in the cumulative swap-out counter since the previous sample; the first sample and a counter reset record 0.
+
+`memory-watch.jsonl` records every 2 seconds, per main or canary trial container. A sample row has `type: "sample"`, `t`, `trial`, `location` (`harbor-job` or `canary-job`), `container`, `used_mb`, `limit_mb` (integer or null), and `reader` (`docker_stats`, `proc_pss` or `proc_rss`). On the first over-limit sample for a container, the watcher adds an `over_limit` row with the sample fields, `processes` (up to 20 largest processes, each with `pid`, `cmd`, and `mb`), or `processes: null` and `processes_error` when listing fails. It then records `kill` on a successful watchdog kill or `kill_failed` with the exception text (up to 200 characters) when the kill fails. Further samples continue to be recorded without repeating the breach rows. The always-on memory watcher uses Docker stats when the host memory cap is `kernel` and process PSS with RSS fallback otherwise; it kills a container only when `used_mb > limit_mb`. A null task memory limit is sampled without a kill. Canary trials use the bundled canary task's memory limit.
 
 ### 4.5a Machine check file (`records/machine_check.py`)
 
-Written by `hrr check-machine`, read by the launch checks. Fields: `created_t`, `tool_version`, `harbor_version`, `host_fingerprint`, `task_source` (the job file's `tasks` block without `include`/`exclude`), `concurrency`, `tasks` (list of `name`, `digest`, `oracle_reward`, `agent_s`, `verifier_s`, `verifier_budget_s`, `nothing_reward` or null), `included` (task names with `oracle_reward == 1.0`, and `nothing_reward == 0.0` where measured), `verifier_timeout_multiplier`.
+Written by `hrr check-machine`, read by the launch checks. A task's `name` everywhere in the runner is Harbor's task id (`TaskConfig.get_task_id().get_name()`, read once in `harbor_adapter/task_files.py`): the folder for local and git tasks, `org/name` for package tasks. It is the name Harbor's `task_names` filter matches; `[task].name` and `result.json` `task_name` are never used for identity. Fields: `created_t`, `tool_version`, `harbor_version`, `host_fingerprint`, `task_source` (the job file's `tasks` block without `include`/`exclude`), `concurrency`, `tasks` (list of `name`, `digest`, `arch` (`amd64` or `arm64`, the local task image architecture recorded at check time), `memory_mb` (integer Docker memory limit in MiB, or null when the task declares none), `oracle_reward`, `agent_s`, `agent_budget_s`, `verifier_s`, `verifier_budget_s`, `nothing_reward` or null, `setup_error` (the exception type and the first sentence of its message for an environment setup failure, otherwise null; the full message stays in the trial's `result.json`)), `included` (task names with `oracle_reward == 1.0`, and `nothing_reward == 0.0` where measured), `verifier_timeout_multiplier`. Setup-failed tasks have null `oracle_reward`, `agent_s`, and `verifier_s` and are excluded. The canonical host profile includes `container_network` (`bridge` when Docker has a bridge network, otherwise `host`); `bridge` is omitted from the fingerprint so machine checks from before this field was added stay valid. Older machine checks may omit `arch`; launch checks then use the Docker host architecture for those tasks. A missing or null `memory_mb` fails the `memory_fits` launch check closed.
 
 ### 4.6 Limits (`records/limits.py`)
 
@@ -190,21 +214,22 @@ One record, declared in the job file under `limits`, copied into `run-metadata.j
 
 Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_output_rate_min` [2.0 tokens/s], `first_chunk_max_s` [180], `inter_chunk_gap_max_s` [180], `request_latency_max_s` [1200], `halt_after_consecutive_invalid` [5], `zero_billed_window_s` [900].
 
-Host: `min_spare_memory_mb` [2048], `max_swap_used_mb` [512], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0].
+Host: `min_spare_memory_mb` [2048], `memory_reserve_mb` [4096], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` field. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
 
-Run: `max_set_asides_per_slot` [2 x repetitions], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
+Run: `max_set_asides_per_slot` [2 x repetitions; `deferred` and `run_halted` set-asides do not count toward the cap], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
 
 ### 4.7 `trials.jsonl` (evidence bundle)
 
-One row per trial, including set-aside trials and canary trials. Sorted by `task`, `arm`, `agent_started_t`, `trial`.
+One row per judged trial, including set-aside trials and canary trials. Unjudged trial folders in an unfinished run are skipped and counted in `report.md`; a finished run with any unjudged trial folder is refused. Sorted by `task`, `arm`, `agent_started_t`, `trial`.
 
 Identity: `trial`, `task`, `arm`, `harness`, `commit`, `model`, `location` (`harbor-job`, `set-aside-trials` or `canary-job`), `is_first_attempt`, `is_final`.
 
 Outcome: `reward` (number or null), `is_pass` (`reward == 1.0`), `harbor_exception` (Harbor's label, verbatim, or null), `agent_exit_nonzero` (bool).
+Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null; also null when a malformed memory-watch line overlaps the trial window), `memory_limit_mb` (the task's declared limit, or null), and `oom_source` (`kernel`, `watchdog`, or null).
 
 Phases: `environment_setup_started_t`, `environment_setup_finished_t`, `agent_setup_started_t`, `agent_setup_finished_t`, `agent_started_t`, `agent_finished_t`, `verifier_started_t`, `verifier_finished_t`.
 
-Validity: `valid`, `reason`, `instrument`, `labels`, `measured`, `unmeasured_reason` (copied from the `trial_verdict` event).
+Validity: `valid`, `reason`, `instrument`, `labels`, `measured`, `unmeasured_reason`, `oom_source` (copied from the `trial_verdict` event).
 
 Usage: `requests`, `error_requests`, `refused_requests`, `prompt_tokens`, `completion_tokens`, `cached_read_tokens`, `prompt_chars`, `completion_chars`, `cost_usd_estimate`, `harbor_reported_tokens`.
 
@@ -238,9 +263,11 @@ limits: {}                                # overrides for section 4.6
 
 Unknown keys are an error. Arm labels match `[a-z0-9][a-z0-9.-]*` and are unique. Every arm uses the one `model`.
 
+An arm with `harness: fake` may carry one opaque `fake` mapping. The fake harness validates its `requests`, `exit_code`, `sleep_s`, `ignore_stop`, `keep_requesting_s`, `detached_heartbeat`, `detached_requesting_s`, `continue_on_error` and `solve` fields; the job parser keeps the mapping opaque. Every other harness rejects `fake`.
+
 A slot is a (task, arm) pair. Each slot needs `repetitions` valid, measured trials.
 
-A model card (`job_config/model_cards/<provider>/<model>.json`) has: `id`, `upstream_model` (the exact identifier sent upstream and expected back), `api` (`chat` or `responses`), `endpoints` (list of base URLs), `key_env` (list of environment variable names), `tokens_per_minute`, `pricing` (`input`, `output`, `cached_read` per million tokens), `variants`, `withdrawn` (bool, with `reason`). Secrets are read from the environment only and are never written to any file.
+A model card (`job_config/model_cards/<provider>/<model>.json`) has: `id`, `upstream_model` (the exact identifier sent upstream and expected back), `api` (`chat` or `responses`), `endpoints` (list of base URLs), `key_env` (list of environment variable names), `tokens_per_minute`, `pricing` (`input`, `output`, `cached_read` per million tokens), `variants` (nonempty string ids mapped to nonempty settings dictionaries), `default_variant` (optional, null by default; when set, a string naming a declared variant), `withdrawn` (bool, with `reason`), and an optional `request` object with `drop_message_fields` (list of non-empty strings), `max_tokens_cap` (positive integer or null), `headers` (header names mapped to fixed non-empty string values), and `session_header` (a non-empty header name or null). `headers` cannot set `authorization`, `content-type`, or the declared session header, case-insensitively. The proxy applies request shaping once, after `build_request` and before pacing; upstream headers are assembled from the card and route key. A session header uses the stable per-run `session_id` from the proxy config, and the proxy refuses to start if it is absent. Secrets are read from the environment only and are never written to any file.
 
 ## 6. Trial validity
 
@@ -253,6 +280,7 @@ class TrialFacts:                 # built by harbor_adapter.job_folder
     has_result: bool
     reward: float | None
     exception_type: str | None
+    exception_at: float | None                 # exception_info.occurred_at, Unix seconds
     phase_started: dict[str, float | None]    # environment_setup, agent_setup, agent, verifier
     phase_finished: dict[str, float | None]
     harbor_reported_tokens: int
@@ -268,10 +296,12 @@ class Verdict:
 
 def judge_trial(facts: TrialFacts, ledger_rows: list[dict], ledger_problems: ReadResult,
                 resource_rows: list[dict], limits: Limits,
-                earlier_set_aside_reasons: tuple[str, ...]) -> Verdict
+                earlier_set_aside_reasons: tuple[str, ...], *,
+                resource_problems: ReadResult | None = None,
+                sampler_interval_s: float = 10.0) -> Verdict
 ```
 
-The failed phase is the last phase with a non-null start time, when `exception_type` is not null.
+When `exception_type` is not null, the failed phase is the last phase (in order environment_setup, agent_setup, agent, verifier) whose start time is non-null and no later than `exception_at`. If `exception_at` is null, use the last phase with a non-null start time.
 
 Rules, first match wins:
 
@@ -285,13 +315,13 @@ Rules, first match wins:
 | 6 | any resource sample between `agent` start and `verifier` finish (or `agent` finish if the verifier never started) breaches a host limit, or has `docker_ok` false | invalid, `host_fault`, host |
 | 7 | the trial's last `request_end` (highest `seq`) has a status that counts against the trial | invalid, `upstream_terminal_error`, proxy |
 | 8 | counted errors > max(`tolerated_errors`, floor(`tolerated_error_fraction` x N)), where N is the trial's `request_end` rows excluding `client_disconnect` | invalid, `upstream_errors`, proxy |
-| 9 | the trial has at least one `ok` row with `completion_tokens > 0`, and total completion tokens / total `duration_s` over `ok` rows < `trial_output_rate_min` | invalid, `upstream_slow`, proxy |
+| 9 | every `ok` row has a known completion token count, the trial has at least one `ok` row with `completion_tokens > 0`, and total completion tokens / total `duration_s` over `ok` rows < `trial_output_rate_min` | invalid, `upstream_slow`, proxy |
 | 10 | `reward` is null and the failed phase is not `verifier` | invalid, `no_verdict`, harbor |
 | 11 | otherwise | valid |
 
 Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`).
 
-`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); or the trial made requests but has no `open` row (`no_open_row`). An unmeasured trial is not re-run; it stops the run from exiting 0.
+`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`); any `ok` request has a null prompt or completion token count (`usage_incomplete`); host samples are malformed or have a gap greater than three times `sampler_interval_s` overlapping the agent-to-verifier window (`host_samples_damaged`); a malformed Docker OOM-event or memory-watch line overlaps that window (`telemetry_damaged`); or a required telemetry file is missing after `harbor_start` (`telemetry_missing`). For malformed rows, the interval between parsed rows on either side is attributed to it; a missing side extends the interval to infinity. While live, a torn final line is ignored as a write in progress; after writers stop, it is damage from the latest parsed row to positive infinity. A host breach still invalidates a damaged trial. An unmeasured trial is not re-run; it stops the run from exiting 0.
 
 Validity never reads `reward`, except rule 10, which reads only whether a reward exists.
 
@@ -302,27 +332,32 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 | Reason | Condition |
 |---|---|
 | `quota_exhausted` | any `request_end` row with that status since the last `harbor_start` |
-| `upstream_invalid_streak` | the last `halt_after_consecutive_invalid` trial verdicts all have instrument `proxy` and `valid` false |
+| `upstream_invalid_streak` | the last `halt_after_consecutive_invalid` trial verdicts written since the latest `resume` event all have instrument `proxy` and `valid` false |
 | `zero_billed_window` | at least one trial is open and no `ok` `request_end` row for `zero_billed_window_s` |
 | `proxy_dead` | the proxy process has exited |
+| `oom_watch_dead` | the Docker OOM watcher process has exited |
 | `sampler_dead` | no resource sample for 40 seconds |
-| `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit |
+| `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit; swap breaches only when pages were swapped out since the previous sample above `max_swapped_out_pages` |
 | `inactive` | no ledger row and no new `result.json` for longer than the largest task agent budget x Harbor's timeout multiplier + the largest verifier budget x `verifier_timeout_multiplier` + `inactivity_margin_s` |
+| `deadline` | the timezone-aware launch deadline plus two watch poll intervals has passed and no trial opened in this pass remains unjudged |
+| `harbor_exit` | Harbor exited on its own, nothing is left to set aside, and planned trials have no trial folder; the detail names Harbor's exit code. The run stays resumable. A non-zero exit code alone is not a halt: Harbor exits non-zero in normal flows |
 
 Harbor's exception labels are never an input to a halt rule.
 
 ## 7. The run loop
 
-1. Launch checks (`run/checks.py`): each writes a `launch_check` event; any failure exits 1 before anything is spent. Checks: the job file parses; every arm's commit is in the manifest, is not withdrawn, and its image digest matches the local image; the model card exists and is not withdrawn; every key variable is set; Docker has no residue; host resources are above the limits; the machine check file exists and matches (task set, Harbor version, machine fingerprint, concurrency not above the checked value); every requested task is in the machine check's included list; no other run is live on this machine.
-2. Write `run-metadata.json`. Start the resource sampler. Write `proxy-config.json`, start the proxy, wait for `/control/health`.
-3. Canary: one Harbor job in `canary-job/` running the bundled task `canary/say-hello` once per arm against the real model. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
+1. Launch checks (`run/checks.py`): each writes a `launch_check` event; any failure exits 1 before anything is spent. Checks: the job file parses; every arm's commit is in the manifest, is not withdrawn, and its image digest matches the local image; the model card exists and is not withdrawn; every key variable is set; Docker has no residue; host resources are above the limits; concurrent task memory plus `memory_reserve_mb` fits Docker's total memory (`memory_fits`); the machine check file exists and matches (task set, Harbor version, machine fingerprint, concurrency not above the checked value); every requested task is in the machine check's included list; nothing listens on the proxy port (`proxy_port_free`, bound with `SO_REUSEADDR` as the proxy binds); on resume, no process names the run folder (`run_folder_not_live`, with matching pids in the detail); this process holds the host lock (D22). A fresh run has no existing run folder. A refused launch still gets a run folder holding its `launch` and `launch_check` events.
+2. Copy the job's machine-check file to `machine-check.json` (write-once, from the bytes whose sha256 goes into the metadata), then write `run-metadata.json`. Start the resource sampler, Docker OOM watcher, and memory watcher. Write `proxy-config.json`, start the proxy, wait for `/control/health`. The sampler, OOM watcher, memory watcher, proxy and every Harbor guard get the read end of a lifeline pipe whose write end only the runner holds. On EOF (the runner died, including SIGKILL), the services stop through their own SIGTERM path and each guard sends SIGTERM to Harbor, waits the Harbor stop grace, then SIGKILLs its process group if needed. Each guard starts Harbor in its own process group, so the runner's existing group signals still reach Harbor.
+3. Canary: one Harbor job in `canary-job/` running the bundled task `say-hello` (Harbor selects a local task by its folder name; it records the trial under `[task].name`, `canary/say-hello`) once per arm against the real model. The task lives at `run/canary_task/say-hello/`: its instruction creates `/app/hello.txt` containing `hello`, its environment is `python:3.12-slim` pinned by digest, its agent timeout is 120 s and its verifier timeout is 60 s, and its verifier accepts exactly `hello` or `hello\n`. Pass means every canary trial is valid with reward 1.0 and has at least one `ok` request whose `served_model` equals the card's `upstream_model`. A failure exits 1.
 4. Pass 0: `harbor run` with the generated `harbor-job-config.yaml`.
-5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules.
-6. On halt: stop Harbor's process group, stop the proxy and sampler, judge every remaining trial folder, write `halt`, exit 2.
-7. When Harbor exits on its own: judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
-8. Finish: stop the proxy and sampler, write `finish`, make the run folder read-only, exit 0 or 3.
+5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules. The memory watcher samples each running `harbor-job` and `canary-job` trial container every 2 seconds and kills it when measured use exceeds its task memory limit. Watchdog kill rows only label main-job verdicts.
+6. On halt: write the `halt` reason, stop Harbor's process group, record Harbor's exit code, judge every remaining trial folder, stop the proxy and sampler, and exit 2. A remaining trial with a ledger `open` row and no `close` row whose verdict would otherwise be valid is judged invalid with reason `run_halted` and no instrument; an already invalid verdict stays unchanged. On a `deadline` halt, a remaining trial with no `result.json` and no ledger `open` row (Harbor made its folder but never started it) is judged invalid with reason `deferred` and no instrument. Neither reason counts toward `max_set_asides_per_slot` when set aside on resume.
+7. When Harbor exits on its own, record its exit code before stopping any remaining service processes; do not signal Harbor's process group. Judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
+8. Finish: stop the telemetry writers, amend any newly unmeasured verdicts using the finished-file rule, write `finish`, make the run folder read-only, exit 0 or 3.
 
-Resume (`hrr run --resume RUN_ID`): repeat the launch checks, start the sampler and the proxy (same host and port, `restart: true`, then wait `restart_cooldown_s`), write `resume`, judge and set aside, then continue from step 7. The canary is not repeated.
+Resume (`hrr run --resume RUN_ID`): acquire the host lock, read the run metadata, repeat the launch checks, start the sampler and the proxy (same host and port, `restart: true`, then wait `restart_cooldown_s`), write `resume`, judge and set aside, then continue from step 7. A refused resume appends nothing. The canary is not repeated. A run with no main-pass `harbor_start` is refused: it never started its main work, so it is restarted as a new run.
+
+`hrr clean-docker --apply` treats a run as live while its runner pid is alive or any process command line names the run folder. It refuses cleanup and logs the run id while a run is live.
 
 Set-aside (`harbor_adapter.set_aside`): move `harbor-job/<trial>/` to `set-aside-trials/<trial>/` with one `os.rename`, then write the `set_aside` event. Before any move, an existing `set-aside-trials/<trial>/` with no matching event gets its event written (the earlier run crashed between the two). The step can be repeated safely.
 
@@ -331,18 +366,23 @@ Harbor commands (`harbor_adapter.commands`):
 ```
 uv run harbor run --config <run>/harbor-job-config.yaml --jobs-dir <run> --job-name harbor-job \
    --plugin harbor_research_runner.harbor_adapter.plugin:RunPlugin --pk proxy_url=http://<host>:<port> \
-   --pk limits_file=<run>/proxy-config.json
+   --pk limits_file=<run>/proxy-config.json --pk task_order=<as_listed|slowest_first> \
+   [--pk stop_launching_at=<timezone-aware ISO-8601 time>]
 uv run harbor jobs resume -p <run>/harbor-job -f hrr-erases-nothing \
-   --plugin harbor_research_runner.harbor_adapter.plugin:RunPlugin --pk proxy_url=... --pk limits_file=...
+   --plugin harbor_research_runner.harbor_adapter.plugin:RunPlugin --pk proxy_url=... --pk limits_file=... \
+   --pk task_order=<as_listed|slowest_first> [--pk stop_launching_at=<timezone-aware ISO-8601 time>]
 ```
 
 `-f hrr-erases-nothing` matches no real exception type; it disables Harbor's default of deleting `CancelledError` trials on resume. The generated job config and the proxy address never change between passes or across resumes.
 
+Machine checks run `uv run harbor run --config <check-dir>/<config-name> --jobs-dir <check-dir> --job-name <job-name>` without a plugin or proxy settings. Their job config uses one attempt, the job concurrency, zero retries, verifier multiplier 1.0, and `agents: [{name: oracle}]` or `agents: [{name: nop}]` with the task-source block. Machine-check verifier budgets are read with `job_folder.task_budgets` using task TOML text from `harbor_adapter.task_files.task_tomls`.
+
 The Harbor plugin (`harbor_adapter/plugin.py`), on Harbor's trial events:
 
 - `START`: wait until spare memory is above the limit and `launch_min_interval_s` has passed since the last launch (ported from OLD's launch gate).
-- `AGENT_START`: `POST /control/open` with the trial name, task name and the arm label from the agent's settings.
+- `AGENT_START`: when `stop_launching_at` is set and its time has passed, wait indefinitely before opening the proxy trial; otherwise `POST /control/open` with the trial name, task name and the arm label from the agent's settings.
 - `AGENT_END`: `POST /control/close`. This fires when the agent phase ends for any reason, including Harbor's timeout, and before the verifier starts.
+- `on_job_start`: when `task_order` is `slowest_first`, stably sort Harbor's remaining trial configs by descending agent budget from each task's `task.toml`; ties keep Harbor's order.
 
 ## 8. Harness
 
@@ -370,9 +410,17 @@ class OpenCodeAgent(
 class FakeHarnessAgent(PinnedHarness, BaseInstalledAgent): ...  # harness/fake.py, test fixture
 ```
 
+The rendered config pins sampling to `temperature` 0.6 and `top_p` 0.95. `variants` is the model's declared variant ladder: 1.x emits it as a map keyed by variant id, 2.x as a list of `{id, settings}`; the `default_variant` settings are folded into the model's base `options` or `settings`. A selected or default variant absent from the supplied map is refused before any config is written.
+
 `PinnedHarness` implements `install` (verify the image digest against the manifest, extract the binary, upload it, probe) and `run` (write config files, execute the run command, on cancellation run the stop script before re-raising). The proxy base URL given to the harness is `http://<container_host>:<port>/trial/<trial>/v1`, where `<trial>` is Harbor's `session_id` with the suffix `__agent` removed.
 
 Agent settings (the `kwargs` in Harbor's job config) are produced by `harness.agents.agent_settings(arm, proxy, manifest_path)` and parsed by the agent class. No other module reads or writes them.
+
+The eight settings keys are `arm_label`, `harness`, `commit`, `manifest_path`, `container_host`, `proxy_port`, `variant` and `model_card`. For `harness: fake` only, `agent_settings` accepts a ninth `fake` key; every other harness rejects it. `OpenCodeAgent` declares an options model that adds those keys to Harbor's OpenCode kwargs, so Harbor's preflight and the agent constructor validate the same dictionary; an unknown, missing or mistyped key is refused before a trial is queued, and the local serializer and parser stay authoritative. Config registration, skill registration and the agent command run with a fixed environment — `OPENCODE_FAKE_VCS=git`, `XDG_DATA_HOME=/logs/agent/opencode/xdg-data` and `XDG_STATE_HOME=/logs/agent/opencode/xdg-state` — and no provider credentials are forwarded into the task container.
+
+`FakeHarnessAgent` (`harness/fake.py`) is a test fixture with no image and no manifest: `harness_files` returns a fresh folder holding only `fake_script.py`, `config_files` is empty, `probe` returns fixed facts, `process_pattern` is `fake_script.py`, and `run_command` runs `python3 /usr/local/fake_script.py` with the arm's behaviour. Its typed `fake` behaviour defaults to `requests` 1, `exit_code` 0, `sleep_s` 0, `ignore_stop` false, `keep_requesting_s` 0, `detached_heartbeat` null, `detached_requesting_s` 0, `continue_on_error` false and `solve` true; counts and times are nonnegative, and unknown behaviour fields are refused by its options model. The script sends streaming chat requests with a fixed synthetic model ID, may sleep, may write `/app/hello.txt`, may keep requesting while ignoring SIGTERM, and may start a detached process in its own session that appends a timestamp to an absolute container path every 0.5 seconds or requests the same base URL every 0.5 seconds for `detached_requesting_s` seconds while ignoring failures. With `continue_on_error`, a failed scripted request is logged and the request loop continues. HTTP failures exit nonzero unless `continue_on_error` is true, except that the keep-requesting loop continues through refusals until its monotonic duration elapses. Only fixed fixture data is sent; the script takes no API key.
+
+The default `PinnedHarness.harness_files` loads the commit manifest immediately before verifying the arm and extracting the binary. Construction does not read the manifest, so a harness that overrides `harness_files` needs none; ordinary arms still verify before installation.
 
 The commit manifest (`harness-manifest.toml`, path given in the job folder or by `--manifest`):
 
@@ -380,6 +428,7 @@ The commit manifest (`harness-manifest.toml`, path given in the job folder or by
 [opencode."<40-hex commit>"]
 version = "1.19.3"            # informational
 withdrawn = false
+withdrawn_reason = ""        # optional; shown when a launch is refused
 [opencode."<40-hex commit>".images.amd64]
 ref = "hrr/opencode:<12-hex>-amd64"
 digest = "sha256:..."
@@ -389,13 +438,20 @@ built_at = "2026-12-01"
 
 ## 9. Evidence bundle
 
-`hrr build-evidence RUN_ID` is a pure function of the run folder: the same run folder gives byte-identical files. It can run on an unfinished run folder and then covers the trials judged so far.
+`hrr build-evidence RUN_ID` is a pure function of the run folder: the same run folder gives byte-identical files. It can run on an unfinished run folder and then covers the trials judged so far; `report.md` lists `Trials not yet judged` in its completeness table. A run with a `finish` event must have a `trial_verdict` for every trial folder in `harbor-job/`, `set-aside-trials/` and `canary-job/`; otherwise evidence building refuses and names the trials.
 
 - `trials.jsonl`: section 4.7.
 - `proxy-requests.jsonl.gz`: one row per request, `request_start` and `request_end` merged on `request_id`, sorted by `seq` of the start row; gzip with `mtime=0`.
-- `resource-stats.jsonl.gz`, `run-events.jsonl`, `run-metadata.json`: copied.
-- `report.md`: generated from `statistics`.
+- Rows with invalid types in request accounting fields are excluded from trial usage totals and merged request rows.
+- `resource-stats.jsonl.gz`, `docker-oom-events.jsonl`, `run-events.jsonl`, `run-metadata.json`: copied.
+- `memory-watch.jsonl`: copied.
+- All three telemetry files are required when `run-events.jsonl` has a `harbor_start`; verification reports `telemetry_present` once per missing file. Before `harbor_start`, absent telemetry files are allowed and are omitted from the bundle.
+- `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged` and counts malformed resource, Docker OOM-event and memory-watch rows when those telemetry files are present. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
+- The post-run amendment pass writes `telemetry_stopped` after any `trial_measurement_amended` events, even when there are no amendments. `verify-evidence` and evidence building use the finished-file rule for torn final lines only when the last `telemetry_stopped` follows the last `harbor_start`; otherwise they use the live rule. Amendments always apply when comparing trial rows with verdicts.
+- `verify-evidence` re-derives the malformed telemetry counts from the copied files and compares trial rows with the verdicts after amendments.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
+
+The results explorer verifies every bundle file against `manifest.json` before loading the bundle. A missing or altered file refuses the bundle and is reported with the manifest problems.
 
 The secret scan runs before anything is written: it searches every output for the literal values of the model card's `key_env` variables and for the patterns ported from OLD's `runtime/secrets.py`. A hit exits 4 and writes nothing.
 
@@ -404,3 +460,9 @@ The secret scan runs before anything is written: it searches every output for th
 Three views of every rate, always reported together: `first_attempt` (trials with `is_first_attempt`; an invalid first attempt counts as it scored, a missing reward counts as a failure), `final` (trials with `is_final`), `final_excluding_reruns` (slots in which no trial was set aside).
 
 Per arm: passes, trials, pass rate, Wilson 95% interval. Per task and arm: passes out of valid trials. Paired comparison of two arms: per-task difference in mean reward, its mean over tasks, and a bootstrap 95% interval over tasks (10,000 resamples, seed 0). Completeness table: slots planned, complete, incomplete; trials valid, set aside by reason, unmeasured; tokens spent on set-aside trials.
+
+`statistics.usage_medians(rows, arm)` returns the median requests, prompt and completion tokens, prompt and completion characters, turns, and estimated cost over valid trials for the arm; fields without values return `None`. `statistics.label_counts(rows, arm)` returns verdict-label counts for the arm.
+
+`MachineCheck.excluded_tasks()` returns the sorted task names listed in `tasks` but absent from `included`.
+
+The pure era renderer in harness/opencode_eras.py exposes `config_files(facts, model, proxy_base_url, variant, *, variants=None, default_variant=None)`. The PinnedHarness instance methods keep the abstract signatures above and supply the embedded model card’s variant settings when calling this renderer.

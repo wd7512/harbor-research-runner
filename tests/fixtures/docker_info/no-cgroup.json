@@ -1,0 +1,13 @@
+{
+  "Architecture": "aarch64",
+  "CgroupDriver": "cgroupfs",
+  "CgroupVersion": "",
+  "ID": "REDACTED-ID",
+  "MemTotal": 16745164800,
+  "MemoryLimit": false,
+  "NCPU": 15,
+  "Name": "docker-no-cgroup",
+  "SecurityOptions": ["name=seccomp,profile=builtin"],
+  "ServerVersion": "29.8.0",
+  "SwapLimit": false
+}

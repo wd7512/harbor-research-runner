@@ -1,0 +1,42 @@
+{
+  "task_name": "terminal-bench/break-filter-js-from-html",
+  "trial_name": "break-filter-js-from-html__U9LxaSP",
+  "task_id": {
+    "org": "terminal-bench",
+    "name": "break-filter-js-from-html",
+    "ref": "sha256:678008d1a4fd1e6e1b9b3cc9a327219fe4b410a31eafc52e9099bbf947eea600"
+  },
+  "source": "terminal-bench/terminal-bench-2-1",
+  "task_checksum": "3b08ac8e870b13a6161363e4152bceaa9c945eb7c3c35cc33c8c5bc19f2a1873",
+  "agent_result": {
+    "n_input_tokens": 38263,
+    "n_output_tokens": 25382,
+    "n_cache_tokens": 33220,
+    "cost_usd": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 0.0
+    }
+  },
+  "exception_info": null,
+  "started_at": "2026-11-11T17:57:18.911426Z",
+  "finished_at": "2026-11-11T18:07:41.989822Z",
+  "environment_setup": {
+    "started_at": "2026-11-11T18:04:38.835377Z",
+    "finished_at": "2026-11-11T18:04:47.546047Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-11T18:04:47.546403Z",
+    "finished_at": "2026-11-11T18:05:31.187639Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-11-11T18:05:31.188491Z",
+    "finished_at": "2026-11-11T18:07:06.091277Z"
+  },
+  "verifier": {
+    "started_at": "2026-11-11T18:07:08.567015Z",
+    "finished_at": "2026-11-11T18:07:32.642986Z"
+  },
+  "step_results": null
+}

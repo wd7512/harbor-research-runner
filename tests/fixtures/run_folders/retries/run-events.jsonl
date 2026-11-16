@@ -1,0 +1,4 @@
+{"arm":"alpha","instrument":null,"labels":[],"measured":true,"reason":null,"t":10,"task":"task/a","trial":"a-alpha-trial","type":"trial_verdict","unmeasured_reason":null,"valid":true}
+{"arm":"beta","instrument":null,"labels":[],"measured":true,"reason":null,"t":11,"task":"task/b","trial":"b-beta-trial","type":"trial_verdict","unmeasured_reason":null,"valid":true}
+{"arm":"alpha","instrument":"proxy","labels":[],"measured":true,"reason":"upstream_terminal_error","t":2,"task":"task/a","trial":"a-alpha-old","type":"trial_verdict","unmeasured_reason":null,"valid":false}
+{"arm":"alpha","instrument":null,"labels":[],"measured":false,"reason":null,"t":5,"task":"task/a","trial":"unmeasured","type":"trial_verdict","unmeasured_reason":"ledger_damaged","valid":true}

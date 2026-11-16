@@ -15,10 +15,12 @@ Contract tests are end-to-end tests marked `@pytest.mark.contract`. Each pins on
 
 The gate is `uv run gate` (format, lint, types, unit and integration tests, lock file). End-to-end is `uv run gate --only e2e`. Never pipe a gate through `tail` or `head`; quote its exit code.
 
+CI runs e2e in five file-list shards: lifecycle, lifecycle resume, stop-launching-at, Harbor contract with machine-check and service-lifetime, and upstream/refusals with how-to commands. E2e shards are skipped for pull requests that change only `docs/**`, `changes/**`, root `*.md` files, or `roadmap.*`; the gate matrix still runs.
+
 ## Rules for every test
 
 1. **Assert on outputs.** Call the public function, or run the command, and check the return value or the files on disk. Do not assert on which internal functions were called.
-2. **Fakes exist at three boundaries only:** the upstream (`tests/support/fake_upstream.py`), the harness (`harness/fake.py`) and the clock (pass a `now` function or a timestamp argument). Do not patch, mock or monkeypatch any `harbor_research_runner` module.
+2. **Fakes exist at three boundaries only:** the upstream (`tests/support/fake_upstream.py`), the harness (`harness/fake.py`) and the clock (pass a `now` function or a timestamp argument). Do not patch, mock or monkeypatch any `harbor_research_runner` module. One narrow exception is allowed for the unchanged process-group lifecycle port: a test may stub `os.killpg` directly and pass a fake `time.sleep` clock, provided it calls the public function, uses a plain process-like value, starts no process and signals no real PID. A test may also pass an explicit callable external-command input when the public API named by a brief accepts one, as the manifest API does.
 3. **Unit tests do not sleep, start processes, or open sockets.** If a test needs one of those, it is an integration test.
 4. **Use real shapes.** A test of a parser uses a real sample of what it parses, from `tests/fixtures/`. A test of a rule uses rows in the exact record format from `architecture.md`.
 5. **Red first.** Write the test, run it, and see it fail for the reason you expect, before writing the code. Put the failing output in your report.
@@ -34,7 +36,7 @@ The gate is `uv run gate` (format, lint, types, unit and integration tests, lock
 4. Do not add a dependency, a command-line flag, an environment variable, a file format field or a module that the brief does not name.
 5. Do not touch a module the brief does not name. If your change seems to need it, stop and report.
 6. No comments in code unless the brief asks. Docstrings on public functions are fine. Log with `logging`; never `print` in the package.
-7. Add one changelog fragment: `changes/<step number>.<feature|fix|doc|misc>.md`, one or two sentences.
+7. Add one changelog fragment, one or two sentences: `changes/<issue or PR number>.<feature|fix|doc|misc>.md`, rendered as a link to that number. A second fragment of the same number and type takes a counter, `changes/<number>.<type>.<n>.md`. A change with no issue uses `changes/+<slug>.<type>.md`, rendered without a reference.
 8. Finish by running the brief's acceptance command and `uv run gate`, unpiped. Report both exit codes and the red-first output.
 
 ## How to write a test at each tier

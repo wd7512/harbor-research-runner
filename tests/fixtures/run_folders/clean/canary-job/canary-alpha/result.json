@@ -1,0 +1,26 @@
+{
+  "agent_execution": {
+    "finished_at": "2026-01-01T00:00:35Z",
+    "started_at": "2026-01-01T00:00:30Z"
+  },
+  "agent_setup": {
+    "finished_at": "2026-01-01T00:00:30Z",
+    "started_at": "2026-01-01T00:00:29Z"
+  },
+  "environment_setup": {
+    "finished_at": "2026-01-01T00:00:29Z",
+    "started_at": "2026-01-01T00:00:28Z"
+  },
+  "exception_info": null,
+  "task_name": "canary/say-hello",
+  "trial_name": "canary-alpha",
+  "verifier": {
+    "finished_at": "2026-01-01T00:00:36Z",
+    "started_at": "2026-01-01T00:00:35Z"
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 1.0
+    }
+  }
+}

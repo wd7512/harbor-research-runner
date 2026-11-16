@@ -1,0 +1,43 @@
+{
+  "id": "opencodego/muse-spark-1.3-contributor",
+  "upstream_model": "muse-spark-1.3-contributor",
+  "api": "responses",
+  "endpoints": [
+    "https://opencode.ai/zen/go/v1/responses"
+  ],
+  "key_env": [
+    "OPENCODE_GO_API_KEY"
+  ],
+  "tokens_per_minute": null,
+  "pricing": {
+    "input": 0.1,
+    "output": 0.2,
+    "cached_read": 0.002
+  },
+  "variants": {
+    "minimal": {
+      "reasoningEffort": "minimal"
+    },
+    "low": {
+      "reasoningEffort": "low"
+    },
+    "medium": {
+      "reasoningEffort": "medium"
+    },
+    "high": {
+      "reasoningEffort": "high"
+    },
+    "xhigh": {
+      "reasoningEffort": "xhigh"
+    }
+  },
+  "default_variant": null,
+  "withdrawn": false,
+  "reason": null,
+  "request": {
+    "session_header": "x-opencode-session",
+    "headers": {
+      "User-Agent": "OpenAI/Python 1.x"
+    }
+  }
+}

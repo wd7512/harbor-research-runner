@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "task": {
+    "name": "terminal-bench/break-filter-js-from-html",
+    "type": "package",
+    "digest": "sha256:678008d1a4fd1e6e1b9b3cc9a327219fe4b410a31eafc52e9099bbf947eea600",
+    "source": "terminal-bench/terminal-bench-2-1"
+  },
+  "timeout_multiplier": 1.0
+}

@@ -1,0 +1,42 @@
+{
+  "task_name": "terminal-bench/bn-fit-modify",
+  "trial_name": "bn-fit-modify__xzmPm77",
+  "task_id": {
+    "org": "terminal-bench",
+    "name": "bn-fit-modify",
+    "ref": "sha256:b5f9644970c17ad9ddb46b7266f7bcd87c761d77d7e6f55d7cfe7284d5ff66e9"
+  },
+  "source": "terminal-bench/terminal-bench-2-1",
+  "task_checksum": "de87a0c253c75b7dfbc68a2fcf120d5bd77b1df632c7469e3d0a3b74321d26c2",
+  "agent_result": {
+    "n_input_tokens": 493436,
+    "n_output_tokens": 43761,
+    "n_cache_tokens": 463369,
+    "cost_usd": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 1.0
+    }
+  },
+  "exception_info": null,
+  "started_at": "2026-11-11T17:57:18.128033Z",
+  "finished_at": "2026-11-11T18:05:32.424557Z",
+  "environment_setup": {
+    "started_at": "2026-11-11T17:57:50.777553Z",
+    "finished_at": "2026-11-11T17:57:57.904751Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-11T17:57:57.904886Z",
+    "finished_at": "2026-11-11T17:58:19.464789Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-11-11T17:58:19.465206Z",
+    "finished_at": "2026-11-11T18:04:11.351112Z"
+  },
+  "verifier": {
+    "started_at": "2026-11-11T18:04:13.953693Z",
+    "finished_at": "2026-11-11T18:05:18.934902Z"
+  },
+  "step_results": null
+}

@@ -1,0 +1,1 @@
+{"concurrency":1,"created_t":1.0,"harbor_version":"0.23.0","host_fingerprint":"fixture-host","included":["task/a","task/b","task/c"],"task_source":{},"tasks":[{"digest":"a","name":"task/a"},{"digest":"b","name":"task/b"},{"digest":"c","name":"task/c"},{"digest":"d","name":"task/d"},{"digest":"e","name":"task/e"}],"tool_version":"0","verifier_timeout_multiplier":1.0}

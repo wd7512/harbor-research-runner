@@ -1,0 +1,1 @@
+Evidence verification no longer refuses a bundle when only the Docker OOM-events file is damaged over a trial: memory peaks are checked against memory-watch damage alone, the same rule the builder uses.
