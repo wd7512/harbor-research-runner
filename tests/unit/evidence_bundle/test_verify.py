@@ -1623,3 +1623,63 @@ def test_one_malformed_identity_jsonl_file_is_rejected(filename: str, tmp_path: 
 
     with pytest.raises(ValueError, match="bundle contains malformed JSONL records"):
         verify(bundle)
+
+
+def test_damaged_oom_events_keep_the_memory_watch_peak(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-clean"
+    shutil.copytree(FIXTURES / "clean", run_dir)
+    metadata_path = run_dir / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["machine_check_sha256"] = hashlib.sha256(
+        (run_dir / "machine-check.json").read_bytes()
+    ).hexdigest()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    rows = build_trial_rows(run_dir)
+    trial = next(row for row in rows if row.location == "harbor-job")
+    span_start, span_end = trial.agent_started_t, trial.agent_finished_t
+    sample = {
+        "type": "sample",
+        "trial": trial.trial,
+        "location": "harbor-job",
+        "container": "container-a",
+        "limit_mb": 128,
+        "reader": "docker_stats",
+    }
+    _write_rows(
+        run_dir / "memory-watch.jsonl",
+        [
+            dict(sample, t=span_start + 1, used_mb=40.0),
+            dict(sample, t=span_end - 1, used_mb=42.5),
+        ],
+    )
+    (run_dir / "docker-oom-events.jsonl").write_text(
+        json.dumps({"timeNano": int(span_start * 1e9)})
+        + "\n{bad\n"
+        + json.dumps({"timeNano": int(span_end * 1e9)})
+        + "\n",
+        encoding="utf-8",
+    )
+    damaged = set()
+    for row in rows:
+        end = (
+            row.verifier_finished_t if row.verifier_started_t is not None else row.agent_finished_t
+        )
+        if (
+            row.agent_started_t is not None
+            and end is not None
+            and span_start <= end
+            and span_end >= row.agent_started_t
+        ):
+            damaged.add(row.trial)
+    events_path = run_dir / "run-events.jsonl"
+    events = _rows(events_path)
+    for event in events:
+        if event.get("type") == "trial_verdict" and event.get("trial") in damaged:
+            event.update(measured=False, unmeasured_reason="telemetry_damaged")
+    _write_rows(events_path, events)
+    bundle = tmp_path / "bundle"
+
+    assert build(run_dir, bundle, {}) == 0
+    built = next(row for row in _rows(bundle / "trials.jsonl") if row["trial"] == trial.trial)
+    assert built["peak_memory_mb"] == 42.5
+    assert built["unmeasured_reason"] == "telemetry_damaged"
