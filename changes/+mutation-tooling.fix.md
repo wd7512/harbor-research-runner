@@ -1,1 +1,0 @@
-The mutation wrapper treats CPU and wall-time budget breaches as unverified and runs tests without syncing or reinstalling the project, with mutated sources first on `PYTHONPATH`. Mutmut now lives in a separate dependency group so standard installs avoid its platform-specific dependency.

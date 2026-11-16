@@ -70,6 +70,8 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 - Record Docker container OOM events throughout each run and label affected trials as valid `oom_killed` outcomes. Include the event stream in evidence bundles and halt runs if the watcher exits.
 - The machine check records each task container's memory limit, and run launch checks now refuse concurrency plans that exceed Docker memory after the configured reserve.
 - `hrr build-harness` accepts `--arch amd64` or `--arch arm64` to build for the task images' architecture. When omitted, it uses the Docker host architecture.
+- Add `hrr verify-evidence` to check evidence bundle invariants independently. Evidence builds now run the checker after writing and return exit code 5 when the written bundle is inconsistent.
+- Add the `opencodego/gpt-6-luna` model card (Responses API; per million tokens: input $0.10, cached input $0.01, output $0.50).
 
 ### Fixed
 
@@ -115,12 +117,33 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 - The results explorer no longer does a reverse DNS lookup of its bind address at startup, which stalled about 35 s on hosts with slow reverse DNS; it now shares one loopback server base with the model proxy.
 - The trial pane now prints a Harbor view command for the entered run folder and identifies the job and trial to open.
 - Trials blocked at the launch deadline are recorded and reported as deferred. Deferred set-asides do not consume a slot's invalid set-aside budget.
+- After telemetry writers stop, torn final lines can mark overlapping trials unmeasured through a recorded amendment. [#171](https://github.com/wd7512/harbor-research-runner/issues/171)
+- Evidence bundles skip and count unjudged trial folders in unfinished runs, and refuse finished runs with unjudged trials. Malformed proxy-ledger accounting rows are excluded from trial totals and merged requests.
+- Host disk-space checks now measure the filesystem holding the run directory for both launch checks and ongoing sampling. The sampler requires an explicit disk path, derived from its run-local output file.
+- Malformed Docker OOM-event and memory-watch rows now make overlapping trials unmeasured, and evidence verification re-derives the damage and malformed-row counts. Memory peaks are null when malformed memory-watch data overlaps the trial window.
+- Missing telemetry files are omitted from evidence bundles and reported as invariant problems after Harbor starts. Trials judged after a missing Docker OOM or memory-watch file are marked unmeasured with `telemetry_missing`.
+- Record the halt reason before interrupting Harbor, and preserve Harbor's exit code before normal service cleanup. Add lifecycle coverage for clean set-aside-cap passes.
+- Reject malformed Responses replies, count failed terminal events as unsuccessful, and account for multiline SSE data. Flush the final event remainder so unterminated final separators do not hide completion or usage.
+- The canary task's memory budget is 1024 MB, up from 512 MB. With the watchdog able to see `docker exec` processes (#154), the OpenCode agent's canary on arm64 measured 491-726 MB of PSS (406-546 MB anonymous), so 512 MB killed a healthy canary.
+- The fake harness reuses one script folder per script content instead of creating a new temporary folder on every trial, and tests keep the harness cache in their own temporary folder instead of the user's `~/.cache`.
+- The memory watcher now records over-limit samples and process details even when a container kill fails, and does not retry or duplicate breach rows. Trial verdicts attribute successful and failed watchdog kills from both main and canary jobs.
+- The mutation pass creates `mutants/src` before mutmut starts, so a fresh checkout imports the mutated package instead of failing the first test run ([#146](https://github.com/wd7512/harbor-research-runner/issues/146)).
+- The mutation wrapper treats CPU and wall-time budget breaches as unverified and runs tests without syncing or reinstalling the project, with mutated sources first on `PYTHONPATH`. Mutmut now lives in a separate dependency group so standard installs avoid its platform-specific dependency.
+- The proc memory reader now sums processes in the container's PID namespace, including processes started with `docker exec`. It keeps the PSS to RSS fallback when an individual process cannot provide `smaps_rollup`.
+- The results explorer verifies each evidence bundle against its manifest before loading it and refuses bundles with missing or altered files. Required event and request files no longer fall back to empty data.
+- Trials still open at a run halt are invalidated and rerun when their verdict would otherwise be valid. These operator-triggered reruns do not count toward the per-slot set-aside cap.
+- Trials with a Harbor result but no proxy open row, or with no usable agent/verifier time window, are now marked unmeasured. The evidence guide and architecture contract describe both conditions.
+- Trials with malformed or widely spaced host resource samples in their agent-to-verifier window are marked unmeasured, while observed host breaches still invalidate them. Evidence reports the malformed sample count and verifies it against the compressed source stream.
+- Unknown upstream prompt or completion token counts remain null in the proxy ledger. Trials with incomplete successful-request usage are marked unmeasured, and evidence documents totals as sums of known values.
+- `hrr check-machine` now cleans Docker residue from its own Harbor compose projects and fails with named leftovers if any remain. It leaves resources from other projects untouched.
 
 ### Documentation
 
 - Add eight how-to guides for running studies, reading evidence, task maintenance, testing, harnesses, and model cards. Link the guides from the README documentation section. ([#73](https://github.com/wd7512/harbor-research-runner/issues/73))
 - The scheduler how-to now resumes a halted run once per allocation with a fresh stop time, instead of retrying a past deadline.
 - Update the README to describe the implemented 0.1.0 workflow and pilot status. Document the five Docker end-to-end CI shards required for a release.
+- The halt-and-resume drill now accepts `no_open_row` for a trial killed before it reached the proxy, as well as `close_not_recorded` ([#176](https://github.com/wd7512/harbor-research-runner/issues/176)).
+- The new-host check accepts an agent-made check of `hrr explore` and `harbor view`, by recorded trial fields, in place of a person viewing the run host ([#176](https://github.com/wd7512/harbor-research-runner/issues/176)).
 
 ### Internal
 
@@ -145,3 +168,14 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 - The sampler integration tests put a stub `docker` first on `PATH`, so a slow Docker daemon on the test host no longer fails them.
 - The session integration test waits up to 4 s, not 2 s, for the sampler's first sample, which needs a full Docker measurement and timed out on a busy Ubuntu runner.
 - Unit tests now reject socket binds, matching the existing socket-connect guard. Run launch-check unit tests use a fake port binder so they do not depend on whether the host proxy port is occupied.
+- Add evidence-bundle tests for request merging, telemetry reporting, trial memory windows, and retry ordering. Record the equivalent, message-text, and unit-test limits found while triaging the full-pass survivors. ([#146](https://github.com/wd7512/harbor-research-runner/issues/146))
+- Add a rerunnable mutmut pass for the agreed validity, launch, evidence and record modules, with baseline, exit-code and source-inspection guards. Results are written to `.agent/mutation-results.json` for review.
+- Add public run-loop and evidence-verification mutation coverage, and record every surviving mutant's disposition ([#146](https://github.com/wd7512/harbor-research-runner/issues/146)).
+- Add real Harbor contract coverage for task resolution, Git downloads and digests, empty filters, failure layouts, and interruption behavior.
+- Changelog entries link to their issue or pull request on this repository instead of naming a plan step. Fragments with no issue use the `+slug` form and render without a reference.
+- Documented equivalent and message-text mutation survivors and added launch-check tests that kill observable behavior mutants.
+- Kill evidence-verifier mutation survivors through public `verify` tests, and list the remaining survivors in the mutation guide ([#146](https://github.com/wd7512/harbor-research-runner/issues/146)).
+- Kill trial-validity and JSONL mutation survivors through `judge_trial` tests, and list the equivalent and simplification-candidate survivors in the mutation guide ([#146](https://github.com/wd7512/harbor-research-runner/issues/146)).
+- Test the run loop's resume and main-pass behaviour that mutation testing showed was unchecked ([#182](https://github.com/wd7512/harbor-research-runner/issues/182)).
+- Tests redirect `HOME` to a temporary folder instead of monkeypatching the harness module, following the testing rules.
+
