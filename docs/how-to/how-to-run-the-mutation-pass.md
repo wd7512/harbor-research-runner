@@ -97,6 +97,11 @@ Equivalent mutants:
 - `x__task_ref__mutmut_{1,11,12}`: parsed `Job` values always carry exactly one complete task-source variant, so these alternate boolean expressions have the same result for every valid job.
 - `x__task_ref__mutmut_6`: parsed `Job` values always carry exactly one complete task-source variant, so the alternate boolean expression has the same result for every valid job.
 - `x_make_read_only__mutmut_{3,4,6,7,11}`: changing traversal sort options does not change the final file modes; chmod of child entries does not require parent write permission.
+- `x_run_job__mutmut_6`: the initial `checks` value is replaced by `run_checks` before any branch reads it.
+- `x_run_job__mutmut_44`: `RunSession.manifest_path` is retained as an unused attribute; agent settings receive the independent `manifest_path` argument.
+- `x_run_job__mutmut_86`: `None` and `False` both select the non-restart path in `RunSession.start_services`.
+- `x_resume_run__mutmut_140`: omitting `run_dir` from `run_checks` supplies the same default `None` as the explicit `run_dir=None` mutation `x_resume_run__mutmut_132`.
+- `xǁRunSessionǁcreate__mutmut_26` and `xǁRunSessionǁcreate__mutmut_28`: `Path.mkdir` treats `exist_ok=None` and omitted `exist_ok` like `False`.
 
 Message-text mutants:
 
@@ -146,6 +151,7 @@ Not unit-testable:
 - `x__attach_run_log__mutmut_{4,7}`: omitting the run log's explicit encoding falls back to the locale's encoding, which is UTF-8 on the test hosts; only a non-UTF-8 locale would show the difference.
 - `x_sampler_command__mutmut_{2,6}` and `xǁRunSessionǁstart_services__mutmut_{76,111,115,140,144}`: these only uppercase the executable name (`uv` or `python`). On macOS's case-insensitive system disk, PATH lookup still finds the executable; Linux kills these mutants.
 - `xǁRunSessionǁstart_services__mutmut_25`: upper-casing `request-bodies` only differs on a case-sensitive filesystem, which the current test host does not provide.
+- `xǁRunSessionǁcreate__mutmut_16`: the local-time conversion differs from UTC only when the host timezone is non-UTC, and this public API has no timezone injection boundary.
 
 `tests/integration/run/test_loop.py` starts the real proxy and sampler services, and mutmut runs integration tests. These remaining `RunSession.start_services` survivors require subprocess, file-descriptor, socket, or health-endpoint behavior and are not reachable through the unit or integration public boundaries: `xǁRunSessionǁstart_services__mutmut_{27,28,51,53,54,57,58,68,72,101,109,132,133,136,137,157,158,166,167}`.
 
@@ -154,8 +160,7 @@ Not unit-testable:
 The main pass, set-aside and resume-after-canary paths can't be reached without Docker and a real Harbor canary, and a follow-up issue tracks making them reachable.
 
 - 134 survivors: `x__canary_passed__mutmut_{8,25,26,27,28,29,58,61,62,65,66,69,70,71}`, `x__pass_loop__mutmut_{2,16,17,18,19,21,22,23,24,25,26,30,31,38,39,42,43,48,51,57,59,70,71,72,78,79,83,84,85,86,91,92,94,95,96,100,101,102,107,109,110,111,118,124,125,140,148,162,163,164}`, `x__set_aside_trials__mutmut_{21,22}`, `x_resume_run__mutmut_{187,238,239,240,241,242,243,244,245,246,247,248,249,259,260,262,277,278,279}` and `x_run_job__mutmut_{174,182,183,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,244,245,246,247,248}`.
-
-The remaining 51 observable survivors are test gaps: `x__agent_configs__mutmut_11`; `x_resume_run__mutmut_{12,13,15,36,51,52,79,80,82,98,99,101,121,122,127,128,130,132,140,153,154,155,156,157,159,162,163,164,180,181}`; `x_run_job__mutmut_{5,6,18,22,23,25,44,80,81,82,86,89,275}`; `x_slots_status__mutmut_31`; and `xǁRunSessionǁcreate__mutmut_{16,19,26,28,30,34}`. They change configuration values, run outcomes, path selection, slot counts, cleanup behavior or run-id construction, all of which can affect public results.
+- `x_run_job__mutmut_{80,81,82}`: these deadline fields are consumed by the main pass, which starts only after the Harbor canary passes.
 
 Simplification candidates:
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
@@ -25,6 +26,7 @@ from harbor_research_runner.records.run_events import (
     Halt,
     HarborExit,
     HarborStart,
+    LaunchCheck,
     SetAside,
     TrialVerdict,
 )
@@ -272,6 +274,22 @@ def test_slots_status_keeps_invalid_trial_at_cap() -> None:
 
     assert status.to_set_aside == []
     assert status.incomplete == [("task-a", "arm-a")]
+
+
+def test_slots_status_applies_set_aside_caps_to_the_matching_slot() -> None:
+    status = slots_status(
+        [("task-b", "arm-b")],
+        1,
+        [verdict("trial-b", "task-b", "arm-b", valid=False)],
+        [
+            SetAside(1.0, "trial-old-a", "task-b", "arm-b", "upstream_errors").to_row(),
+            SetAside(2.0, "trial-old-b", "task-b", "arm-b", "upstream_errors").to_row(),
+        ],
+        {"trial-b"},
+        Limits(max_set_asides_per_slot=2, verifier_timeout_multiplier=1.0),
+    )
+
+    assert status.to_set_aside == []
 
 
 def test_slots_status_uses_only_remaining_set_aside_budget_for_slot() -> None:
@@ -626,19 +644,24 @@ def test_harbor_failure_without_trial_folder_halts_resumably(tmp_path: Path) -> 
 
 
 def _launch_with_machine_check(
-    tmp_path: Path, machine_check: MachineCheck
-) -> tuple[RunOutcome, list[bool]]:
+    tmp_path: Path,
+    machine_check: MachineCheck,
+    *,
+    stop_launching_at: str | None = None,
+    default_variant: str | None = None,
+    key_env: list[str] | None = None,
+    harness: str = "fake",
+) -> tuple[RunOutcome, list[str | bool]]:
     job_path = tmp_path / "job.yaml"
     (tmp_path / "machine-check.json").write_text("{}", encoding="utf-8")
+    started: list[str | bool] = []
+    commit = "a" * 40
+    fake_settings = ", fake: {}" if harness == "fake" else ""
     job_path.write_text(
-        "name: study\n"
-        "model: provider/model\n"
-        "repetitions: 1\n"
-        "concurrency: 1\n"
-        "task_order: as_listed\n"
-        "tasks: {dataset: bench/tasks}\n"
-        "machine_check: machine-check.json\n"
-        "arms: [{label: arm, harness: fake, commit: " + "a" * 40 + ", fake: {}}]\n"
+        f"name: study\nmodel: provider/model\nrepetitions: 1\nconcurrency: 1\n"
+        f"task_order: as_listed\ntasks: {{dataset: bench/tasks}}\n"
+        f"machine_check: machine-check.json\n"
+        f"arms: [{{label: arm, harness: {harness}, commit: {commit}{fake_settings}}}]\n"
         "proxy: {host: 127.0.0.1, port: 8766, container_host: host.docker.internal}\n"
         "limits: {}\n",
         encoding="utf-8",
@@ -651,32 +674,46 @@ def _launch_with_machine_check(
                 "upstream_model": "upstream-model",
                 "api": "chat",
                 "endpoints": [],
-                "key_env": [],
+                "key_env": key_env or [],
                 "tokens_per_minute": None,
                 "pricing": {"input": 0, "output": 0, "cached_read": 0},
-                "variants": {},
+                "variants": {"quick": {"temperature": 0.1}} if default_variant else {},
                 "withdrawn": False,
                 "reason": None,
+                **({"default_variant": default_variant} if default_variant else {}),
             }
         ),
         encoding="utf-8",
     )
     manifest_path = tmp_path / "manifest.toml"
-    manifest_path.write_text("", encoding="utf-8")
-    started: list[bool] = []
+    if harness == "fake":
+        manifest_path.write_text("", encoding="utf-8")
+    else:
+        manifest_path.write_text(
+            f'[{harness}."{commit}"]\n'
+            'version = "fixture"\nwithdrawn = false\n'
+            f'[{harness}."{commit}".images.arm64]\n'
+            'ref = "hrr/opencode:test"\n'
+            'digest = "sha256:' + "0" * 64 + '"\n'
+            'build_method = "source"\nbuilt_at = "2026-11-15"\n',
+            encoding="utf-8",
+        )
     checks = CheckDeps(
         select_adapter=lambda *_args: object(),
         measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
         inventory=lambda: Inventory(True, "ok", (), ()),
         live_run=lambda _path: None,
         host_lock=HostLock(tmp_path / "host.lock"),
-        read_machine_check=lambda _path: machine_check,
+        read_machine_check=lambda path: (
+            machine_check if path == tmp_path / "machine-check.json" else None
+        ),
         host_fingerprint=lambda: "fingerprint",
         host_profile=lambda: _PROFILE,
         harbor_version=lambda: "0.23.0",
         docker_memory_mb=lambda: 32768,
         bind_port=_bind_port,
         processes=lambda _run_dir: [],
+        digest_of=lambda _ref: "sha256:" + "0" * 64,
     )
     deps = RunDeps(
         checks=checks,
@@ -692,11 +729,21 @@ def _launch_with_machine_check(
         },
         start_harbor=lambda *_args: started.append(True),
         watch=lambda *_args: None,
-        start_services=lambda *_args: started.append(True),
-        stop_services=lambda *_args: None,
+        start_services=lambda _session, restart: started.append(restart),
+        stop_services=lambda _session: started.append("stop"),
         now=lambda: 1.0,
     )
-    return run_job(job_path, tmp_path / "runs", manifest_path, {}, deps), started
+    return (
+        run_job(
+            job_path,
+            tmp_path / "runs",
+            manifest_path,
+            {},
+            deps,
+            stop_launching_at=stop_launching_at,
+        ),
+        started,
+    )
 
 
 def _machine_check_including(tasks: list[dict], included: list[str]) -> MachineCheck:
@@ -775,10 +822,89 @@ def test_run_job_records_task_and_arm_metadata_and_detaches_its_log(
             "build_method": "",
         }
     ]
+    canary_config = yaml.safe_load(
+        (result.run_dir / "canary-job-config.yaml").read_text(encoding="utf-8")
+    )
+    assert canary_config["agents"][0]["kwargs"]["manifest_path"] == str(tmp_path / "manifest.toml")
     log_path = result.run_dir / "runner.log"
     log_before = log_path.read_bytes()
     logging.getLogger("harbor_research_runner.run.loop").warning("after run")
     assert log_path.read_bytes() == log_before
+
+
+def test_run_job_places_the_model_card_default_variant_in_agent_settings(
+    tmp_path: Path,
+) -> None:
+    machine_check = _machine_check_including(
+        [{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}], ["task-a"]
+    )
+
+    result, _started = _launch_with_machine_check(
+        tmp_path, machine_check, default_variant="quick", harness="opencode"
+    )
+
+    assert result.run_dir is not None
+    canary_config = yaml.safe_load(
+        (result.run_dir / "canary-job-config.yaml").read_text(encoding="utf-8")
+    )
+    assert canary_config["agents"][0]["kwargs"]["variant"] == "quick"
+
+
+def test_run_job_uses_manifest_and_host_architecture_for_launch_checks(tmp_path: Path) -> None:
+    machine_check = _machine_check_including(
+        [{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}], ["task-a"]
+    )
+
+    result, _started = _launch_with_machine_check(tmp_path, machine_check, harness="opencode")
+
+    assert result.run_dir is not None
+    assert (result.run_dir / "run-metadata.json").is_file()
+
+
+def test_run_job_passes_environment_to_the_keys_launch_check(tmp_path: Path) -> None:
+    result, _started = _launch_with_machine_check(
+        tmp_path,
+        _machine_check_including(
+            [{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}], ["task-a"]
+        ),
+        key_env=["MODEL_KEY"],
+    )
+
+    assert result.run_dir is not None
+    events = jsonl.read_rows(result.run_dir / "run-events.jsonl").rows
+    check = next(row for row in events if row.get("name") == "keys_present")
+    assert check["detail"] == "unset or empty environment variable(s): MODEL_KEY"
+
+
+def test_run_job_does_not_stop_services_before_they_start(tmp_path: Path) -> None:
+    machine_check = _machine_check_including(
+        [{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}], ["task-a"]
+    )
+
+    result, service_events = _launch_with_machine_check(
+        tmp_path, machine_check, stop_launching_at="not-a-time"
+    )
+
+    assert result.exit_code == 1
+    assert result.run_dir is not None
+    assert service_events == []
+
+
+def test_run_job_records_the_unset_key_variable_launch_check(tmp_path: Path) -> None:
+    result, _started = _launch_with_machine_check(
+        tmp_path,
+        _machine_check_including(
+            [{"name": "task-a", "digest": "sha256:task", "memory_mb": 512}], ["task-a"]
+        ),
+        key_env=["MODEL_KEY"],
+    )
+
+    assert result.exit_code == 1
+    assert result.run_dir is not None
+    events = jsonl.read_rows(result.run_dir / "run-events.jsonl").rows
+    key_check = next(row for row in events if row.get("name") == "keys_present")
+    assert key_check["ok"] is False
+    assert key_check["detail"] == "unset or empty environment variable(s): MODEL_KEY"
 
 
 def _finished_session(
@@ -893,6 +1019,25 @@ def _record_main_start(run_dir: Path) -> None:
         os.close(fd)
 
 
+def _configure_resume_with_opencode(run_dir: Path, manifest_path: Path) -> None:
+    metadata_path = run_dir / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["job"]["arms"][0]["harness"] = "opencode"
+    metadata["job"]["arms"][0]["fake"] = None
+    metadata["model_card"]["key_env"] = ["MODEL_KEY"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    commit = "a" * 40
+    manifest_path.write_text(
+        f'[opencode."{commit}"]\n'
+        'version = "fixture"\nwithdrawn = false\n'
+        f'[opencode."{commit}".images.arm64]\n'
+        'ref = "hrr/opencode:test"\n'
+        'digest = "sha256:' + "0" * 64 + '"\n'
+        'build_method = "source"\nbuilt_at = "2026-11-15"\n',
+        encoding="utf-8",
+    )
+
+
 def test_resume_refuses_run_stopped_after_failed_canary_without_appending_events(
     tmp_path: Path,
 ) -> None:
@@ -919,6 +1064,7 @@ def test_resume_refuses_run_stopped_after_failed_canary_without_appending_events
     assert run_dir.name in log
     assert "stopped before its first main pass" in log
     assert "hrr run <job file>" in log
+    assert "resume failed" not in log
 
 
 def test_resume_refuses_when_another_holder_owns_the_host_lock(tmp_path: Path) -> None:
@@ -1016,6 +1162,7 @@ def test_resume_refuses_run_stopped_after_passed_canary_without_appending_events
     assert run_dir.name in log
     assert "stopped before its first main pass" in log
     assert "hrr run <job file>" in log
+    assert "resume failed" not in log
 
 
 def test_resume_of_finished_run_returns_one_without_appending(tmp_path: Path) -> None:
@@ -1030,7 +1177,109 @@ def test_resume_of_finished_run_returns_one_without_appending(tmp_path: Path) ->
     assert result == RunOutcome(1, run_dir)
     assert (run_dir / "run-events.jsonl").read_bytes() == before
     assert commands == []
-    assert "already finished" in (run_dir / "runner.log").read_text(encoding="utf-8")
+    log = (run_dir / "runner.log").read_text(encoding="utf-8")
+    assert "already finished" in log
+    assert "resume failed" not in log
+    assert stopped == []
+
+
+def test_resume_detects_finish_at_the_end_of_the_event_log(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    _record_main_start(run_dir)
+    session = RunSession.load(run_dir, {})
+    session.event(LaunchCheck(1.0, "earlier", True, "ok"))
+    session.event(Finish(2.0, 3, 0, 1))
+    before = (run_dir / "run-events.jsonl").read_bytes()
+    stopped: list[bool] = []
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        [],
+        stopped,
+    )
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    assert result == RunOutcome(1, run_dir)
+    assert (run_dir / "run-events.jsonl").read_bytes() == before
+    assert stopped == []
+
+
+def test_resume_refuses_a_missing_run_folder_without_leaking_cleanup_state(
+    tmp_path: Path,
+) -> None:
+    _run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    stopped: list[bool] = []
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        [],
+        stopped,
+    )
+
+    result = resume_run("missing-run", tmp_path / "runs", manifest_path, {}, deps)
+
+    assert result == RunOutcome(1, None)
+    assert stopped == []
+
+
+def test_resume_returns_launch_check_failure_with_run_folder(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    _record_main_start(run_dir)
+    events_path = run_dir / "run-events.jsonl"
+    before = events_path.read_bytes()
+    stopped: list[bool] = []
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        [],
+        stopped,
+    )
+    deps = replace(
+        deps,
+        checks=replace(deps.checks, processes=lambda _path: [987654321]),
+    )
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    assert result == RunOutcome(1, run_dir)
+    assert events_path.read_bytes() == before
+    assert stopped == []
+    assert "resume failed" not in (run_dir / "runner.log").read_text(encoding="utf-8")
+
+
+def test_resume_stops_services_when_resume_event_write_fails(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    _record_main_start(run_dir)
+    stopped: list[bool] = []
+    services_started = False
+
+    def now() -> float:
+        if services_started:
+            raise RuntimeError("clock failed")
+        return 2.0
+
+    def start_services(session, _restart: bool) -> None:
+        nonlocal services_started
+        session._lifeline_read_fd = 0
+        services_started = True
+
+    deps = _resume_dependencies(
+        tmp_path,
+        machine_check,
+        lambda *_args: WatchResult("exited", 0, None, None),
+        [],
+        stopped,
+    )
+    deps = replace(deps, start_services=start_services, now=now)
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    assert result == RunOutcome(1, run_dir)
+    assert stopped == [True]
 
 
 def test_resume_finishes_when_every_slot_has_a_valid_trial(tmp_path: Path) -> None:
@@ -1069,6 +1318,40 @@ def test_resume_finishes_when_every_slot_has_a_valid_trial(tmp_path: Path) -> No
     assert stopped == [True]
     assert finish["slots_complete"] == 1
     assert finish["slots_incomplete"] == 0
+
+
+def test_resume_uses_manifest_architecture_and_environment_for_launch_checks(
+    tmp_path: Path,
+) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
+    _configure_resume_with_opencode(run_dir, manifest_path)
+    (run_dir / "harbor-job").mkdir(exist_ok=True)
+    _record_main_start(run_dir)
+    _trial_dir(run_dir, "trial-valid")
+    fd = jsonl.open_for_append(run_dir / "run-events.jsonl")
+    try:
+        jsonl.append_row(fd, _trial_verdict("trial-valid", valid=True).to_row())
+    finally:
+        import os
+
+        os.close(fd)
+    deps = _resume_dependencies(tmp_path, machine_check, lambda *_args: None, [], [])
+    deps = replace(
+        deps,
+        checks=replace(deps.checks, digest_of=lambda _ref: "sha256:" + "0" * 64),
+        start_services=lambda session, _restart: setattr(session, "_lifeline_read_fd", 0),
+        stop_services=lambda _session: None,
+    )
+
+    result = resume_run(
+        run_dir.name,
+        run_dir.parent,
+        manifest_path,
+        {"MODEL_KEY": "configured"},
+        deps,
+    )
+
+    assert result == RunOutcome(0, run_dir)
 
 
 def test_resume_sets_aside_invalid_trial_before_next_pass(tmp_path: Path) -> None:
@@ -1184,6 +1467,77 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
     assert start_index < finish_index
 
 
+def test_resume_numbers_the_next_pass_after_all_previous_main_passes(tmp_path: Path) -> None:
+    run_dir, manifest_path, machine_check = _finished_session(
+        tmp_path, repetitions=2, finished=False
+    )
+    trial_dir = run_dir / "harbor-job" / "trial-existing"
+    trial_dir.mkdir(parents=True)
+    (trial_dir / "config.json").write_text("{}", encoding="utf-8")
+    events_path = run_dir / "run-events.jsonl"
+    fd = jsonl.open_for_append(events_path)
+    try:
+        jsonl.append_row(fd, _trial_verdict("trial-existing", valid=True).to_row())
+        for pass_number in range(3):
+            jsonl.append_row(
+                fd,
+                HarborStart(1.0, pass_number, "harbor run", "main").to_row(),
+            )
+            jsonl.append_row(
+                fd,
+                HarborExit(1.0, pass_number, -15, "main").to_row(),
+            )
+    finally:
+        import os
+
+        os.close(fd)
+
+    def watch_fn(current, _process, _job_dir, _started):
+        new_trial = run_dir / "harbor-job" / "trial-resumed"
+        new_trial.mkdir()
+        (new_trial / "config.json").write_text("{}", encoding="utf-8")
+        current.event(_trial_verdict("trial-resumed", valid=True))
+        return WatchResult("exited", 0, None, None)
+
+    commands: list[list[str]] = []
+    deps = _resume_dependencies(tmp_path, machine_check, watch_fn, commands, [])
+
+    result = resume_run(run_dir.name, run_dir.parent, manifest_path, {}, deps)
+
+    events = jsonl.read_rows(events_path).rows
+    starts = [
+        row for row in events if row.get("type") == "harbor_start" and row.get("job") == "main"
+    ]
+    assert result == RunOutcome(0, run_dir)
+    assert starts[-1]["pass"] == 3
+
+
+def test_create_uses_a_utc_microsecond_run_folder_name(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+
+    assert session.run_dir.name == "study-20261112T104000123456Z"
+
+
+def test_create_preserves_a_run_folder_that_already_exists(tmp_path: Path) -> None:
+    session = _create(tmp_path)
+    events_path = session.run_dir / "run-events.jsonl"
+    before = events_path.read_bytes()
+
+    with pytest.raises(FileExistsError):
+        _create(tmp_path)
+
+    assert events_path.read_bytes() == before
+
+
+def test_create_uses_the_machine_check_verifier_multiplier(tmp_path: Path) -> None:
+    _job, _card, _manifest_path, machine_check = _inputs(tmp_path)
+    machine_check = replace(machine_check, verifier_timeout_multiplier=2.5)
+
+    session = _create(tmp_path, machine_check=machine_check)
+
+    assert session.limits.verifier_timeout_multiplier == 2.5
+
+
 def test_resume_refuses_when_host_profile_memory_cap_differs(tmp_path: Path) -> None:
     run_dir, manifest_path, machine_check = _finished_session(tmp_path, finished=False)
     _record_main_start(run_dir)
@@ -1203,6 +1557,10 @@ def test_resume_refuses_when_host_profile_memory_cap_differs(tmp_path: Path) -> 
     assert result == RunOutcome(1, run_dir)
     assert (run_dir / "run-events.jsonl").read_bytes() == before
     assert "memory_cap differs" in (run_dir / "runner.log").read_text(encoding="utf-8")
+    assert "resume refused because the host profile differs" in (run_dir / "runner.log").read_text(
+        encoding="utf-8"
+    )
+    assert "resume failed" not in (run_dir / "runner.log").read_text(encoding="utf-8")
 
 
 _HOST = {
@@ -1279,8 +1637,9 @@ def _create(
     check_results: list[CheckResult] | None = None,
     job: Job | None = None,
     host: dict | None = None,
+    machine_check: MachineCheck | None = None,
 ) -> RunSession:
-    default_job, card, manifest_path, machine_check = _inputs(tmp_path)
+    default_job, card, manifest_path, default_machine_check = _inputs(tmp_path)
     job = job or default_job
     return RunSession.create(
         job=job,
@@ -1300,7 +1659,7 @@ def _create(
                 "build_method": "",
             }
         ],
-        machine_check=machine_check,
+        machine_check=machine_check or default_machine_check,
         now=lambda: 1794480000.123456,
         tool=ToolIdentity("0.1.0", "a" * 40),
         host=_HOST if host is None else host,
@@ -1492,4 +1851,6 @@ def test_resume_refuses_a_run_that_predates_host_profile_recording(tmp_path: Pat
 
     assert result == RunOutcome(1, run_dir)
     assert (run_dir / "run-events.jsonl").read_bytes() == before
-    assert "predates host profile recording" in (run_dir / "runner.log").read_text(encoding="utf-8")
+    log = (run_dir / "runner.log").read_text(encoding="utf-8")
+    assert "predates host profile recording" in log
+    assert "resume failed" not in log

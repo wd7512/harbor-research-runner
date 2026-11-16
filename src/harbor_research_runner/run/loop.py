@@ -496,7 +496,7 @@ def run_job(
     finally:
         try:
             if session is not None and services_started:
-                _stop_services(session, deps)
+                _stop_services_after_failure(session, deps)
         finally:
             if log_handler is not None:
                 _remove_run_log(log_handler)
@@ -599,7 +599,7 @@ def resume_run(
     finally:
         try:
             if session is not None and services_started:
-                _stop_services(session, deps)
+                _stop_services_after_failure(session, deps)
         finally:
             if log_handler is not None:
                 _remove_run_log(log_handler)
@@ -726,6 +726,14 @@ def _finish(session, status: SlotsStatus, deps: RunDeps) -> int:
 def _stop_services(session: RunSession, deps: RunDeps) -> None:
     deps.stop_services(session)
     watch.amend_finished_measurements(session, deps.now())
+
+
+def _stop_services_after_failure(session: RunSession, deps: RunDeps) -> None:
+    deps.stop_services(session)
+    try:
+        watch.amend_finished_measurements(session, deps.now())
+    except Exception:
+        logger.exception("could not amend finished measurements; resume the run to record them")
 
 
 def make_read_only(run_dir: Path) -> None:
