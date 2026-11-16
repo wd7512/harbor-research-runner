@@ -5,6 +5,7 @@ import logging
 import os
 import shlex
 import socket
+import time
 import urllib.error
 import urllib.request
 from dataclasses import replace
@@ -15,12 +16,16 @@ import yaml
 
 from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
+from harbor_research_runner.evidence_bundle.build import build as build_evidence
+from harbor_research_runner.evidence_bundle.verify import verify as verify_evidence
 from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
+from harbor_research_runner.records.run_events import final_verdicts
 from harbor_research_runner.run.checks import CheckDeps
 from harbor_research_runner.run.loop import RunDeps, run_job
 from harbor_research_runner.run.tool_identity import ToolIdentity
+from harbor_research_runner.run.watch import WatchResult
 from tests.support.docker_stub import stub_docker_dir
 from tests.support.fake_upstream import FakeUpstream
 
@@ -188,6 +193,207 @@ def _expected_canary_argv(run_dir: Path, port: int) -> list[str]:
         "--pk",
         "task_order=as_listed",
     ]
+
+
+def _run_finished_telemetry_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, damage: str | None
+) -> tuple[Path, list[dict]]:
+    upstream = FakeUpstream(["ok", "ok"])
+    upstream_url = upstream.start()
+    harbor_calls: list[tuple[list[str], Path, int]] = []
+    job_path, manifest_path, runs_dir, deps, port = _run_deps(tmp_path, upstream_url, harbor_calls)
+    manifest_path.write_text(
+        '[fake."' + "a" * 40 + '"]\n'
+        'version = "fixture"\nwithdrawn = false\n'
+        '[fake."' + "a" * 40 + '".images.arm64]\n'
+        'ref = "hrr/fake:test"\n'
+        'digest = "sha256:' + "0" * 64 + '"\n'
+        'build_method = "source"\nbuilt_at = "2026-11-15"\n',
+        encoding="utf-8",
+    )
+    clock_now = time.time()
+    original_start_harbor = deps.start_harbor
+
+    def append_row(path: Path, row: dict) -> None:
+        with path.open("ab") as stream:
+            stream.write(json.dumps(row, sort_keys=True).encode("utf-8") + b"\n")
+
+    def post(url: str, body: dict) -> dict:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=1) as response:
+            data = response.read()
+            return json.loads(data) if data else {}
+
+    def start_harbor(argv: list[str], cwd: Path, lifeline_fd: int) -> HarborProcess:
+        process = original_start_harbor(argv, cwd, lifeline_fd)
+        is_canary = argv[argv.index("--job-name") + 1] == "canary-job"
+        trial = "canary-alpha" if is_canary else "task-a-arm-a-trial"
+        task = "canary/say-hello" if is_canary else "task-a"
+        start_t = clock_now - (15 if is_canary else 5)
+        agent_end_t = start_t + 3
+        verifier_end_t = agent_end_t + 1
+        post(
+            f"http://127.0.0.1:{port}/control/open",
+            {"trial": trial, "task": task, "arm": "arm-a"},
+        )
+        post(
+            f"http://127.0.0.1:{port}/trial/{trial}/v1/chat/completions",
+            {
+                "model": "fake-model",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        post(f"http://127.0.0.1:{port}/control/close", {"trial": trial})
+        trial_dir = cwd / ("canary-job" if is_canary else "harbor-job") / trial
+        trial_dir.mkdir(parents=True)
+        (trial_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "agent": {
+                        "kwargs": {
+                            "arm_label": "arm-a",
+                            "commit": "a" * 40,
+                            "harness": "fake",
+                        }
+                    },
+                    "task": ({"name": task} if is_canary else {"path": "bench/tasks/task-a"}),
+                    "trial_name": trial,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def stamp(value: float) -> str:
+            return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
+
+        (trial_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "agent_execution": {
+                        "started_at": stamp(start_t),
+                        "finished_at": stamp(agent_end_t),
+                    },
+                    "agent_setup": {
+                        "started_at": stamp(start_t - 1),
+                        "finished_at": stamp(start_t),
+                    },
+                    "environment_setup": {
+                        "started_at": stamp(start_t - 2),
+                        "finished_at": stamp(start_t - 1),
+                    },
+                    "exception_info": None,
+                    "task_name": task,
+                    "trial_name": trial,
+                    "verifier": {
+                        "started_at": stamp(agent_end_t),
+                        "finished_at": stamp(verifier_end_t),
+                    },
+                    "verifier_result": {"rewards": {"reward": 1.0}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        append_row(
+            cwd / "resource-stats.jsonl",
+            Sample(start_t + 1, 4096, 0, 100.0, 0.0, 0, True).to_row(),
+        )
+        append_row(
+            cwd / "memory-watch.jsonl",
+            {
+                "type": "sample",
+                "t": agent_end_t,
+                "trial": trial,
+                "location": "canary-job" if is_canary else "harbor-job",
+                "container": "container",
+                "used_mb": 100.0,
+                "limit_mb": 1024 if is_canary else 512,
+                "reader": "docker_stats",
+            },
+        )
+        if not is_canary and damage == "memory":
+            with (cwd / "memory-watch.jsonl").open("ab") as stream:
+                stream.write(b"not-json")
+        if not is_canary and damage == "oom":
+            append_row(
+                cwd / "docker-oom-events.jsonl",
+                {"timeNano": int((start_t - 1) * 1_000_000_000)},
+            )
+            with (cwd / "docker-oom-events.jsonl").open("ab") as stream:
+                stream.write(b"not-json")
+        return process
+
+    deps = replace(
+        deps,
+        start_harbor=start_harbor,
+        watch=lambda *_args: WatchResult("finished", 0, None, None),
+        now=lambda: clock_now,
+    )
+    docker_calls = tmp_path / "docker-calls.txt"
+    monkeypatch.setenv(
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+    )
+    try:
+        outcome = run_job(job_path, runs_dir, manifest_path, {}, deps)
+    finally:
+        upstream.stop()
+    assert outcome.exit_code == (3 if damage else 0)
+    assert outcome.run_dir is not None
+    events = [
+        json.loads(line) for line in (outcome.run_dir / "run-events.jsonl").read_text().splitlines()
+    ]
+    return outcome.run_dir, events
+
+
+def test_finished_torn_memory_watch_amends_last_trial_in_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, events = _run_finished_telemetry_case(tmp_path, monkeypatch, damage="memory")
+    bundle = tmp_path / "evidence"
+
+    assert [row["trial"] for row in events if row["type"] == "trial_measurement_amended"] == [
+        "task-a-arm-a-trial"
+    ]
+    amendment_index = max(
+        index for index, row in enumerate(events) if row["type"] == "trial_measurement_amended"
+    )
+    stopped_index = next(
+        index for index, row in enumerate(events) if row["type"] == "telemetry_stopped"
+    )
+    assert amendment_index < stopped_index
+    assert build_evidence(run_dir, bundle, {}) == 0
+    assert verify_evidence(bundle) == []
+    final = final_verdicts(events)["task-a-arm-a-trial"]
+    assert final["measured"] is False
+    assert final["unmeasured_reason"] == "telemetry_damaged"
+
+
+def test_clean_final_telemetry_leaves_verdicts_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir, events = _run_finished_telemetry_case(tmp_path, monkeypatch, damage=None)
+
+    assert not any(row["type"] == "trial_measurement_amended" for row in events)
+    assert events[-2]["type"] == "telemetry_stopped"
+    assert events[-1]["type"] == "finish"
+    assert all(row["measured"] is True for row in final_verdicts(events).values())
+    bundle = tmp_path / "evidence"
+    assert build_evidence(run_dir, bundle, {}) == 0
+    assert verify_evidence(bundle) == []
+
+
+def test_torn_oom_tail_amends_trials_started_after_last_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run_dir, events = _run_finished_telemetry_case(tmp_path, monkeypatch, damage="oom")
+
+    amendments = [row for row in events if row["type"] == "trial_measurement_amended"]
+    assert [row["trial"] for row in amendments] == ["task-a-arm-a-trial"]
+    assert amendments[0]["unmeasured_reason"] == "telemetry_damaged"
 
 
 def test_run_job_refuses_failed_checks_without_starting_services(

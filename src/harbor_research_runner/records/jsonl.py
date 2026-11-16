@@ -13,7 +13,7 @@ class ReadResult:
 
 
 def bad_line_time_spans(
-    result: ReadResult, timestamp_field: str = "t", scale: float = 1.0
+    result: ReadResult, timestamp_field: str = "t", scale: float = 1.0, *, finished: bool
 ) -> list[tuple[float, float]]:
     bad_lines = set(result.bad_lines)
     total = len(result.rows) + len(bad_lines)
@@ -39,6 +39,14 @@ def bad_line_time_spans(
                 float(min(after_times)) if after_times else float("inf"),
             )
         )
+    if finished and result.torn_last_line:
+        times = [
+            value * scale
+            for row in result.rows
+            if isinstance((value := row.get(timestamp_field)), (int, float))
+            and not isinstance(value, bool)
+        ]
+        spans.append((float(max(times)) if times else float("-inf"), float("inf")))
     return spans
 
 
