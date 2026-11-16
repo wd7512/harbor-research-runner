@@ -1,0 +1,1 @@
+The new-host check accepts an agent-made check of `hrr explore` and `harbor view`, by recorded trial fields, in place of a person viewing the run host ([#176](https://github.com/wd7512/harbor-research-runner/issues/176)).
