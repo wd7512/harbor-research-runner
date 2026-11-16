@@ -44,7 +44,11 @@ def _refresh_manifest(bundle: Path) -> None:
 
 
 def _finished_telemetry_bundle(
-    tmp_path: Path, *, amendment: bool, unknown_amendment: bool = False
+    tmp_path: Path,
+    *,
+    amendment: bool,
+    stopped: bool = True,
+    unknown_amendment: bool = False,
 ) -> Path:
     run_dir = tmp_path / "finished-run"
     shutil.copytree(FIXTURES / "clean", run_dir)
@@ -62,15 +66,13 @@ def _finished_telemetry_bundle(
         "type": "sample",
         "t": latest.verifier_finished_t - 0.5,
         "trial": latest.trial,
-        "location": "harbor-job",
+        "location": latest.location,
         "container": "container",
         "used_mb": 100.0,
         "limit_mb": 512,
         "reader": "docker_stats",
     }
-    (run_dir / "memory-watch.jsonl").write_text(
-        json.dumps(sample) + "\nnot-json\n", encoding="utf-8"
-    )
+    (run_dir / "memory-watch.jsonl").write_text(json.dumps(sample) + "\nnot-json", encoding="utf-8")
     events_path = run_dir / "run-events.jsonl"
     events = _rows(events_path)
     if amendment:
@@ -91,6 +93,8 @@ def _finished_telemetry_bundle(
                 "unmeasured_reason": "telemetry_damaged",
             }
         )
+    if stopped:
+        events.append({"type": "telemetry_stopped", "t": latest.verifier_finished_t + 2})
     _write_rows(events_path, events)
     bundle = tmp_path / "finished-bundle"
     build(run_dir, bundle, {})
@@ -843,6 +847,12 @@ def test_finished_torn_memory_watch_requires_amendment(tmp_path: Path) -> None:
     bundle = _finished_telemetry_bundle(tmp_path, amendment=False)
 
     assert any(problem.invariant == "telemetry_damaged" for problem in verify(bundle))
+
+
+def test_live_torn_memory_watch_does_not_require_amendment(tmp_path: Path) -> None:
+    bundle = _finished_telemetry_bundle(tmp_path, amendment=False, stopped=False)
+
+    assert verify(bundle) == []
 
 
 def test_amendment_for_unknown_trial_is_reported(tmp_path: Path) -> None:

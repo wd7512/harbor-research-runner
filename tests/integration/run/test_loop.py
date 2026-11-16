@@ -358,6 +358,13 @@ def test_finished_torn_memory_watch_amends_last_trial_in_evidence(
     assert [row["trial"] for row in events if row["type"] == "trial_measurement_amended"] == [
         "task-a-arm-a-trial"
     ]
+    amendment_index = max(
+        index for index, row in enumerate(events) if row["type"] == "trial_measurement_amended"
+    )
+    stopped_index = next(
+        index for index, row in enumerate(events) if row["type"] == "telemetry_stopped"
+    )
+    assert amendment_index < stopped_index
     assert build_evidence(run_dir, bundle, {}) == 0
     assert verify_evidence(bundle) == []
     final = final_verdicts(events)["task-a-arm-a-trial"]
@@ -371,6 +378,8 @@ def test_clean_final_telemetry_leaves_verdicts_unchanged(
     run_dir, events = _run_finished_telemetry_case(tmp_path, monkeypatch, damage=None)
 
     assert not any(row["type"] == "trial_measurement_amended" for row in events)
+    assert events[-2]["type"] == "telemetry_stopped"
+    assert events[-1]["type"] == "finish"
     assert all(row["measured"] is True for row in final_verdicts(events).values())
     bundle = tmp_path / "evidence"
     assert build_evidence(run_dir, bundle, {}) == 0

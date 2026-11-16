@@ -8,7 +8,7 @@ from pathlib import Path
 
 from harbor_research_runner.records.jsonl import ReadResult, bad_line_time_spans, read_rows
 from harbor_research_runner.records.manifest import verify_manifest
-from harbor_research_runner.records.run_events import final_verdicts
+from harbor_research_runner.records.run_events import final_verdicts, telemetry_finished
 from harbor_research_runner.records.trials import CAP_EXEMPT_REASONS
 
 
@@ -120,6 +120,8 @@ def _host_window_damaged(
     bad_lines: list[int],
     torn_last_line: bool,
     interval_s: float,
+    *,
+    finished: bool,
 ) -> bool:
     start = row.get("agent_started_t")
     end = (
@@ -155,13 +157,15 @@ def _host_window_damaged(
     sample_result = ReadResult(
         [sample for _line, sample in resource_rows], torn_last_line, bad_lines
     )
-    for span_start, span_end in bad_line_time_spans(sample_result, finished=True):
+    for span_start, span_end in bad_line_time_spans(sample_result, finished=finished):
         if span_start <= end and span_end >= start:
             return True
     return False
 
 
-def _trial_telemetry_damaged(row: dict, oom: ReadResult, memory: ReadResult) -> bool:
+def _trial_telemetry_damaged(
+    row: dict, oom: ReadResult, memory: ReadResult, *, finished: bool
+) -> bool:
     start = row.get("agent_started_t")
     end = (
         row.get("verifier_finished_t")
@@ -175,8 +179,8 @@ def _trial_telemetry_damaged(row: dict, oom: ReadResult, memory: ReadResult) -> 
         or isinstance(end, bool)
     ):
         return False
-    spans = bad_line_time_spans(oom, "timeNano", 1e-9, finished=True)
-    spans.extend(bad_line_time_spans(memory, finished=True))
+    spans = bad_line_time_spans(oom, "timeNano", 1e-9, finished=finished)
+    spans.extend(bad_line_time_spans(memory, finished=finished))
     return any(span_start <= end and span_end >= start for span_start, span_end in spans)
 
 
@@ -189,6 +193,7 @@ def verify(bundle_dir: Path) -> list[Problem]:
     event_rows_result = read_rows(bundle_dir / "run-events.jsonl")
     trials = trial_rows_result.rows
     events = event_rows_result.rows
+    finished = telemetry_finished(events)
     memory_path = bundle_dir / "memory-watch.jsonl"
     memory_rows_result = read_rows(memory_path) if memory_path.exists() else None
     memory_rows = memory_rows_result.rows if memory_rows_result is not None else []
@@ -277,7 +282,7 @@ def verify(bundle_dir: Path) -> list[Problem]:
         trial = row["trial"]
         telemetry_damaged = (
             oom_path.exists() or memory_path.exists()
-        ) and _trial_telemetry_damaged(row, oom_rows_result, memory_rows_result)
+        ) and _trial_telemetry_damaged(row, oom_rows_result, memory_rows_result, finished=finished)
         verdict = verdicts.get(trial)
         host_damaged = (
             resource_data is not None
@@ -288,6 +293,7 @@ def verify(bundle_dir: Path) -> list[Problem]:
                 resource_bad_lines,
                 resource_torn_last_line,
                 float(sampler_interval_s),
+                finished=finished,
             )
         )
         expected_damage = (
@@ -422,7 +428,9 @@ def verify(bundle_dir: Path) -> list[Problem]:
         samples.setdefault(sample["trial"], []).append(sample["used_mb"])
     for row in trials:
         values = samples.get(row["trial"], [])
-        damaged = _trial_telemetry_damaged(row, oom_rows_result, memory_rows_result)
+        damaged = _trial_telemetry_damaged(
+            row, oom_rows_result, memory_rows_result, finished=finished
+        )
         if values or damaged:
             expected = None if damaged else max(values)
             actual = row.get("peak_memory_mb")

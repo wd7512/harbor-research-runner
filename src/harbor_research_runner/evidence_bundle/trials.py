@@ -15,7 +15,7 @@ from harbor_research_runner.records.proxy_ledger import (
     COUNTS_AGAINST_TRIAL,
     is_valid_row,
 )
-from harbor_research_runner.records.run_events import final_verdicts
+from harbor_research_runner.records.run_events import final_verdicts, telemetry_finished
 from harbor_research_runner.records.trials import TrialRow
 from harbor_research_runner.statistics.cost import cost_usd
 
@@ -46,7 +46,7 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
     memory_path = run_dir / "memory-watch.jsonl"
     memory_result = read_rows(memory_path)
     memory_rows = memory_result.rows
-    memory_bad_spans = bad_line_time_spans(memory_result, finished=True)
+    memory_bad_spans = bad_line_time_spans(memory_result, finished=telemetry_finished(events))
     memory_peaks = {}
     memory_limits = {}
     for sample in memory_rows:

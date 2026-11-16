@@ -447,7 +447,8 @@ built_at = "2026-12-01"
 - `memory-watch.jsonl`: copied.
 - All three telemetry files are required when `run-events.jsonl` has a `harbor_start`; verification reports `telemetry_present` once per missing file. Before `harbor_start`, absent telemetry files are allowed and are omitted from the bundle.
 - `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged` and counts malformed resource, Docker OOM-event and memory-watch rows when those telemetry files are present. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
-- `verify-evidence` re-derives the malformed telemetry counts from the copied files, uses the finished-file rule for overlap, and compares trial rows with the verdicts after amendments.
+- The post-run amendment pass writes `telemetry_stopped` after any `trial_measurement_amended` events, even when there are no amendments. `verify-evidence` and evidence building use the finished-file rule for torn final lines only when the last `telemetry_stopped` follows the last `harbor_start`; otherwise they use the live rule. Amendments always apply when comparing trial rows with verdicts.
+- `verify-evidence` re-derives the malformed telemetry counts from the copied files and compares trial rows with the verdicts after amendments.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
 The results explorer verifies every bundle file against `manifest.json` before loading the bundle. A missing or altered file refuses the bundle and is reported with the manifest problems.

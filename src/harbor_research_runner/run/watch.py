@@ -10,6 +10,7 @@ from harbor_research_runner.records import jsonl, machine_check
 from harbor_research_runner.records.jsonl import JsonlTail
 from harbor_research_runner.records.run_events import (
     Halt,
+    TelemetryStopped,
     TrialMeasurementAmended,
     TrialVerdict,
     final_verdicts,
@@ -177,6 +178,7 @@ def amend_finished_measurements(session, now: float) -> None:
         session.event(TrialMeasurementAmended(now, trial, reason))
         verdict_row["measured"] = False
         verdict_row["unmeasured_reason"] = reason
+    session.event(TelemetryStopped(now))
 
 
 def _judge_all_remaining(

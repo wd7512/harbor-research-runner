@@ -83,6 +83,12 @@ class TrialMeasurementAmended(_Event):
 
 
 @dataclass(frozen=True)
+class TelemetryStopped(_Event):
+    t: float
+    type: str = "telemetry_stopped"
+
+
+@dataclass(frozen=True)
 class SetAside(_Event):
     t: float
     trial: str
@@ -128,12 +134,25 @@ _EVENT_TYPES = {
         StopLaunchingAt,
         TrialVerdict,
         TrialMeasurementAmended,
+        TelemetryStopped,
         SetAside,
         Halt,
         Resume,
         Finish,
     )
 }
+
+
+def telemetry_finished(events: list[dict]) -> bool:
+    last_harbor_start = max(
+        (index for index, event in enumerate(events) if event.get("type") == "harbor_start"),
+        default=-1,
+    )
+    last_telemetry_stopped = max(
+        (index for index, event in enumerate(events) if event.get("type") == "telemetry_stopped"),
+        default=-1,
+    )
+    return last_telemetry_stopped > last_harbor_start
 
 
 def final_verdicts(events: list[dict]) -> dict[str, dict]:

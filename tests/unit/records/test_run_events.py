@@ -10,10 +10,12 @@ from harbor_research_runner.records.run_events import (
     Resume,
     SetAside,
     StopLaunchingAt,
+    TelemetryStopped,
     TrialMeasurementAmended,
     TrialVerdict,
     final_verdicts,
     parse_event,
+    telemetry_finished,
 )
 
 EVENTS = [
@@ -24,6 +26,7 @@ EVENTS = [
     StopLaunchingAt(1.0, 0, "2030-01-01T00:00:00+00:00"),
     TrialVerdict(1.0, "tr", "task", "arm", True, None, None, [], True, None, None),
     TrialMeasurementAmended(2.0, "tr", "telemetry_damaged"),
+    TelemetryStopped(2.0),
     SetAside(1.0, "tr", "task", "arm", "bad"),
     Halt(1.0, "inactive", "detail"),
     Resume(1.0, "v", "c", 10),
@@ -106,3 +109,25 @@ def test_final_verdicts_leaves_unamended_trial_unchanged():
     verdict = TrialVerdict(1.0, "tr", "task", "arm", True, None, None, [], True, None)
 
     assert final_verdicts([verdict.to_row()])["tr"] == verdict.to_row()
+
+
+def test_telemetry_finished_when_stop_follows_last_harbor_start():
+    events = [HarborStart(1.0, 0, "harbor run", "main").to_row(), TelemetryStopped(2.0).to_row()]
+
+    assert telemetry_finished(events) is True
+
+
+def test_telemetry_not_finished_without_stop_marker():
+    events = [HarborStart(1.0, 0, "harbor run", "main").to_row()]
+
+    assert telemetry_finished(events) is False
+
+
+def test_telemetry_not_finished_when_harbor_restarts_after_stop():
+    events = [
+        HarborStart(1.0, 0, "harbor run", "main").to_row(),
+        TelemetryStopped(2.0).to_row(),
+        HarborStart(3.0, 1, "harbor run", "main").to_row(),
+    ]
+
+    assert telemetry_finished(events) is False
