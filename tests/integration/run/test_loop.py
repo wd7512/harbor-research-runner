@@ -17,9 +17,11 @@ from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
 from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.records.machine_check import MachineCheck
+from harbor_research_runner.records import jsonl
 from harbor_research_runner.records.resource_stats import Sample
+from harbor_research_runner.records.run_events import HarborStart, TrialVerdict
 from harbor_research_runner.run.checks import CheckDeps
-from harbor_research_runner.run.loop import RunDeps, run_job
+from harbor_research_runner.run.loop import RunDeps, resume_run, run_job
 from harbor_research_runner.run.tool_identity import ToolIdentity
 from tests.support.docker_stub import stub_docker_dir
 from tests.support.fake_upstream import FakeUpstream
@@ -294,6 +296,8 @@ def test_run_job_records_nonzero_canary_exit_and_stops_services(
     assert agent["kwargs"]["container_host"] == "127.0.0.1"
     assert agent["kwargs"]["proxy_port"] == port
     assert agent["kwargs"]["fake"] == {}
+    proxy_config = json.loads((result.run_dir / "proxy-config.json").read_text(encoding="utf-8"))
+    assert proxy_config["restart_cooldown_s"] == 0.0
     metadata = json.loads((result.run_dir / "run-metadata.json").read_text(encoding="utf-8"))
     assert metadata["arms"][0]["image_ref"] == "hrr/fake:test"
     assert metadata["arms"][0]["image_digest"] == "sha256:" + "0" * 64
@@ -303,6 +307,69 @@ def test_run_job_records_nonzero_canary_exit_and_stops_services(
         (result.run_dir / "compose-host-network.yaml").read_text(encoding="utf-8")
     )
     assert compose["services"]["main"]["network_mode"] == "host"
+    _assert_proxy_stopped(port)
+
+
+def test_resume_restarts_the_proxy_with_the_restart_cooldown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upstream, upstream_url = _start_upstream()
+    harbor_calls: list[tuple[list[str], Path, int]] = []
+    job_path, manifest_path, runs_dir, deps, port = _run_deps(
+        tmp_path, upstream_url, harbor_calls, returncode=0
+    )
+    manifest_path.write_text(
+        '[fake."' + "a" * 40 + '"]\n'
+        'version = "fixture"\nwithdrawn = false\n'
+        '[fake."' + "a" * 40 + '".images.arm64]\n'
+        'ref = "hrr/fake:test"\n'
+        'digest = "sha256:' + "0" * 64 + '"\n'
+        'build_method = "source"\nbuilt_at = "2026-11-15"\n',
+        encoding="utf-8",
+    )
+    docker_calls = tmp_path / "docker-calls.txt"
+    monkeypatch.setenv(
+        "PATH", f"{stub_docker_dir(tmp_path, docker_calls)}{os.pathsep}{os.environ['PATH']}"
+    )
+    try:
+        started = run_job(job_path, runs_dir, manifest_path, {}, deps)
+        assert started.run_dir is not None
+        trial_dir = started.run_dir / "harbor-job" / "trial-resumed"
+        trial_dir.mkdir(parents=True)
+        (trial_dir / "config.json").write_text("{}", encoding="utf-8")
+        events_path = started.run_dir / "run-events.jsonl"
+        fd = jsonl.open_for_append(events_path)
+        try:
+            jsonl.append_row(
+                fd,
+                HarborStart(_NOW, 0, "harbor run", "main").to_row(),
+            )
+            jsonl.append_row(
+                fd,
+                TrialVerdict(
+                    t=_NOW,
+                    trial="trial-resumed",
+                    task="task-a",
+                    arm="arm-a",
+                    valid=True,
+                    reason=None,
+                    instrument=None,
+                    labels=[],
+                    measured=True,
+                    unmeasured_reason=None,
+                ).to_row(),
+            )
+        finally:
+            os.close(fd)
+
+        resumed = resume_run(started.run_dir.name, runs_dir, manifest_path, {}, deps)
+    finally:
+        upstream.stop()
+
+    assert resumed.exit_code == 0
+    assert resumed.run_dir is not None
+    proxy_config = json.loads((resumed.run_dir / "proxy-config.json").read_text(encoding="utf-8"))
+    assert proxy_config["restart_cooldown_s"] == 60.0
     _assert_proxy_stopped(port)
 
 
