@@ -34,6 +34,7 @@ from harbor_research_runner.records.run_events import (
     LaunchCheck,
     Resume,
     StopLaunchingAt,
+    final_verdicts,
 )
 from harbor_research_runner.records.trials import CAP_EXEMPT_REASONS
 from harbor_research_runner.run import canary, process_group, watch
@@ -355,11 +356,7 @@ def slots_status(
     in_job: set[str],
     limits: Limits,
 ) -> SlotsStatus:
-    verdicts = {
-        row["trial"]: row
-        for row in verdict_events
-        if row.get("type") == "trial_verdict" and isinstance(row.get("trial"), str)
-    }
+    verdicts = final_verdicts(verdict_events)
     valid_counts: dict[tuple[str, str], int] = {}
     set_aside_counts: dict[tuple[str, str], int] = {}
     for event in set_aside_events:
@@ -466,7 +463,7 @@ def run_job(
             logger.error(
                 "canary failed with Harbor exit code %s: %s", canary_returncode, canary_detail
             )
-            deps.stop_services(session)
+            _stop_services(session, deps)
             services_started = False
             return RunOutcome(1, session.run_dir)
 
@@ -499,7 +496,7 @@ def run_job(
     finally:
         try:
             if session is not None and services_started:
-                deps.stop_services(session)
+                _stop_services_after_failure(session, deps)
         finally:
             if log_handler is not None:
                 _remove_run_log(log_handler)
@@ -602,7 +599,7 @@ def resume_run(
     finally:
         try:
             if session is not None and services_started:
-                deps.stop_services(session)
+                _stop_services_after_failure(session, deps)
         finally:
             if log_handler is not None:
                 _remove_run_log(log_handler)
@@ -660,7 +657,7 @@ def _pass_loop(
                 deps.now(),
                 halt_reason=result.halt_reason,
             )
-            deps.stop_services(session)
+            _stop_services(session, deps)
             return 2
         judged = watch.judged_trials(session.run_dir)
         watch.judge_all_remaining(session, session.run_dir / "harbor-job", judged, deps.now())
@@ -669,7 +666,7 @@ def _pass_loop(
             if _trials_left(session, status, planned):
                 detail = f"Harbor exited with code {returncode}; planned trials remain"
                 session.event(Halt(deps.now(), "harbor_exit", detail))
-                deps.stop_services(session)
+                _stop_services(session, deps)
                 return 2
             return _finish(session, status, deps)
         _set_aside_trials(session, status, deps.now)
@@ -718,11 +715,25 @@ def _set_aside_trials(session, status: SlotsStatus, now: Callable[[], float]) ->
 
 
 def _finish(session, status: SlotsStatus, deps: RunDeps) -> int:
-    deps.stop_services(session)
+    _stop_services(session, deps)
+    status = _current_slots_status(session, status.complete + status.incomplete)
     exit_code = 0 if not status.incomplete and not status.unmeasured_final else 3
     session.event(Finish(deps.now(), exit_code, len(status.complete), len(status.incomplete)))
     make_read_only(session.run_dir)
     return exit_code
+
+
+def _stop_services(session: RunSession, deps: RunDeps) -> None:
+    deps.stop_services(session)
+    watch.amend_finished_measurements(session, deps.now())
+
+
+def _stop_services_after_failure(session: RunSession, deps: RunDeps) -> None:
+    deps.stop_services(session)
+    try:
+        watch.amend_finished_measurements(session, deps.now())
+    except Exception:
+        logger.exception("could not amend finished measurements; resume the run to record them")
 
 
 def make_read_only(run_dir: Path) -> None:
@@ -754,8 +765,9 @@ def _canary_passed(
     watch.judge_all_remaining(session, canary_dir, watch.judged_trials(session.run_dir), now())
     facts = [job_folder.read_trial(path) for path in job_folder.trial_folders(canary_dir)]
     events = jsonl.read_rows(session.run_dir / "run-events.jsonl").rows
+    verdict_rows = final_verdicts(events)
     verdict_events = {
-        row["trial"]: Verdict(
+        trial: Verdict(
             row["valid"],
             row["reason"],
             row["instrument"],
@@ -763,8 +775,7 @@ def _canary_passed(
             row["measured"],
             row["unmeasured_reason"],
         )
-        for row in events
-        if row.get("type") == "trial_verdict"
+        for trial, row in verdict_rows.items()
     }
     if any(fact.trial not in verdict_events for fact in facts):
         return False, "canary trial is missing a verdict"

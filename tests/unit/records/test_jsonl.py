@@ -112,7 +112,7 @@ def test_bad_line_time_span_uses_nearest_valid_timestamps():
         [3],
     )
 
-    assert bad_line_time_spans(result) == [(4.0, 8.0)]
+    assert bad_line_time_spans(result, finished=False) == [(4.0, 8.0)]
 
 
 def test_bad_line_time_span_ignores_invalid_neighbor_timestamps():
@@ -122,22 +122,35 @@ def test_bad_line_time_span_ignores_invalid_neighbor_timestamps():
         [2],
     )
 
-    assert bad_line_time_spans(result) == [(float("-inf"), 8.0)]
+    assert bad_line_time_spans(result, finished=False) == [(float("-inf"), 8.0)]
 
 
 def test_bad_line_time_span_scales_timestamp_fields():
     result = ReadResult([{"timeNano": 1_000_000_000}, {"timeNano": 3_000_000_000}], False, [2])
 
-    assert bad_line_time_spans(result, "timeNano", 1e-9) == [(1.0, 3.0)]
+    assert bad_line_time_spans(result, "timeNano", 1e-9, finished=False) == [(1.0, 3.0)]
 
 
 def test_bad_line_time_span_without_neighboring_timestamp_uses_infinite_bounds():
     result = ReadResult([{"t": "bad"}, {"t": 2.0}], False, [1])
 
-    assert bad_line_time_spans(result) == [(float("-inf"), 2.0)]
+    assert bad_line_time_spans(result, finished=False) == [(float("-inf"), 2.0)]
 
 
 def test_bad_line_time_span_without_following_timestamp_uses_positive_infinity():
     result = ReadResult([{"t": 2.0}], False, [2])
 
-    assert bad_line_time_spans(result) == [(2.0, float("inf"))]
+    assert bad_line_time_spans(result, finished=False) == [(2.0, float("inf"))]
+
+
+def test_torn_final_line_spans_after_last_row_only_when_finished():
+    result = ReadResult([{"t": 2.0}, {"t": 5.0}], True, [])
+
+    assert bad_line_time_spans(result, finished=True) == [(5.0, float("inf"))]
+    assert bad_line_time_spans(result, finished=False) == []
+
+
+def test_finished_torn_final_line_without_rows_spans_from_negative_infinity():
+    result = ReadResult([], True, [])
+
+    assert bad_line_time_spans(result, finished=True) == [(float("-inf"), float("inf"))]

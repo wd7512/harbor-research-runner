@@ -8,6 +8,7 @@ from pathlib import Path
 
 from harbor_research_runner.records.jsonl import ReadResult, bad_line_time_spans, read_rows
 from harbor_research_runner.records.manifest import verify_manifest
+from harbor_research_runner.records.run_events import final_verdicts, telemetry_finished
 from harbor_research_runner.records.trials import CAP_EXEMPT_REASONS
 
 
@@ -82,27 +83,45 @@ def malformed_jsonl_count(data: bytes) -> int:
     return count
 
 
-def _resource_rows(data: bytes) -> tuple[list[tuple[int, dict]], list[int]]:
+def _resource_rows(data: bytes) -> tuple[list[tuple[int, dict]], list[int], bool]:
     rows = []
     bad_lines = []
     lines = data.split(b"\n")
-    if lines[-1] == b"":
+    ends_with_newline = data.endswith(b"\n")
+    if ends_with_newline:
         lines.pop()
+    torn_last_line = False
     for number, line in enumerate(lines, start=1):
+        is_last = number == len(lines)
+        has_newline = number < len(lines) or ends_with_newline
         try:
             row = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            bad_lines.append(number)
+            if is_last:
+                torn_last_line = True
+            else:
+                bad_lines.append(number)
         else:
             if isinstance(row, dict):
                 rows.append((number, row))
+                if is_last and not has_newline:
+                    torn_last_line = True
             else:
-                bad_lines.append(number)
-    return rows, bad_lines
+                if is_last:
+                    torn_last_line = True
+                else:
+                    bad_lines.append(number)
+    return rows, bad_lines, torn_last_line
 
 
 def _host_window_damaged(
-    row: dict, resource_rows: list[tuple[int, dict]], bad_lines: list[int], interval_s: float
+    row: dict,
+    resource_rows: list[tuple[int, dict]],
+    bad_lines: list[int],
+    torn_last_line: bool,
+    interval_s: float,
+    *,
+    finished: bool,
 ) -> bool:
     start = row.get("agent_started_t")
     end = (
@@ -135,14 +154,18 @@ def _host_window_damaged(
         return True
     if any(min(abs(edge - timestamp) for timestamp in times) > threshold for edge in (start, end)):
         return True
-    sample_result = ReadResult([sample for _line, sample in resource_rows], False, bad_lines)
-    for span_start, span_end in bad_line_time_spans(sample_result):
+    sample_result = ReadResult(
+        [sample for _line, sample in resource_rows], torn_last_line, bad_lines
+    )
+    for span_start, span_end in bad_line_time_spans(sample_result, finished=finished):
         if span_start <= end and span_end >= start:
             return True
     return False
 
 
-def _trial_telemetry_damaged(row: dict, oom: ReadResult, memory: ReadResult) -> bool:
+def _trial_telemetry_damaged(
+    row: dict, oom: ReadResult, memory: ReadResult, *, finished: bool
+) -> bool:
     start = row.get("agent_started_t")
     end = (
         row.get("verifier_finished_t")
@@ -156,8 +179,8 @@ def _trial_telemetry_damaged(row: dict, oom: ReadResult, memory: ReadResult) -> 
         or isinstance(end, bool)
     ):
         return False
-    spans = bad_line_time_spans(oom, "timeNano", 1e-9)
-    spans.extend(bad_line_time_spans(memory))
+    spans = bad_line_time_spans(oom, "timeNano", 1e-9, finished=finished)
+    spans.extend(bad_line_time_spans(memory, finished=finished))
     return any(span_start <= end and span_end >= start for span_start, span_end in spans)
 
 
@@ -170,6 +193,7 @@ def verify(bundle_dir: Path) -> list[Problem]:
     event_rows_result = read_rows(bundle_dir / "run-events.jsonl")
     trials = trial_rows_result.rows
     events = event_rows_result.rows
+    finished = telemetry_finished(events)
     memory_path = bundle_dir / "memory-watch.jsonl"
     memory_rows_result = read_rows(memory_path) if memory_path.exists() else None
     memory_rows = memory_rows_result.rows if memory_rows_result is not None else []
@@ -184,8 +208,8 @@ def verify(bundle_dir: Path) -> list[Problem]:
     report = (bundle_dir / "report.md").read_text(encoding="utf-8")
     resource_path = bundle_dir / "resource-stats.jsonl.gz"
     resource_data = gzip.decompress(resource_path.read_bytes()) if resource_path.exists() else None
-    resource_rows, resource_bad_lines = (
-        _resource_rows(resource_data) if resource_data is not None else ([], [])
+    resource_rows, resource_bad_lines, resource_torn_last_line = (
+        _resource_rows(resource_data) if resource_data is not None else ([], [], False)
     )
     sampler_interval_s = metadata.get("sampler_interval_s", 10.0)
     if (
@@ -214,18 +238,33 @@ def verify(bundle_dir: Path) -> list[Problem]:
     by_trial: dict[str, list[dict]] = {}
     for row in trials:
         by_trial.setdefault(row["trial"], []).append(row)
-    verdicts: dict[str, list[dict]] = {}
+    verdict_events: dict[str, list[dict]] = {}
     for event in events:
         if event.get("type") == "trial_verdict":
-            verdicts.setdefault(event["trial"], []).append(event)
+            verdict_events.setdefault(event["trial"], []).append(event)
+    verdicts = final_verdicts(events)
+    amendments_without_verdict = [
+        event.get("trial")
+        for event in events
+        if event.get("type") == "trial_measurement_amended"
+        and (not isinstance(event.get("trial"), str) or event.get("trial") not in verdict_events)
+    ]
+    for trial in sorted(amendments_without_verdict, key=str):
+        _problem(
+            problems,
+            "trial_identity",
+            str(trial),
+            "trial_verdict event",
+            "amendment without verdict",
+        )
     for trial, rows in by_trial.items():
         if len(rows) != 1:
             _problem(problems, "trial_identity", trial, 1, len(rows))
-        matching = verdicts.get(trial, [])
+        matching = verdict_events.get(trial, [])
         if len(matching) != 1:
             _problem(problems, "trial_identity", trial, 1, len(matching))
         elif len(rows) == 1:
-            row, verdict = rows[0], matching[0]
+            row, verdict = rows[0], verdicts[trial]
             actual = {
                 key: row.get(key) for key in ("valid", "measured", "reason", "unmeasured_reason")
             }
@@ -235,7 +274,7 @@ def verify(bundle_dir: Path) -> list[Problem]:
             }
             if actual != expected:
                 _problem(problems, "trial_identity", trial, expected, actual)
-    for trial in verdicts:
+    for trial in verdict_events:
         if trial not in by_trial:
             _problem(problems, "trial_identity", trial, "trial row", "verdict without trial row")
 
@@ -243,41 +282,51 @@ def verify(bundle_dir: Path) -> list[Problem]:
         trial = row["trial"]
         telemetry_damaged = (
             oom_path.exists() or memory_path.exists()
-        ) and _trial_telemetry_damaged(row, oom_rows_result, memory_rows_result)
-        recorded_damage = (
-            row.get("measured") is False and row.get("unmeasured_reason") == "telemetry_damaged"
-        )
-        if telemetry_damaged != recorded_damage:
-            _problem(
-                problems,
-                "telemetry_damaged",
-                trial,
-                (
-                    {"measured": False, "unmeasured_reason": "telemetry_damaged"}
-                    if telemetry_damaged
-                    else {"measured": True, "unmeasured_reason": None}
-                ),
-                {
-                    "measured": row.get("measured"),
-                    "unmeasured_reason": row.get("unmeasured_reason"),
-                },
-            )
-        if (
+        ) and _trial_telemetry_damaged(row, oom_rows_result, memory_rows_result, finished=finished)
+        verdict = verdicts.get(trial)
+        host_damaged = (
             resource_data is not None
             and any(event.get("type") == "harbor_start" for event in events)
             and _host_window_damaged(
-                row, resource_rows, resource_bad_lines, float(sampler_interval_s)
+                row,
+                resource_rows,
+                resource_bad_lines,
+                resource_torn_last_line,
+                float(sampler_interval_s),
+                finished=finished,
             )
-            and row.get("measured") is True
+        )
+        expected_damage = (
+            "telemetry_damaged"
+            if telemetry_damaged
+            else "host_samples_damaged"
+            if host_damaged
+            else None
+        )
+        recorded_damage = (
+            verdict.get("unmeasured_reason")
+            if verdict is not None
+            and verdict.get("measured") is False
+            and verdict.get("unmeasured_reason") in {"telemetry_damaged", "host_samples_damaged"}
+            else None
+        )
+        if (
+            verdict is not None
+            and (verdict.get("measured") is True or recorded_damage is not None)
+            and recorded_damage != expected_damage
         ):
             _problem(
                 problems,
-                "host_samples_damaged",
+                expected_damage or recorded_damage or "telemetry_damaged",
                 trial,
-                {"measured": False, "unmeasured_reason": "host_samples_damaged"},
+                (
+                    {"measured": False, "unmeasured_reason": expected_damage}
+                    if expected_damage is not None
+                    else {"measured": True, "unmeasured_reason": None}
+                ),
                 {
-                    "measured": row.get("measured"),
-                    "unmeasured_reason": row.get("unmeasured_reason"),
+                    "measured": verdict.get("measured"),
+                    "unmeasured_reason": verdict.get("unmeasured_reason"),
                 },
             )
         if row.get("location") == "set-aside-trials" and row.get("valid") is not False:
@@ -379,7 +428,9 @@ def verify(bundle_dir: Path) -> list[Problem]:
         samples.setdefault(sample["trial"], []).append(sample["used_mb"])
     for row in trials:
         values = samples.get(row["trial"], [])
-        damaged = _trial_telemetry_damaged(row, oom_rows_result, memory_rows_result)
+        damaged = _trial_telemetry_damaged(
+            row, oom_rows_result, memory_rows_result, finished=finished
+        )
         if values or damaged:
             expected = None if damaged else max(values)
             actual = row.get("peak_memory_mb")

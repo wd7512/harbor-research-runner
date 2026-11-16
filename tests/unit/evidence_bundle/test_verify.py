@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from harbor_research_runner.evidence_bundle.build import build
+from harbor_research_runner.evidence_bundle.trials import build_trial_rows
 from harbor_research_runner.evidence_bundle.verify import Problem, verify
 from harbor_research_runner.records.manifest import write_manifest
 
@@ -40,6 +41,64 @@ def _write_rows(path: Path, rows: list[dict]) -> None:
 def _refresh_manifest(bundle: Path) -> None:
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
     write_manifest(bundle, manifest["tool_version"], manifest["tool_commit"], manifest["run_id"])
+
+
+def _finished_telemetry_bundle(
+    tmp_path: Path,
+    *,
+    amendment: bool,
+    stopped: bool = True,
+    unknown_amendment: bool = False,
+) -> Path:
+    run_dir = tmp_path / "finished-run"
+    shutil.copytree(FIXTURES / "clean", run_dir)
+    metadata_path = run_dir / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["machine_check_sha256"] = hashlib.sha256(
+        (run_dir / "machine-check.json").read_bytes()
+    ).hexdigest()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    latest = max(
+        (row for row in build_trial_rows(run_dir) if row.verifier_finished_t is not None),
+        key=lambda row: row.verifier_finished_t,
+    )
+    sample = {
+        "type": "sample",
+        "t": latest.verifier_finished_t - 0.5,
+        "trial": latest.trial,
+        "location": latest.location,
+        "container": "container",
+        "used_mb": 100.0,
+        "limit_mb": 512,
+        "reader": "docker_stats",
+    }
+    (run_dir / "memory-watch.jsonl").write_text(json.dumps(sample) + "\nnot-json", encoding="utf-8")
+    events_path = run_dir / "run-events.jsonl"
+    events = _rows(events_path)
+    if amendment:
+        events.append(
+            {
+                "type": "trial_measurement_amended",
+                "t": latest.verifier_finished_t + 1,
+                "trial": latest.trial,
+                "unmeasured_reason": "telemetry_damaged",
+            }
+        )
+    if unknown_amendment:
+        events.append(
+            {
+                "type": "trial_measurement_amended",
+                "t": latest.verifier_finished_t + 1,
+                "trial": "unknown-trial",
+                "unmeasured_reason": "telemetry_damaged",
+            }
+        )
+    if stopped:
+        events.append({"type": "telemetry_stopped", "t": latest.verifier_finished_t + 2})
+    _write_rows(events_path, events)
+    bundle = tmp_path / "finished-bundle"
+    build(run_dir, bundle, {})
+    return bundle
 
 
 def _host_sample_bundle(
@@ -776,6 +835,33 @@ def test_verdict_without_trial_row_is_reported(tmp_path: Path) -> None:
     assert verify(bundle) == [
         Problem("trial_identity", "unknown-trial", "trial row", "verdict without trial row")
     ]
+
+
+def test_finished_torn_memory_watch_is_accepted_with_amendment(tmp_path: Path) -> None:
+    bundle = _finished_telemetry_bundle(tmp_path, amendment=True)
+
+    assert verify(bundle) == []
+
+
+def test_finished_torn_memory_watch_requires_amendment(tmp_path: Path) -> None:
+    bundle = _finished_telemetry_bundle(tmp_path, amendment=False)
+
+    assert any(problem.invariant == "telemetry_damaged" for problem in verify(bundle))
+
+
+def test_live_torn_memory_watch_does_not_require_amendment(tmp_path: Path) -> None:
+    bundle = _finished_telemetry_bundle(tmp_path, amendment=False, stopped=False)
+
+    assert verify(bundle) == []
+
+
+def test_amendment_for_unknown_trial_is_reported(tmp_path: Path) -> None:
+    bundle = _finished_telemetry_bundle(tmp_path, amendment=False, unknown_amendment=True)
+
+    assert any(
+        problem.invariant == "trial_identity" and problem.subject == "unknown-trial"
+        for problem in verify(bundle)
+    )
 
 
 def test_telemetry_damage_and_null_peak_verify_from_memory_watch_copy(tmp_path: Path) -> None:
