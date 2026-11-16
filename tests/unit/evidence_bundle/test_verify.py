@@ -155,6 +155,67 @@ def test_clean_and_retry_bundles_verify(tmp_path: Path) -> None:
     assert verify(_bundle("retries", tmp_path)) == []
 
 
+def test_unmeasured_reason_mismatch_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("retries", tmp_path)
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    trial = next(row for row in trials if row["trial"] == "unmeasured")
+    assert trial["measured"] is False
+    assert trial["unmeasured_reason"] == "ledger_damaged"
+    trial["unmeasured_reason"] = "other_reason"
+    _write_rows(trials_path, trials)
+    _refresh_manifest(bundle)
+
+    assert verify(bundle) == [
+        Problem(
+            "trial_identity",
+            "unmeasured",
+            {
+                "valid": True,
+                "measured": False,
+                "reason": None,
+                "unmeasured_reason": "ledger_damaged",
+            },
+            {
+                "valid": True,
+                "measured": False,
+                "reason": None,
+                "unmeasured_reason": "other_reason",
+            },
+        )
+    ]
+
+
+def test_unmeasured_reason_matches_the_recorded_verdict(tmp_path: Path) -> None:
+    bundle = _bundle("retries", tmp_path)
+    trials = _rows(bundle / "trials.jsonl")
+    trial = next(row for row in trials if row["trial"] == "unmeasured")
+
+    assert trial["measured"] is False
+    assert trial["unmeasured_reason"] == "ledger_damaged"
+    assert verify(bundle) == []
+
+
+def test_duplicate_trial_does_not_hide_later_proxy_accounting_problem(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    trials_path = bundle / "trials.jsonl"
+    trials = _rows(trials_path)
+    first_trial = trials[0]["trial"]
+    trials.insert(1, dict(trials[0]))
+    later_trial = next(row for row in trials if row["trial"] != first_trial)
+    later_trial["requests"] += 1
+    _write_rows(trials_path, trials)
+    _refresh_manifest(bundle)
+
+    problems = verify(bundle)
+
+    assert Problem("trial_identity", first_trial, 1, 2) in problems
+    assert any(
+        problem.invariant == "proxy_accounting" and problem.subject == later_trial["trial"]
+        for problem in problems
+    )
+
+
 def test_finished_bundle_reports_unjudged_proxy_trial(tmp_path: Path) -> None:
     bundle = _bundle("retries", tmp_path)
     events_path = bundle / "run-events.jsonl"

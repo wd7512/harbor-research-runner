@@ -1,1 +1,1 @@
-Add public run-loop mutation coverage for host profiles, resume deadlines, canary trial counts, and watcher liveness ([#146](https://github.com/wd7512/harbor-research-runner/issues/146)). Use a valid model-backed machine-check record in the watcher integration test and keep the mutation guide focused on survivor dispositions.
+Add public run-loop and evidence-verification mutation coverage, and record every surviving mutant's disposition ([#146](https://github.com/wd7512/harbor-research-runner/issues/146)).

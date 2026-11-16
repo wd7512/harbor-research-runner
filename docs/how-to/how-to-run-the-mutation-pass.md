@@ -41,11 +41,6 @@ Equivalent mutants:
 
 ### harbor_research_runner.evidence_bundle.build
 
-- `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_4`: `filename=None` and `filename=""` produce the same gzip header when the file object is an unnamed `BytesIO`.
-- `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_9`: omitting `mode` lets `GzipFile` infer its write mode from the supplied file object; the compressed payload is unchanged.
-- `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_10`, `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_11` and `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_15`: these select a different valid compression level, which changes only the gzip representation and not its decompressed content or required `mtime`.
-- `harbor_research_runner.evidence_bundle.build.x__gzip__mutmut_14`: a constant gzip filename changes optional header metadata but not the decompressed request rows or deterministic output for the same input.
-- `harbor_research_runner.evidence_bundle.build.x__planned_slots__mutmut_7`, `harbor_research_runner.evidence_bundle.build.x__planned_slots__mutmut_9`, `harbor_research_runner.evidence_bundle.build.x__planned_slots__mutmut_11` and `harbor_research_runner.evidence_bundle.build.x__planned_slots__mutmut_13`: the alternatives differ only for absent or null task-set fields; valid run metadata requires `task_set.tasks` to be a list.
 - `harbor_research_runner.evidence_bundle.build.x__write_files__mutmut_3`, `harbor_research_runner.evidence_bundle.build.x__write_files__mutmut_5` and `harbor_research_runner.evidence_bundle.build.x__write_files__mutmut_7`: `build` supplies only root-level names to `_write_files`, so recursive creation of nested parents is never needed by this caller.
 - `harbor_research_runner.evidence_bundle.build.x_build__mutmut_103`: `UTF-8` and `utf-8` name the same codec.
 - `harbor_research_runner.evidence_bundle.build.x_build__mutmut_134` and `harbor_research_runner.evidence_bundle.build.x_build__mutmut_136`: the temporary directory prefix is not part of the bundle or any returned value.
@@ -100,6 +95,7 @@ Equivalent mutants:
 - `x_run_job__mutmut_4`, `x_run_job__mutmut_195`, `x_run_job__mutmut_243`, `x_resume_run__mutmut_14`, `x_resume_run__mutmut_230`, `x_resume_run__mutmut_261`: each changes a `services_started` value from `False` to `None`; the value is only used as a truthiness guard and is set to `True` after services start, so both values select the same cleanup behavior.
 - `x_run_job__mutmut_196`: the canary-failure branch has already stopped services, and the `finally` cleanup is idempotent, so retaining the started flag only repeats that cleanup without changing observable output.
 - `x__task_ref__mutmut_{1,11,12}`: parsed `Job` values always carry exactly one complete task-source variant, so these alternate boolean expressions have the same result for every valid job.
+- `x__task_ref__mutmut_6`: parsed `Job` values always carry exactly one complete task-source variant, so the alternate boolean expression has the same result for every valid job.
 - `x_make_read_only__mutmut_{3,4,6,7,11}`: changing traversal sort options does not change the final file modes; chmod of child entries does not require parent write permission.
 
 Message-text mutants:
@@ -114,19 +110,19 @@ Message-text mutants:
 
 ### harbor_research_runner.evidence_bundle.verify
 
-8: `x__json__mutmut_7`, `x__jsonl_gzip__mutmut_7`, `x__jsonl_gzip__mutmut_8`, `x__jsonl_gzip__mutmut_15`, `x_verify__mutmut_942`, `x_verify__mutmut_943`, `x_verify__mutmut_944`, `x_verify__mutmut_945`. These alter exception wording or a displayed JSONL line number only; no record, exit code or documented remedy depends on the wording.
+4: `x__json__mutmut_7`, `x__jsonl_gzip__mutmut_7`, `x__jsonl_gzip__mutmut_8` and `x__jsonl_gzip__mutmut_15`. These alter exception wording or a displayed JSONL line number only; no record, exit code or documented remedy depends on the wording.
 
 ### harbor_research_runner.run.checks
 
-49 survivors change only human-readable check details; launch decisions do not depend on that wording. Where a mutant puts `None` into a detail list, the join raises inside `_evaluate`, which still records the check as failed.
+47 survivors change only human-readable check details; launch decisions do not depend on that wording. Where a mutant puts `None` into a detail list, the join raises inside `_evaluate`, which still records the check as failed.
 
 ### harbor_research_runner.records.proxy_ledger
 
-15 survivors change only `ValueError` messages; callers and record validity depend on the exception type and parsed value, not its wording.
+14 survivors change only `ValueError` messages; callers and record validity depend on the exception type and parsed value, not its wording.
 
 ### harbor_research_runner.run.loop
 
-87 survivors change only human-readable exception or log text; no record, return value or documented remedy depends on it: `x_make_read_only__mutmut_{28,31}`, `x_resume_run__mutmut_{3,4,5,6,44,46,47,73,75,91,93,94,112,115,117,145,146,147,148,149,150,151,152,267,268,269}`, `x_run_job__mutmut_{187,191,253,255,259,266,267,268}`, `xǁRefusedToStartǁ__init____mutmut_1` and `xǁRunSessionǁcreate__mutmut_{64,68,69}`.
+47 survivors change only human-readable exception or log text; no record, return value or documented remedy depends on it: `x_make_read_only__mutmut_{28,31}`, `x__canary_passed__mutmut_{59,60}`, `x_resume_run__mutmut_{3,4,5,6,44,46,47,73,75,91,93,94,112,115,117,143,145,146,147,148,149,150,151,152,267,268,269}`, `x_run_job__mutmut_{191,253,255,259,266,267,268}`, `xǁRefusedToStartǁ__init____mutmut_1`, `xǁRunSessionǁcreate__mutmut_{64,68,69}` and `xǁRunSessionǁstart_services__mutmut_{160,161,172,173,174}`.
 
 Not unit-testable:
 
@@ -148,16 +144,18 @@ Not unit-testable:
 ### harbor_research_runner.run.loop
 
 - `x__attach_run_log__mutmut_{4,7}`: omitting the run log's explicit encoding falls back to the locale's encoding, which is UTF-8 on the test hosts; only a non-UTF-8 locale would show the difference.
-- `x_sampler_command__mutmut_{2,6}` and `xǁRunSessionǁstart_services__mutmut_{76,80,111,115,140,144}`: these only uppercase the executable name (`uv` or `python`). On macOS's case-insensitive system disk, PATH lookup still finds the executable; Linux kills these mutants.
+- `x_sampler_command__mutmut_{2,6}` and `xǁRunSessionǁstart_services__mutmut_{76,111,115,140,144}`: these only uppercase the executable name (`uv` or `python`). On macOS's case-insensitive system disk, PATH lookup still finds the executable; Linux kills these mutants.
+- `xǁRunSessionǁstart_services__mutmut_25`: upper-casing `request-bodies` only differs on a case-sensitive filesystem, which the current test host does not provide.
 
-`tests/integration/run/test_loop.py` starts the real proxy and sampler services, and mutmut runs integration tests. The remaining `RunSession.start_services` survivors require process, file-descriptor, socket, or health-endpoint behavior that is covered by the Docker end-to-end lifecycle tier:
+`tests/integration/run/test_loop.py` starts the real proxy and sampler services, and mutmut runs integration tests. These remaining `RunSession.start_services` survivors require subprocess, file-descriptor, socket, or health-endpoint behavior and are not reachable through the unit or integration public boundaries: `xǁRunSessionǁstart_services__mutmut_{27,28,51,53,54,57,58,68,72,101,109,132,133,136,137,157,158,166,167}`.
 
-- `xǁRunSessionǁstart_services__mutmut_{57,68,69,72,73,74,81,83,84,85,87}`.
-- `x_run_job__mutmut_{174,182,183,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,244,245,246,247,248}`: these paths require a Harbor canary trial or a passing canary, and are covered by the e2e lifecycle scenarios, which mutmut does not run.
-- `x__canary_passed__mutmut_{3,61,62,65,69,70,71}` and `x__pass_loop__mutmut_{26,39,79,110,125}`: these paths also require a successful Harbor canary and are covered by e2e lifecycle scenarios.
-- `x__set_aside_trials__mutmut_{21,22}`: this helper runs in the main pass after a successful canary; mutation tests need the e2e lifecycle path.
-- `x__pass_loop__mutmut_{2,4,5,10,11,16,17,18,19,21,22,23,24,25,30,31,32,34,35,36,37,38,40,41,42,43,44,45,46,47,48,51,57,59,70,71,72,78,83,84,85,86,91,92,94,95,96,100,101,102,107,109,111,118,124,140,148,162,163,164}`: the public run path reaches these changes only after a passing Harbor canary.
-- `x_resume_run__mutmut_{187,238,239,240,241,242,243,244,245,246,247,248,249,259,260,262,277,278,279}`: these paths resume main work after a passing canary and are covered by the e2e lifecycle scenarios, which mutmut does not run.
+### Covered only by the end-to-end lifecycle
+
+The main pass, set-aside and resume-after-canary paths can't be reached without Docker and a real Harbor canary, and a follow-up issue tracks making them reachable.
+
+- 134 survivors: `x__canary_passed__mutmut_{8,25,26,27,28,29,58,61,62,65,66,69,70,71}`, `x__pass_loop__mutmut_{2,16,17,18,19,21,22,23,24,25,26,30,31,38,39,42,43,48,51,57,59,70,71,72,78,79,83,84,85,86,91,92,94,95,96,100,101,102,107,109,110,111,118,124,125,140,148,162,163,164}`, `x__set_aside_trials__mutmut_{21,22}`, `x_resume_run__mutmut_{187,238,239,240,241,242,243,244,245,246,247,248,249,259,260,262,277,278,279}` and `x_run_job__mutmut_{174,182,183,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,244,245,246,247,248}`.
+
+The remaining 51 observable survivors are test gaps: `x__agent_configs__mutmut_11`; `x_resume_run__mutmut_{12,13,15,36,51,52,79,80,82,98,99,101,121,122,127,128,130,132,140,153,154,155,156,157,159,162,163,164,180,181}`; `x_run_job__mutmut_{5,6,18,22,23,25,44,80,81,82,86,89,275}`; `x_slots_status__mutmut_31`; and `xǁRunSessionǁcreate__mutmut_{16,19,26,28,30,34}`. They change configuration values, run outcomes, path selection, slot counts, cleanup behavior or run-id construction, all of which can affect public results.
 
 Simplification candidates:
 
@@ -184,8 +182,5 @@ Simplification candidates:
 
 ### harbor_research_runner.run.loop
 
-`_deadline_timestamp` is private state setup; no public outcome or record depends on its internal epoch value.
 - `x__task_ref__mutmut_{18,19,20}`: these change only the private helper's error wording for an incomplete `Job`; the public job parser refuses incomplete task sources before this helper is reached.
-
-- `x__deadline_timestamp__mutmut_2`: its internal timestamp is observable only after a pass loop begins with lifecycle state unavailable to the public fake setup.
 
