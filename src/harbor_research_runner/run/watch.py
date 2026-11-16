@@ -8,7 +8,12 @@ from pathlib import Path
 from harbor_research_runner.harbor_adapter import job_folder, set_aside
 from harbor_research_runner.records import jsonl, machine_check
 from harbor_research_runner.records.jsonl import JsonlTail
-from harbor_research_runner.records.run_events import Halt, TrialVerdict
+from harbor_research_runner.records.run_events import (
+    Halt,
+    TrialMeasurementAmended,
+    TrialVerdict,
+    final_verdicts,
+)
 from harbor_research_runner.run import process_group
 from harbor_research_runner.trial_validity import run_health, verdict
 
@@ -136,6 +141,42 @@ def judge_all_remaining(
         JsonlTail(session.run_dir / "resource-stats.jsonl"),
         halt_reason,
     )
+
+
+def amend_finished_measurements(session, now: float) -> None:
+    events = _read_events(session.run_dir)
+    verdicts = final_verdicts(events)
+    facts_by_trial = {}
+    for location in ("harbor-job", "set-aside-trials", "canary-job"):
+        for trial_dir in job_folder.trial_folders(session.run_dir / location):
+            if trial_dir.name not in verdicts:
+                continue
+            try:
+                facts = job_folder.read_trial(trial_dir)
+            except job_folder.HarborFolderError:
+                continue
+            facts_by_trial[facts.trial] = facts
+    oom_events = jsonl.read_rows(session.run_dir / "docker-oom-events.jsonl")
+    memory_events = jsonl.read_rows(session.run_dir / "memory-watch.jsonl")
+    resource_events = jsonl.read_rows(session.run_dir / "resource-stats.jsonl")
+    for trial, verdict_row in verdicts.items():
+        facts = facts_by_trial.get(trial)
+        if facts is None or verdict_row.get("measured") is not True:
+            continue
+        if verdict.trial_telemetry_damaged(facts, oom_events, memory_events, finished=True):
+            reason = "telemetry_damaged"
+        elif verdict.host_samples_damaged(
+            facts,
+            resource_events,
+            session.metadata.sampler_interval_s,
+            finished=True,
+        ):
+            reason = "host_samples_damaged"
+        else:
+            continue
+        session.event(TrialMeasurementAmended(now, trial, reason))
+        verdict_row["measured"] = False
+        verdict_row["unmeasured_reason"] = reason
 
 
 def _judge_all_remaining(

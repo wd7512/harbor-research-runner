@@ -106,12 +106,15 @@ All `.jsonl` files hold one JSON object per line, UTF-8, keys sorted, no trailin
 ```python
 def append_row(fd: int, row: dict) -> None        # one os.write of a full line
 def read_rows(path: Path) -> ReadResult            # rows, plus problems
+def bad_line_time_spans(result, timestamp_field="t", scale=1.0, *, finished: bool)
 @dataclass(frozen=True)
 class ReadResult:
     rows: list[dict]
-    torn_last_line: bool          # final line unparseable: tolerated, reported
+    torn_last_line: bool          # final line incomplete or unparseable, reported
     bad_lines: list[int]          # 1-based numbers of unparseable non-final lines
 ```
+
+`bad_line_time_spans` receives `finished` explicitly. Live judgement passes `False`, treating a torn final line as a write in progress. After telemetry writers stop, `True` adds a damage span from the latest parsed timestamp (or negative infinity when there are no parsed rows) to positive infinity.
 
 ### 4.1 `proxy-ledger.jsonl`
 
@@ -185,12 +188,15 @@ Each row has `t` and `type`:
 | `harbor_exit` | `pass`, `returncode`, `job` |
 | `stop_launching_at` | `pass`, `time` (timezone-aware ISO-8601 timestamp) |
 | `trial_verdict` | `trial`, `task`, `arm`, `valid` (bool), `reason`, `instrument`, `labels` (list), `measured` (bool), `unmeasured_reason`, `oom_source` (`kernel`, `watchdog`, or null) |
+| `trial_measurement_amended` | `trial`, `unmeasured_reason` (`telemetry_damaged` or `host_samples_damaged`) |
 | `set_aside` | `trial`, `task`, `arm`, `reason` |
 | `halt` | `reason`, `detail` |
 | `resume` | `tool_version`, `tool_commit`, `pid` |
 | `finish` | `exit_code`, `slots_complete`, `slots_incomplete` |
 
 A `trial_verdict` is written exactly once per trial, by `run`, when the trial has finished or is found unfinished at a halt or resume. Nothing else decides validity. The event includes `oom_source` (`kernel`, `watchdog`, or null); if both OOM records fall within the trial's agent/verifier window, the earlier record determines the source. A watchdog `kill` or `kill_failed` row for the trial counts as a watchdog breach at any location.
+
+After the telemetry writers stop on a halt or normal finish, `run` re-reads the telemetry files and appends one `trial_measurement_amended` event for each still-measured trial whose finished-file damage span overlaps its window. The `trial_verdict` remains unchanged; evidence readers apply amendments in order, with the first amendment taking precedence.
 
 ### 4.5 `resource-stats.jsonl`
 
@@ -315,7 +321,7 @@ Rules, first match wins:
 
 Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`).
 
-`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`); any `ok` request has a null prompt or completion token count (`usage_incomplete`); host samples are malformed or have a gap greater than three times `sampler_interval_s` overlapping the agent-to-verifier window (`host_samples_damaged`); a malformed Docker OOM-event or memory-watch line overlaps that window (`telemetry_damaged`); or a required telemetry file is missing after `harbor_start` (`telemetry_missing`). For malformed rows, the interval between the parsed rows on either side of the bad line is attributed to it; a missing side extends the interval to infinity. A host breach still invalidates a damaged trial. An unmeasured trial is not re-run; it stops the run from exiting 0.
+`measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`); any `ok` request has a null prompt or completion token count (`usage_incomplete`); host samples are malformed or have a gap greater than three times `sampler_interval_s` overlapping the agent-to-verifier window (`host_samples_damaged`); a malformed Docker OOM-event or memory-watch line overlaps that window (`telemetry_damaged`); or a required telemetry file is missing after `harbor_start` (`telemetry_missing`). For malformed rows, the interval between parsed rows on either side is attributed to it; a missing side extends the interval to infinity. While live, a torn final line is ignored as a write in progress; after writers stop, it is damage from the latest parsed row to positive infinity. A host breach still invalidates a damaged trial. An unmeasured trial is not re-run; it stops the run from exiting 0.
 
 Validity never reads `reward`, except rule 10, which reads only whether a reward exists.
 
@@ -347,7 +353,7 @@ Harbor's exception labels are never an input to a halt rule.
 5. Watch: every 5 seconds, judge each newly finished trial, write its `trial_verdict`, and evaluate the halt rules. The memory watcher samples each running `harbor-job` and `canary-job` trial container every 2 seconds and kills it when measured use exceeds its task memory limit. Watchdog kill rows only label main-job verdicts.
 6. On halt: write the `halt` reason, stop Harbor's process group, record Harbor's exit code, judge every remaining trial folder, stop the proxy and sampler, and exit 2. A remaining trial with a ledger `open` row and no `close` row whose verdict would otherwise be valid is judged invalid with reason `run_halted` and no instrument; an already invalid verdict stays unchanged. On a `deadline` halt, a remaining trial with no `result.json` and no ledger `open` row (Harbor made its folder but never started it) is judged invalid with reason `deferred` and no instrument. Neither reason counts toward `max_set_asides_per_slot` when set aside on resume.
 7. When Harbor exits on its own, record its exit code before stopping any remaining service processes; do not signal Harbor's process group. Judge every remaining trial folder. If any slot has fewer than `repetitions` valid trials and has not reached `max_set_asides_per_slot`, set aside every invalid trial, then run `harbor jobs resume` as the next pass and go to step 5.
-8. Finish: stop the proxy and sampler, write `finish`, make the run folder read-only, exit 0 or 3.
+8. Finish: stop the telemetry writers, amend any newly unmeasured verdicts using the finished-file rule, write `finish`, make the run folder read-only, exit 0 or 3.
 
 Resume (`hrr run --resume RUN_ID`): acquire the host lock, read the run metadata, repeat the launch checks, start the sampler and the proxy (same host and port, `restart: true`, then wait `restart_cooldown_s`), write `resume`, judge and set aside, then continue from step 7. A refused resume appends nothing. The canary is not repeated. A run with no main-pass `harbor_start` is refused: it never started its main work, so it is restarted as a new run.
 
@@ -441,7 +447,7 @@ built_at = "2026-12-01"
 - `memory-watch.jsonl`: copied.
 - All three telemetry files are required when `run-events.jsonl` has a `harbor_start`; verification reports `telemetry_present` once per missing file. Before `harbor_start`, absent telemetry files are allowed and are omitted from the bundle.
 - `report.md`: generated from `statistics`; its completeness table includes `Trials not yet judged` and counts malformed resource, Docker OOM-event and memory-watch rows when those telemetry files are present. `evidence_bundle.report.render_report` receives the run metadata, events, planned slots, repetitions, unjudged-trial count, and the loaded `MachineCheck` record.
-- `verify-evidence` re-derives the malformed telemetry counts from the copied files and re-derives `telemetry_damaged` for every overlapping trial.
+- `verify-evidence` re-derives the malformed telemetry counts from the copied files, uses the finished-file rule for overlap, and compares trial rows with the verdicts after amendments.
 - `manifest.json`: `tool_version`, `run_id`, and `files` (name, bytes, sha256), written last.
 
 The results explorer verifies every bundle file against `manifest.json` before loading the bundle. A missing or altered file refuses the bundle and is reported with the manifest problems.

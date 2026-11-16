@@ -10,7 +10,9 @@ from harbor_research_runner.records.run_events import (
     Resume,
     SetAside,
     StopLaunchingAt,
+    TrialMeasurementAmended,
     TrialVerdict,
+    final_verdicts,
     parse_event,
 )
 
@@ -21,6 +23,7 @@ EVENTS = [
     HarborExit(1.0, 0, 0, "main"),
     StopLaunchingAt(1.0, 0, "2030-01-01T00:00:00+00:00"),
     TrialVerdict(1.0, "tr", "task", "arm", True, None, None, [], True, None, None),
+    TrialMeasurementAmended(2.0, "tr", "telemetry_damaged"),
     SetAside(1.0, "tr", "task", "arm", "bad"),
     Halt(1.0, "inactive", "detail"),
     Resume(1.0, "v", "c", 10),
@@ -53,3 +56,53 @@ def test_run_event_parser_rejects_unknown_field(event):
 
     with pytest.raises(ValueError):
         parse_event(row)
+
+
+def test_final_verdicts_applies_amendment():
+    verdict = TrialVerdict(1.0, "tr", "task", "arm", True, None, None, [], True, None)
+
+    assert (
+        final_verdicts(
+            [verdict.to_row(), TrialMeasurementAmended(2.0, "tr", "telemetry_damaged").to_row()]
+        )["tr"]["unmeasured_reason"]
+        == "telemetry_damaged"
+    )
+    assert (
+        final_verdicts(
+            [verdict.to_row(), TrialMeasurementAmended(2.0, "tr", "telemetry_damaged").to_row()]
+        )["tr"]["measured"]
+        is False
+    )
+
+
+def test_final_verdicts_ignores_amendment_for_already_unmeasured_trial():
+    verdict = TrialVerdict(
+        1.0, "tr", "task", "arm", True, None, None, [], False, "usage_incomplete"
+    )
+
+    assert (
+        final_verdicts(
+            [verdict.to_row(), TrialMeasurementAmended(2.0, "tr", "telemetry_damaged").to_row()]
+        )["tr"]["unmeasured_reason"]
+        == "usage_incomplete"
+    )
+
+
+def test_final_verdicts_keeps_first_amendment_reason():
+    verdict = TrialVerdict(1.0, "tr", "task", "arm", True, None, None, [], True, None)
+
+    result = final_verdicts(
+        [
+            verdict.to_row(),
+            TrialMeasurementAmended(2.0, "tr", "telemetry_damaged").to_row(),
+            TrialMeasurementAmended(3.0, "tr", "host_samples_damaged").to_row(),
+        ]
+    )
+
+    assert result["tr"]["unmeasured_reason"] == "telemetry_damaged"
+
+
+def test_final_verdicts_leaves_unamended_trial_unchanged():
+    verdict = TrialVerdict(1.0, "tr", "task", "arm", True, None, None, [], True, None)
+
+    assert final_verdicts([verdict.to_row()])["tr"] == verdict.to_row()

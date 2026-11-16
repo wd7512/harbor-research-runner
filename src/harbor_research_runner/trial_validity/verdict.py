@@ -189,10 +189,12 @@ def _host_fault(facts: TrialFacts, resource_rows: list[dict], limits: Limits) ->
     return False
 
 
-def _host_samples_damaged(
+def host_samples_damaged(
     facts: TrialFacts,
     problems: ReadResult,
     interval_s: float,
+    *,
+    finished: bool,
 ) -> bool:
     start = facts.phase_started.get("agent")
     end = (
@@ -222,14 +224,18 @@ def _host_samples_damaged(
     for edge in (start, end):
         if sample_times and min(abs(edge - timestamp) for timestamp in sample_times) > threshold:
             return True
-    for span_start, span_end in bad_line_time_spans(problems):
+    for span_start, span_end in bad_line_time_spans(problems, finished=finished):
         if span_start <= end and span_end >= start:
             return True
     return False
 
 
-def _trial_telemetry_damaged(
-    facts: TrialFacts, oom_events: ReadResult, memory_watch_events: ReadResult
+def trial_telemetry_damaged(
+    facts: TrialFacts,
+    oom_events: ReadResult,
+    memory_watch_events: ReadResult,
+    *,
+    finished: bool,
 ) -> bool:
     start = facts.phase_started.get("agent")
     end = (
@@ -239,8 +245,8 @@ def _trial_telemetry_damaged(
     )
     if start is None or end is None:
         return False
-    spans = bad_line_time_spans(oom_events, "timeNano", 1e-9)
-    spans.extend(bad_line_time_spans(memory_watch_events))
+    spans = bad_line_time_spans(oom_events, "timeNano", 1e-9, finished=finished)
+    spans.extend(bad_line_time_spans(memory_watch_events, finished=finished))
     return any(span_start <= end and span_end >= start for span_start, span_end in spans)
 
 
@@ -293,9 +299,11 @@ def judge_trial(
     measured, unmeasured_reason = _measurement(
         facts.trial, trial_rows, ledger_problems, facts.has_result
     )
-    if measured and _trial_telemetry_damaged(facts, oom_events, memory_watch_events):
+    if measured and trial_telemetry_damaged(facts, oom_events, memory_watch_events, finished=False):
         measured, unmeasured_reason = False, "telemetry_damaged"
-    if measured and _host_samples_damaged(facts, resource_problems, sampler_interval_s):
+    if measured and host_samples_damaged(
+        facts, resource_problems, sampler_interval_s, finished=False
+    ):
         measured, unmeasured_reason = False, "host_samples_damaged"
     start = facts.phase_started.get("agent")
     end = (
