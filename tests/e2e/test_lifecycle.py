@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
 import time
@@ -22,6 +23,12 @@ def test_happy_path_two_arms_exits_zero(e2e_run) -> None:
     result = e2e_run.run()
 
     assert result.returncode == 0, result.stdout
+    expected_commit = os.environ.get("HRR_E2E_EXPECT_COMMIT")
+    if expected_commit is not None:
+        metadata = yaml.safe_load(
+            (e2e_run.run_dir / "run-metadata.json").read_text(encoding="utf-8")
+        )
+        assert metadata["tool_commit"] == expected_commit
     verdicts = [
         row
         for row in e2e_run.events
