@@ -161,7 +161,9 @@ class RunSession:
         limits = Limits.from_dict(
             job.limit_overrides, job.repetitions, machine_check.verifier_timeout_multiplier
         )
-        _append_event(run_dir, Launch(created_t, tool.version, tool.commit, os.getpid()))
+        _append_event(
+            run_dir, Launch(created_t, tool.version, tool.commit, os.getpid(), tool.tool_revision)
+        )
         for result in check_results:
             _append_event(run_dir, LaunchCheck(now(), result.name, result.ok, result.detail))
         if any(not result.ok for result in check_results):
@@ -172,6 +174,7 @@ class RunSession:
             created_t=created_t,
             tool_version=tool.version,
             tool_commit=tool.commit,
+            tool_revision=tool.tool_revision,
             harbor_version=machine_check.harbor_version,
             job=_job_to_row(job),
             job_file_sha256=hashlib.sha256(job.path.read_bytes()).hexdigest(),
@@ -201,11 +204,13 @@ class RunSession:
             limits,
             metadata,
             environment,
-            ToolIdentity(metadata.tool_version, metadata.tool_commit),
+            ToolIdentity(metadata.tool_version, metadata.tool_commit, metadata.tool_revision),
         )
 
     def mark_resumed(self, now) -> None:
-        self.event(Resume(now(), self.tool.version, self.tool.commit, os.getpid()))
+        self.event(
+            Resume(now(), self.tool.version, self.tool.commit, os.getpid(), self.tool.tool_revision)
+        )
 
     def event(self, event) -> None:
         _append_event(self.run_dir, event)
