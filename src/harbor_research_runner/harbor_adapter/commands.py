@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -7,6 +8,21 @@ from harbor_research_runner.job_config.job_file import Job
 
 NEUTRAL_RESUME_FILTER = "hrr-erases-nothing"
 PLUGIN = "harbor_research_runner.harbor_adapter.plugin:RunPlugin"
+
+
+def python_command(*arguments: str) -> list[str]:
+    return [sys.executable, *arguments]
+
+
+def harbor_executable_path() -> Path:
+    return Path(sys.executable).parent / "harbor"
+
+
+def harbor_command() -> str:
+    path = harbor_executable_path()
+    if not path.exists():
+        raise FileNotFoundError(f"Harbor executable not found at {path}")
+    return str(path)
 
 
 def job_config(
@@ -94,9 +110,7 @@ def oracle_job_config(job: Job, task_names: list[str], agent_name: str, job_name
 
 def machine_check_command(check_dir: Path, job_name: str, config_name: str) -> list[str]:
     return [
-        "uv",
-        "run",
-        "harbor",
+        harbor_command(),
         "run",
         "--config",
         str(check_dir / config_name),
@@ -124,9 +138,7 @@ def run_command(
     stop_launching_at: str | None = None,
 ) -> list[str]:
     command = [
-        "uv",
-        "run",
-        "harbor",
+        harbor_command(),
         "run",
         "--config",
         str(run_dir / f"{job_name}-config.yaml"),
@@ -156,9 +168,7 @@ def resume_command(
     stop_launching_at: str | None = None,
 ) -> list[str]:
     command = [
-        "uv",
-        "run",
-        "harbor",
+        harbor_command(),
         "jobs",
         "resume",
         "-p",

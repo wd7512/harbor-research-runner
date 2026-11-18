@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import socket
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +19,7 @@ from harbor_research_runner.docker_host.host_lock import (
 )
 from harbor_research_runner.docker_host.processes import pids_naming_run
 from harbor_research_runner.docker_host.profile import profile_differences
+from harbor_research_runner.harbor_adapter import commands
 from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.harness.manifest import (
     ImageEntry,
@@ -63,6 +66,7 @@ class CheckDeps:
     bind_port: Callable[[str, int], None] = _bind_port
     processes: Callable[[Path], list[int]] = pids_naming_run
     digest_of: Callable[[str], str | None] = local_image_digest
+    children_resolve: Callable[[], tuple[bool, str]] = lambda: children_resolve_check()
 
 
 def _evaluate(name: str, check: Callable[[], tuple[bool, str]]) -> CheckResult:
@@ -72,6 +76,30 @@ def _evaluate(name: str, check: Callable[[], tuple[bool, str]]) -> CheckResult:
         detail = str(exc) or exc.__class__.__name__
         return CheckResult(name, False, detail)
     return CheckResult(name, ok, detail)
+
+
+def children_resolve_check(harbor_path: Path | None = None) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            commands.python_command("-c", "import harbor_research_runner"),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "hrr Python child did not import harbor_research_runner within 60 s"
+    except OSError as exc:
+        return False, f"hrr Python child could not start: {str(exc) or exc.__class__.__name__}"
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or str(result.returncode)
+        return False, f"hrr Python child cannot import harbor_research_runner: {detail}"
+    path = commands.harbor_executable_path() if harbor_path is None else harbor_path
+    if not path.exists():
+        return False, f"Harbor executable does not exist at {path}"
+    if not os.access(path, os.X_OK):
+        return False, f"Harbor executable is not executable at {path}"
+    return True, f"Python child and Harbor executable resolve; Harbor: {path}"
 
 
 def docker_clean_check(deps: CheckDeps) -> tuple[bool, str]:
@@ -132,6 +160,7 @@ def run_folder_not_live_check(run_dir: Path | None, deps: CheckDeps) -> tuple[bo
 
 def machine_check_launch_checks(job: Job, runs_dir: Path, deps: CheckDeps) -> list[CheckResult]:
     return [
+        _evaluate("children_resolve", deps.children_resolve),
         _evaluate("docker_clean", lambda: docker_clean_check(deps)),
         _evaluate("single_run", lambda: single_run_check(runs_dir, deps)),
         _evaluate("host_resources", lambda: host_resources_check(job, deps, 1.0, runs_dir)),
@@ -345,6 +374,7 @@ def run_checks(
         return True, f"host headroom meets the required reserve; {detail}"
 
     return [
+        _evaluate("children_resolve", deps.children_resolve),
         _evaluate("model_card", model_card_check),
         _evaluate("keys_present", keys_present_check),
         _evaluate("arms_pinned", arms_pinned_check),
