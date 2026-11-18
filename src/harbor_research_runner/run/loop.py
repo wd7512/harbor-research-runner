@@ -60,10 +60,7 @@ def _deadline_timestamp(value: str | None) -> float | None:
 
 
 def sampler_command(run_dir: Path, lifeline_fd: int) -> list[str]:
-    return [
-        "uv",
-        "run",
-        "python",
+    return commands.python_command(
         "-m",
         "harbor_research_runner.docker_host.sampler",
         "--interval",
@@ -72,7 +69,7 @@ def sampler_command(run_dir: Path, lifeline_fd: int) -> list[str]:
         str(run_dir / "resource-stats.jsonl"),
         "--lifeline-fd",
         str(lifeline_fd),
-    ]
+    )
 
 
 @dataclass(frozen=True)
@@ -243,17 +240,14 @@ class RunSession:
                 stderr=subprocess.STDOUT,
             )
             self._oom_watch = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
+                commands.python_command(
                     "-m",
                     "harbor_research_runner.docker_host.oom_watch",
                     "--out",
                     str(self.run_dir / "docker-oom-events.jsonl"),
                     "--lifeline-fd",
                     str(read_fd),
-                ],
+                ),
                 env=environment,
                 pass_fds=(read_fd,),
                 stdout=subprocess.DEVNULL,
@@ -261,10 +255,7 @@ class RunSession:
             )
             memory_cap = self.metadata.host["host_profile"]["memory_cap"]
             self._memory_watch = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
+                commands.python_command(
                     "-m",
                     "harbor_research_runner.run.memory_watch",
                     "--run-dir",
@@ -273,24 +264,21 @@ class RunSession:
                     memory_cap,
                     "--lifeline-fd",
                     str(read_fd),
-                ],
+                ),
                 env=environment,
                 pass_fds=(read_fd,),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,
             )
             self._proxy = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
+                commands.python_command(
                     "-m",
                     "harbor_research_runner.model_proxy",
                     "--config",
                     str(config_path),
                     "--lifeline-fd",
                     str(read_fd),
-                ],
+                ),
                 env=environment,
                 pass_fds=(read_fd,),
                 stdout=subprocess.DEVNULL,

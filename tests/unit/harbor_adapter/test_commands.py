@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -251,9 +252,7 @@ def test_run_command_matches_harbor_command_vector(tmp_path: Path):
     command = run_command(run_dir, "harbor-job", "http://127.0.0.1:8766", "slowest_first")
 
     assert command == [
-        "uv",
-        "run",
-        "harbor",
+        str(Path(sys.executable).parent / "harbor"),
         "run",
         "--config",
         str(run_dir / "harbor-job-config.yaml"),
@@ -298,9 +297,7 @@ def test_run_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Path)
     command = run_command(run_dir, "custom-job", "http://127.0.0.1:8766", "as_listed")
 
     assert command == [
-        "uv",
-        "run",
-        "harbor",
+        str(Path(sys.executable).parent / "harbor"),
         "run",
         "--config",
         str(run_dir / "custom-job-config.yaml"),
@@ -349,9 +346,7 @@ def test_machine_check_command_has_no_plugin_or_proxy_settings(tmp_path: Path):
     command = machine_check_command(check_dir, "oracle", "oracle.yaml")
 
     assert command == [
-        "uv",
-        "run",
-        "harbor",
+        str(Path(sys.executable).parent / "harbor"),
         "run",
         "--config",
         str(check_dir / "oracle.yaml"),
@@ -368,9 +363,7 @@ def test_resume_command_matches_harbor_command_vector(tmp_path: Path):
     command = resume_command(run_dir, "harbor-job", "http://127.0.0.1:8766", "slowest_first")
 
     assert command == [
-        "uv",
-        "run",
-        "harbor",
+        str(Path(sys.executable).parent / "harbor"),
         "jobs",
         "resume",
         "-p",
@@ -394,9 +387,7 @@ def test_resume_command_keeps_custom_job_name_and_paths_with_spaces(tmp_path: Pa
     command = resume_command(run_dir, "custom-job", "http://127.0.0.1:8766", "as_listed")
 
     assert command == [
-        "uv",
-        "run",
-        "harbor",
+        str(Path(sys.executable).parent / "harbor"),
         "jobs",
         "resume",
         "-p",
