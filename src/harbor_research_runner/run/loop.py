@@ -60,10 +60,7 @@ def _deadline_timestamp(value: str | None) -> float | None:
 
 
 def sampler_command(run_dir: Path, lifeline_fd: int) -> list[str]:
-    return [
-        "uv",
-        "run",
-        "python",
+    return commands.python_command(
         "-m",
         "harbor_research_runner.docker_host.sampler",
         "--interval",
@@ -72,7 +69,7 @@ def sampler_command(run_dir: Path, lifeline_fd: int) -> list[str]:
         str(run_dir / "resource-stats.jsonl"),
         "--lifeline-fd",
         str(lifeline_fd),
-    ]
+    )
 
 
 @dataclass(frozen=True)
@@ -164,7 +161,9 @@ class RunSession:
         limits = Limits.from_dict(
             job.limit_overrides, job.repetitions, machine_check.verifier_timeout_multiplier
         )
-        _append_event(run_dir, Launch(created_t, tool.version, tool.commit, os.getpid()))
+        _append_event(
+            run_dir, Launch(created_t, tool.version, tool.commit, os.getpid(), tool.tool_revision)
+        )
         for result in check_results:
             _append_event(run_dir, LaunchCheck(now(), result.name, result.ok, result.detail))
         if any(not result.ok for result in check_results):
@@ -175,6 +174,7 @@ class RunSession:
             created_t=created_t,
             tool_version=tool.version,
             tool_commit=tool.commit,
+            tool_revision=tool.tool_revision,
             harbor_version=machine_check.harbor_version,
             job=_job_to_row(job),
             job_file_sha256=hashlib.sha256(job.path.read_bytes()).hexdigest(),
@@ -204,16 +204,24 @@ class RunSession:
             limits,
             metadata,
             environment,
-            ToolIdentity(metadata.tool_version, metadata.tool_commit),
+            ToolIdentity(metadata.tool_version, metadata.tool_commit, metadata.tool_revision),
         )
 
     def mark_resumed(self, now) -> None:
-        self.event(Resume(now(), self.tool.version, self.tool.commit, os.getpid()))
+        self.event(
+            Resume(now(), self.tool.version, self.tool.commit, os.getpid(), self.tool.tool_revision)
+        )
 
     def event(self, event) -> None:
         _append_event(self.run_dir, event)
 
-    def start_services(self, restart: bool) -> None:
+    def start_services(
+        self,
+        restart: bool,
+        *,
+        restart_cooldown_s: float | None = None,
+        health_poll_s: float = 0.5,
+    ) -> None:
         config = ProxyConfig(
             host=self.job.proxy_host,
             port=self.job.proxy_port,
@@ -221,7 +229,9 @@ class RunSession:
             bodies_dir=str(self.run_dir / "request-bodies"),
             model=_card_to_row(self.card),
             limits=self.limits.to_row(),
-            restart_cooldown_s=60.0 if restart else 0.0,
+            restart_cooldown_s=(
+                restart_cooldown_s if restart_cooldown_s is not None else (60.0 if restart else 0.0)
+            ),
             session_id=session_id_for_run(self.run_dir.name),
         )
         config_path = self.run_dir / "proxy-config.json"
@@ -243,17 +253,14 @@ class RunSession:
                 stderr=subprocess.STDOUT,
             )
             self._oom_watch = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
+                commands.python_command(
                     "-m",
                     "harbor_research_runner.docker_host.oom_watch",
                     "--out",
                     str(self.run_dir / "docker-oom-events.jsonl"),
                     "--lifeline-fd",
                     str(read_fd),
-                ],
+                ),
                 env=environment,
                 pass_fds=(read_fd,),
                 stdout=subprocess.DEVNULL,
@@ -261,10 +268,7 @@ class RunSession:
             )
             memory_cap = self.metadata.host["host_profile"]["memory_cap"]
             self._memory_watch = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
+                commands.python_command(
                     "-m",
                     "harbor_research_runner.run.memory_watch",
                     "--run-dir",
@@ -273,24 +277,21 @@ class RunSession:
                     memory_cap,
                     "--lifeline-fd",
                     str(read_fd),
-                ],
+                ),
                 env=environment,
                 pass_fds=(read_fd,),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,
             )
             self._proxy = process_group.spawn_group(
-                [
-                    "uv",
-                    "run",
-                    "python",
+                commands.python_command(
                     "-m",
                     "harbor_research_runner.model_proxy",
                     "--config",
                     str(config_path),
                     "--lifeline-fd",
                     str(read_fd),
-                ],
+                ),
                 env=environment,
                 pass_fds=(read_fd,),
                 stdout=subprocess.DEVNULL,
@@ -313,16 +314,16 @@ class RunSession:
                         return
             except (OSError, urllib.error.URLError):
                 pass
-            time.sleep(0.5)
+            time.sleep(health_poll_s)
         self.stop_services()
         raise TimeoutError("proxy did not become healthy within 30 seconds")
 
-    def stop_services(self) -> None:
+    def stop_services(self, *, grace_s: float = 15.0) -> None:
         try:
             for name in ("_proxy", "_sampler", "_oom_watch", "_memory_watch"):
                 process = getattr(self, name)
                 if process is not None and process.poll() is None:
-                    process_group.stop_group(process, grace_s=15)
+                    process_group.stop_group(process, grace_s=grace_s)
                 setattr(self, name, None)
         finally:
             if self._lifeline_write_fd is not None:

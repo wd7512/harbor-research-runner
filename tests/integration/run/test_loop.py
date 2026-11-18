@@ -18,6 +18,7 @@ from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
 from harbor_research_runner.evidence_bundle.build import build as build_evidence
 from harbor_research_runner.evidence_bundle.verify import verify as verify_evidence
+from harbor_research_runner.harbor_adapter.commands import harbor_command
 from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.records import jsonl
 from harbor_research_runner.records.machine_check import MachineCheck
@@ -127,6 +128,7 @@ def _run_deps(
     host_lock = HostLock(tmp_path / "host.lock")
     checks = CheckDeps(
         select_adapter=lambda *_args: object(),
+        children_resolve=lambda: (True, "children resolve"),
         measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
         inventory=lambda: Inventory(True, "ok", (), ()),
         live_run=lambda _path: None,
@@ -135,6 +137,7 @@ def _run_deps(
         host_fingerprint=lambda: "fingerprint",
         harbor_version=lambda: "0.23.0",
         docker_memory_mb=lambda: 32768,
+        host_memory_mb=lambda: 32768,
         host_profile=lambda: _PROFILE,
         processes=lambda _run_dir: [],
     )
@@ -160,8 +163,12 @@ def _run_deps(
         },
         start_harbor=start_harbor,
         watch=lambda *_args: None,
-        start_services=lambda session, restart: session.start_services(restart),
-        stop_services=lambda session: session.stop_services(),
+        start_services=lambda session, restart: session.start_services(
+            restart,
+            restart_cooldown_s=0.01 if restart else 0.0,
+            health_poll_s=0.01,
+        ),
+        stop_services=lambda session: session.stop_services(grace_s=0.1),
         now=lambda: _NOW,
     )
     return job_path, manifest_path, tmp_path / "runs", deps, port
@@ -179,9 +186,7 @@ def _assert_proxy_stopped(port: int) -> None:
 
 def _expected_canary_argv(run_dir: Path, port: int) -> list[str]:
     return [
-        "uv",
-        "run",
-        "harbor",
+        harbor_command(),
         "run",
         "--config",
         str(run_dir / "canary-job-config.yaml"),
@@ -578,7 +583,7 @@ def test_resume_restarts_the_proxy_with_the_restart_cooldown(
     assert resumed.exit_code == 0
     assert resumed.run_dir is not None
     proxy_config = json.loads((resumed.run_dir / "proxy-config.json").read_text(encoding="utf-8"))
-    assert proxy_config["restart_cooldown_s"] == 60.0
+    assert proxy_config["restart_cooldown_s"] == 0.01
     _assert_proxy_stopped(port)
 
 

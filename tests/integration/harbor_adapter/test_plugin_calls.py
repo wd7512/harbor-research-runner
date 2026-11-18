@@ -14,7 +14,7 @@ import pytest
 from harbor.models.trial.config import AgentConfig, TaskConfig, TrialConfig
 from harbor.trial.hooks import TrialEvent, TrialHookEvent
 
-from harbor_research_runner.harbor_adapter.plugin import RamSpareGate, RunPlugin
+from harbor_research_runner.harbor_adapter.plugin import MemoryReservationGate, RunPlugin
 from harbor_research_runner.local_http import LocalHTTPServer
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.proxy_control import ProxyConfig
@@ -214,20 +214,88 @@ class _Clock:
         self.now += seconds
 
 
+def test_two_typical_trials_fit_with_reservation() -> None:
+    async def run() -> None:
+        gate = MemoryReservationGate(
+            docker_memory_reader=lambda: 16384,
+            memory_reserve_mb=4096,
+        )
+
+        await gate.wait_for_headroom(trial="first", task="task", memory_mb=2048)
+        await gate.wait_for_headroom(trial="second", task="task", memory_mb=2048)
+
+        assert gate.reserved_memory_mb == 4096
+
+    asyncio.run(run())
+
+
+def test_trial_larger_than_docker_memory_budget_is_refused() -> None:
+    async def run() -> None:
+        gate = MemoryReservationGate(
+            docker_memory_reader=lambda: 16384,
+            memory_reserve_mb=4096,
+        )
+
+        with pytest.raises(RuntimeError, match="reservation exceeds Docker memory"):
+            await gate.wait_for_headroom(trial="too-large", task="task", memory_mb=12289)
+
+        assert gate.reserved_memory_mb == 0
+
+    asyncio.run(run())
+
+
+def test_largest_trial_waits_for_reservation_release() -> None:
+    async def run() -> None:
+        clock = _Clock()
+        waiting = asyncio.Event()
+        released = asyncio.Event()
+
+        async def sleep_until_release(seconds: float) -> None:
+            clock.now += seconds
+            waiting.set()
+            await released.wait()
+
+        gate = MemoryReservationGate(
+            docker_memory_reader=lambda: 16384,
+            memory_reserve_mb=4096,
+            clock=clock,
+            sleep=sleep_until_release,
+            initial_backoff_s=1,
+        )
+        for index in range(4):
+            await gate.wait_for_headroom(trial=f"typical-{index}", task="task", memory_mb=2048)
+        largest = asyncio.create_task(
+            gate.wait_for_headroom(trial="largest", task="task", memory_mb=8192)
+        )
+        await waiting.wait()
+        assert not largest.done()
+
+        gate.release("typical-0")
+        gate.release("typical-1")
+        released.set()
+        await largest
+
+        assert gate.reserved_memory_mb == 12288
+        assert clock.now >= 1
+
+    asyncio.run(run())
+
+
 def test_pacing_defers_then_admits_after_interval(caplog: pytest.LogCaptureFixture) -> None:
     async def run() -> None:
         clock = _Clock()
-        gate = RamSpareGate(
-            min_spare_memory_mb=0,
+        gate = MemoryReservationGate(
+            docker_memory_reader=lambda: 16384,
+            memory_reserve_mb=4096,
             launch_min_interval_s=20.0,
             clock=clock,
             sleep=clock.sleep,
         )
-        await gate.wait_for_headroom(trial="first", task="task")
+        await gate.wait_for_headroom(trial="first", task="task", memory_mb=2048)
         assert clock.now == 0.0
         clock.now = 5.0
 
-        await gate.wait_for_headroom(trial="second", task="task")
+        await gate.wait_for_headroom(trial="second", task="task", memory_mb=2048)
 
         assert clock.now >= 20.0
 
@@ -244,57 +312,34 @@ def test_pacing_admits_at_and_after_exact_boundary_with_no_deferral(elapsed: flo
         async def must_not_sleep(_seconds: float) -> None:
             raise AssertionError("gate paced at or after the interval")
 
-        gate = RamSpareGate(
-            min_spare_memory_mb=0,
+        gate = MemoryReservationGate(
+            docker_memory_reader=lambda: 16384,
+            memory_reserve_mb=4096,
             launch_min_interval_s=20.0,
             clock=clock,
             sleep=must_not_sleep,
         )
-        await gate.wait_for_headroom(trial="first", task="task")
+        await gate.wait_for_headroom(trial="first", task="task", memory_mb=2048)
         clock.now = elapsed
 
-        await gate.wait_for_headroom(trial="second", task="task")
+        await gate.wait_for_headroom(trial="second", task="task", memory_mb=2048)
 
     asyncio.run(run())
 
 
-def test_launch_waits_for_spare_memory() -> None:
-    async def run() -> list[str]:
-        launched: list[str] = []
-        gate = RamSpareGate(min_spare_memory_mb=10**12)
-
-        async def worker() -> None:
-            await gate.wait_for_headroom(trial="trial-1", task=TASK)
-            launched.append("trial-1")
-
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(worker(), timeout=0.05)
-        return launched
-
-    assert asyncio.run(run()) == []
-
-
-def test_permanently_closed_gate_queues_without_launching() -> None:
-    async def run() -> list[str]:
-        launched: list[str] = []
-        gate = RamSpareGate(min_spare_memory_mb=10**12)
-
-        async def worker() -> None:
-            await gate.wait_for_headroom(trial="trial-1", task="slow-task")
-            launched.append("trial-1")
-
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(worker(), timeout=0.05)
-        return launched
-
-    assert asyncio.run(run()) == []
-
-
 def test_plugin_rejects_invalid_launch_min_interval() -> None:
     with pytest.raises(ValueError, match="launch_min_interval_s"):
-        RamSpareGate(min_spare_memory_mb=0, launch_min_interval_s=-1)
+        MemoryReservationGate(
+            docker_memory_reader=lambda: 16384,
+            memory_reserve_mb=4096,
+            launch_min_interval_s=-1,
+        )
 
 
 def test_non_finite_launch_min_interval_fails_closed() -> None:
     with pytest.raises(ValueError, match="launch_min_interval_s"):
-        RamSpareGate(min_spare_memory_mb=0, launch_min_interval_s=float("nan"))
+        MemoryReservationGate(
+            docker_memory_reader=lambda: 16384,
+            memory_reserve_mb=4096,
+            launch_min_interval_s=float("nan"),
+        )

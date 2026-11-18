@@ -82,7 +82,7 @@ def _sample(t, mem_available_mb=8192, swapped_out_pages=0, disk_free_gb=100, doc
 
 
 def _breach(t):
-    return _sample(t, mem_available_mb=1024)
+    return _sample(t, swapped_out_pages=1)
 
 
 def _snapshot(**overrides):
@@ -186,37 +186,50 @@ def test_quota_exhausted_halts_before_an_invalid_streak():
     assert result[0] == "quota_exhausted"
 
 
-def test_zero_billed_window_halts_without_an_ok_request():
-    rows = [_open(1, NOW - 1000)]
-
-    result = should_halt(
-        _snapshot(ledger_rows_since_pass_start=rows, open_trials=1), DEFAULT_LIMITS
-    )
-
-    assert result is not None
-    assert result[0] == "zero_billed_window"
-
-
-def test_recent_ok_request_keeps_the_zero_billed_window_open():
-    rows = [_open(1, NOW - 2000), _request_end(2, NOW - 100)]
+def test_open_trials_with_idle_after_successful_requests_do_not_halt():
+    rows = []
+    for seq in range(1, 19):
+        rows.append({"type": "request_start", "seq": seq * 2 - 1, "t": NOW - 923 + seq})
+        rows.append(_request_end(seq * 2, NOW - 923 + seq, status="ok"))
 
     assert (
-        should_halt(_snapshot(ledger_rows_since_pass_start=rows, open_trials=1), DEFAULT_LIMITS)
+        should_halt(
+            _snapshot(now=NOW, ledger_rows_since_pass_start=rows, open_trials=2), DEFAULT_LIMITS
+        )
         is None
     )
 
 
-def test_zero_billed_window_is_disabled_when_no_trial_is_open():
-    rows = [_open(1, NOW - 2000)]
+def test_consecutive_upstream_failures_halt():
+    rows = [_request_end(seq, NOW - seq, status="rate_limited") for seq in range(1, 11)]
+
+    assert should_halt(_snapshot(ledger_rows_since_pass_start=rows), DEFAULT_LIMITS) == (
+        "upstream_failure_streak",
+        "10 consecutive failed requests (last status rate_limited)",
+    )
+
+
+def test_success_resets_upstream_failure_streak():
+    rows = [_request_end(seq, NOW - seq, status="rate_limited") for seq in range(1, 10)]
+    rows.append(_request_end(10, NOW, status="ok"))
 
     assert should_halt(_snapshot(ledger_rows_since_pass_start=rows), DEFAULT_LIMITS) is None
 
 
-def test_empty_pass_ledger_anchors_the_zero_billed_window_at_last_activity():
-    result = should_halt(_snapshot(open_trials=1, last_activity_t=NOW - 1000), DEFAULT_LIMITS)
+def test_client_errors_do_not_reset_upstream_failure_streak():
+    rows = [_request_end(seq, NOW - seq, status="rate_limited") for seq in range(1, 6)]
+    rows.append(_request_end(6, NOW - 1, status="client_error"))
+    rows.append(_request_end(7, NOW - 1, status="client_disconnect"))
+    rows.extend(_request_end(seq, NOW, status="transport_error") for seq in range(8, 13))
 
-    assert result is not None
-    assert result[0] == "zero_billed_window"
+    assert should_halt(_snapshot(ledger_rows_since_pass_start=rows), DEFAULT_LIMITS) == (
+        "upstream_failure_streak",
+        "10 consecutive failed requests (last status transport_error)",
+    )
+
+
+def test_no_requests_do_not_trigger_upstream_failure_streak():
+    assert should_halt(_snapshot(open_trials=2), DEFAULT_LIMITS) is None
 
 
 def test_proxy_dead_halts_run():
