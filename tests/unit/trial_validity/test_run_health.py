@@ -82,7 +82,7 @@ def _sample(t, mem_available_mb=8192, swapped_out_pages=0, disk_free_gb=100, doc
 
 
 def _breach(t):
-    return _sample(t, mem_available_mb=1024)
+    return _sample(t, swapped_out_pages=1)
 
 
 def _snapshot(**overrides):

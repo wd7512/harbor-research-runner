@@ -214,7 +214,7 @@ One record, declared in the job file under `limits`, copied into `run-metadata.j
 
 Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_output_rate_min` [2.0 tokens/s], `first_chunk_max_s` [180], `inter_chunk_gap_max_s` [180], `request_latency_max_s` [1200], `halt_after_consecutive_invalid` [5], `zero_billed_window_s` [900].
 
-Host: `min_spare_memory_mb` [2048], `memory_reserve_mb` [4096], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` field. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
+Host: `memory_reserve_mb` [4096], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. Admission reserves each started task's declared `memory_mb`; a trial starts only when admitted reservations plus its memory plus `memory_reserve_mb` fit Docker MemTotal. The reservation is released at Harbor's trial `END` event. `mem_available_mb` remains telemetry and does not trigger `host_breach`; swap-outs, disk space and Docker health do. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` and `min_spare_memory_mb` fields. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
 
 Run: `max_set_asides_per_slot` [2 x repetitions; `deferred` and `run_halted` set-asides do not count toward the cap], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
 
@@ -337,7 +337,7 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 | `proxy_dead` | the proxy process has exited |
 | `oom_watch_dead` | the Docker OOM watcher process has exited |
 | `sampler_dead` | no resource sample for 40 seconds |
-| `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit; swap breaches only when pages were swapped out since the previous sample above `max_swapped_out_pages` |
+| `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit (swap-outs above `max_swapped_out_pages`, low disk, or Docker unavailable); swap breaches only when pages were swapped out since the previous sample |
 | `inactive` | no ledger row and no new `result.json` for longer than the largest task agent budget x Harbor's timeout multiplier + the largest verifier budget x `verifier_timeout_multiplier` + `inactivity_margin_s` |
 | `deadline` | the timezone-aware launch deadline plus two watch poll intervals has passed and no trial opened in this pass remains unjudged |
 | `harbor_exit` | Harbor exited on its own, nothing is left to set aside, and planned trials have no trial folder; the detail names Harbor's exit code. The run stays resumable. A non-zero exit code alone is not a halt: Harbor exits non-zero in normal flows |
@@ -379,7 +379,7 @@ Machine checks run `uv run harbor run --config <check-dir>/<config-name> --jobs-
 
 The Harbor plugin (`harbor_adapter/plugin.py`), on Harbor's trial events:
 
-- `START`: wait until spare memory is above the limit and `launch_min_interval_s` has passed since the last launch (ported from OLD's launch gate).
+- `START`: reserve the task's declared `memory_mb` only when admitted reservations plus that memory plus `memory_reserve_mb` fit Docker MemTotal; otherwise wait with back-off. Release the reservation at Harbor's `END` event. Preserve `launch_min_interval_s` pacing between admissions.
 - `AGENT_START`: when `stop_launching_at` is set and its time has passed, wait indefinitely before opening the proxy trial; otherwise `POST /control/open` with the trial name, task name and the arm label from the agent's settings.
 - `AGENT_END`: `POST /control/close`. This fires when the agent phase ends for any reason, including Harbor's timeout, and before the verifier starts.
 - `on_job_start`: when `task_order` is `slowest_first`, stably sort Harbor's remaining trial configs by descending agent budget from each task's `task.toml`; ties keep Harbor's order.
