@@ -4,6 +4,7 @@ import asyncio
 import logging
 import math
 import time
+import tomllib
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ from harbor.models.job.result import JobResult
 from harbor.models.trial.config import TrialConfig
 from harbor.trial.hooks import TrialEvent, TrialHookEvent
 
-from harbor_research_runner.docker_host.resources import spare_memory_mb
+from harbor_research_runner.docker_host.cleanup import docker_memory_mb
 from harbor_research_runner.harbor_adapter.job_folder import HarborFolderError, task_timeouts
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.proxy_control import (
@@ -34,27 +35,22 @@ _INITIAL_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 60.0
 
 
-def spare_is_sufficient(spare_mb: int, required_mb: int) -> bool:
-    """Return whether measured spare memory meets the configured limit."""
-    return spare_mb >= required_mb
-
-
-class RamSpareGate:
+class MemoryReservationGate:
     def __init__(
         self,
         *,
-        min_spare_memory_mb: int,
+        memory_reserve_mb: int,
         launch_min_interval_s: float = 0.0,
-        spare_reader: Callable[[], int] = spare_memory_mb,
+        docker_memory_reader: Callable[[], int] = docker_memory_mb,
         sleep: Callable[[float], Any] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
         initial_backoff_s: float = _INITIAL_BACKOFF_S,
         max_backoff_s: float = _MAX_BACKOFF_S,
     ) -> None:
-        if isinstance(min_spare_memory_mb, bool) or not isinstance(min_spare_memory_mb, int):
-            raise ValueError("min_spare_memory_mb must be an integer")
-        if min_spare_memory_mb < 0:
-            raise ValueError("min_spare_memory_mb must be non-negative")
+        if isinstance(memory_reserve_mb, bool) or not isinstance(memory_reserve_mb, int):
+            raise ValueError("memory_reserve_mb must be an integer")
+        if memory_reserve_mb < 0:
+            raise ValueError("memory_reserve_mb must be non-negative")
         if (
             isinstance(launch_min_interval_s, bool)
             or not isinstance(launch_min_interval_s, (int, float))
@@ -67,41 +63,59 @@ class RamSpareGate:
             )
         if initial_backoff_s <= 0 or max_backoff_s < initial_backoff_s:
             raise ValueError("backoff bounds must satisfy 0 < initial <= max")
-        self.min_spare_memory_mb = min_spare_memory_mb
+        self.memory_reserve_mb = memory_reserve_mb
         self.launch_min_interval_s = float(launch_min_interval_s)
-        self._spare_reader = spare_reader
+        self._docker_memory_reader = docker_memory_reader
         self._sleep = sleep
         self._clock = clock
         self._initial_backoff_s = initial_backoff_s
         self._max_backoff_s = max_backoff_s
         self._last_launch: float | None = None
+        self._reservations: dict[str, int] = {}
 
-    async def wait_for_headroom(self, *, trial: str, task: str) -> None:
+    @property
+    def reserved_memory_mb(self) -> int:
+        return sum(self._reservations.values())
+
+    async def wait_for_headroom(self, *, trial: str, task: str, memory_mb: int) -> None:
+        if isinstance(memory_mb, bool) or not isinstance(memory_mb, int) or memory_mb < 0:
+            raise ValueError(f"task {task!r} has invalid memory_mb {memory_mb!r}")
         backoff = self._initial_backoff_s
         attempts = 0
         while True:
             try:
-                spare_mb = int(await asyncio.to_thread(self._spare_reader))
+                docker_memory = int(await asyncio.to_thread(self._docker_memory_reader))
             except (OSError, TypeError, ValueError) as exc:
                 raise RuntimeError(str(exc)) from exc
+            if memory_mb + self.memory_reserve_mb > docker_memory:
+                raise RuntimeError(
+                    f"task {task!r} reservation exceeds Docker memory: "
+                    f"reserved_mb={self.reserved_memory_mb}, task_memory_mb={memory_mb}, "
+                    f"memory_reserve_mb={self.memory_reserve_mb}, docker_memory_mb={docker_memory}"
+                )
             now = self._clock()
-            enough_memory = spare_is_sufficient(spare_mb, self.min_spare_memory_mb)
+            required_memory = self.reserved_memory_mb + memory_mb + self.memory_reserve_mb
+            enough_memory = required_memory <= docker_memory
             since_last = None if self._last_launch is None else now - self._last_launch
             interval_passed = since_last is None or since_last >= self.launch_min_interval_s
             if enough_memory and interval_passed:
                 if attempts:
                     logger.info("launch gate: admitting %s after %d deferral(s)", trial, attempts)
+                self._reservations[trial] = memory_mb
                 self._last_launch = now
                 return
             attempts += 1
             if attempts == 1:
                 if not enough_memory:
                     logger.warning(
-                        "launch gate: deferring %s (task %s): spare %d MB < limit %d MB",
+                        "launch gate: deferring %s (task %s): reserved %d MB + task %d MB "
+                        "+ reserve %d MB > Docker memory %d MB",
                         trial,
                         task,
-                        spare_mb,
-                        self.min_spare_memory_mb,
+                        self.reserved_memory_mb,
+                        memory_mb,
+                        self.memory_reserve_mb,
+                        docker_memory,
                     )
                 else:
                     logger.warning(
@@ -111,6 +125,9 @@ class RamSpareGate:
                 logger.debug("launch gate: still deferring %s (attempt %d)", trial, attempts)
             await self._sleep(backoff)
             backoff = min(self._max_backoff_s, backoff * 2)
+
+    def release(self, trial: str) -> None:
+        self._reservations.pop(trial, None)
 
 
 class StopLaunchingGate:
@@ -174,10 +191,11 @@ class RunPlugin(BaseJobPlugin):
         limits = Limits.from_row(proxy_config.limits)
         self.proxy_url = proxy_url.rstrip("/")
         self.task_order = task_order
-        self._gate = RamSpareGate(
-            min_spare_memory_mb=limits.min_spare_memory_mb,
+        self._gate = MemoryReservationGate(
+            memory_reserve_mb=limits.memory_reserve_mb,
             launch_min_interval_s=limits.launch_min_interval_s,
         )
+        self._job: Job | None = None
         deadline = None
         if stop_launching_at is not None:
             parsed_deadline = datetime.fromisoformat(stop_launching_at)
@@ -223,8 +241,29 @@ class RunPlugin(BaseJobPlugin):
             )
         return agent_timeout
 
+    def _task_memory_mb(self, config: TrialConfig) -> int:
+        label = self._task_label(config)
+        task_dir = self._task_dir(self._job, config) if self._job is not None else None
+        if task_dir is None:
+            raise HarborFolderError(f"cannot resolve task folder for {label!r}")
+        path = task_dir / _TASK_TOML
+        try:
+            task_data = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise HarborFolderError(f"cannot read task memory for {label!r}: {exc}") from exc
+        environment = task_data.get("environment", {})
+        memory_mb = environment.get("memory_mb") if isinstance(environment, dict) else None
+        if isinstance(memory_mb, bool) or not isinstance(memory_mb, int) or memory_mb < 0:
+            raise HarborFolderError(
+                f"task {label!r} has invalid environment.memory_mb {memory_mb!r}"
+            )
+        return memory_mb
+
     async def _on_trial_start(self, event: TrialHookEvent) -> None:
-        await self._gate.wait_for_headroom(trial=event.trial_name, task=event.task_name)
+        memory_mb = self._task_memory_mb(event.config)
+        await self._gate.wait_for_headroom(
+            trial=event.trial_name, task=event.task_name, memory_mb=memory_mb
+        )
 
     async def _on_agent_start(self, event: TrialHookEvent) -> None:
         await self._stop_launching_gate.wait_until_open(
@@ -259,7 +298,11 @@ class RunPlugin(BaseJobPlugin):
                     return
                 await asyncio.sleep(1.0)
 
+    async def _on_trial_end(self, event: TrialHookEvent) -> None:
+        self._gate.release(event.trial_name)
+
     async def on_job_start(self, job: Job) -> None:
+        self._job = job
         if self.task_order == "slowest_first":
             job._remaining_trial_configs = sort_slowest_first(
                 job._remaining_trial_configs,
@@ -268,6 +311,7 @@ class RunPlugin(BaseJobPlugin):
         job.add_hook(TrialEvent.START, self._on_trial_start)
         job.add_hook(TrialEvent.AGENT_START, self._on_agent_start)
         job.add_hook(TrialEvent.AGENT_END, self._on_agent_end)
+        job.add_hook(TrialEvent.END, self._on_trial_end)
 
     async def on_job_end(self, job_result: JobResult) -> None:
         del job_result

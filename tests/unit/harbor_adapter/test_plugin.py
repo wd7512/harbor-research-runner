@@ -10,7 +10,6 @@ from harbor.trial.hooks import TrialEvent
 from harbor_research_runner.harbor_adapter.plugin import (
     RunPlugin,
     StopLaunchingGate,
-    spare_is_sufficient,
 )
 from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.proxy_control import ProxyConfig
@@ -70,16 +69,6 @@ def _plugin(tmp_path: Path, task_order: str = "as_listed") -> RunPlugin:
     )
 
 
-@pytest.mark.parametrize(
-    ("spare_mb", "limit_mb", "expected"),
-    [(2048, 2048, True), (2047, 2048, False), (2049, 2048, True)],
-)
-def test_spare_memory_limit_includes_the_boundary(
-    spare_mb: int, limit_mb: int, expected: bool
-) -> None:
-    assert spare_is_sufficient(spare_mb, limit_mb) is expected
-
-
 def test_run_plugin_registers_start_and_agent_hooks(tmp_path: Path) -> None:
     job = _Job([])
 
@@ -89,6 +78,7 @@ def test_run_plugin_registers_start_and_agent_hooks(tmp_path: Path) -> None:
         TrialEvent.START,
         TrialEvent.AGENT_START,
         TrialEvent.AGENT_END,
+        TrialEvent.END,
     ]
 
 

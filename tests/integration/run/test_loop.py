@@ -18,6 +18,7 @@ from harbor_research_runner.docker_host.cleanup import Inventory
 from harbor_research_runner.docker_host.host_lock import HostLock
 from harbor_research_runner.evidence_bundle.build import build as build_evidence
 from harbor_research_runner.evidence_bundle.verify import verify as verify_evidence
+from harbor_research_runner.harbor_adapter.commands import harbor_command
 from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.records import jsonl
 from harbor_research_runner.records.machine_check import MachineCheck
@@ -127,6 +128,7 @@ def _run_deps(
     host_lock = HostLock(tmp_path / "host.lock")
     checks = CheckDeps(
         select_adapter=lambda *_args: object(),
+        children_resolve=lambda: (True, "children resolve"),
         measure=lambda **_kwargs: (Sample(1.0, 4096, 0, 100.0, 0.0, 0, True), 0),
         inventory=lambda: Inventory(True, "ok", (), ()),
         live_run=lambda _path: None,
@@ -179,9 +181,7 @@ def _assert_proxy_stopped(port: int) -> None:
 
 def _expected_canary_argv(run_dir: Path, port: int) -> list[str]:
     return [
-        "uv",
-        "run",
-        "harbor",
+        harbor_command(),
         "run",
         "--config",
         str(run_dir / "canary-job-config.yaml"),

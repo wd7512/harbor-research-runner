@@ -71,6 +71,7 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
             prompt_tokens = sum(row["prompt_tokens"] or 0 for row in ends)
             completion_tokens = sum(row["completion_tokens"] or 0 for row in ends)
             cached_read_tokens = sum(row["cached_read_tokens"] or 0 for row in ends)
+            priced_ends = [row for row in ends if row["prompt_tokens"] is not None]
             pricing = metadata["model_card"]["pricing"]
             cost_pricing = {
                 "price_in": pricing["input"],
@@ -143,7 +144,10 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 prompt_chars=sum(row["prompt_chars"] for row in starts),
                 completion_chars=sum(row["completion_chars"] for row in ends),
                 cost_usd_estimate=cost_usd(
-                    cost_pricing, prompt_tokens, completion_tokens, cached_read_tokens
+                    cost_pricing,
+                    sum(row["prompt_tokens"] for row in priced_ends),
+                    sum(row["completion_tokens"] or 0 for row in priced_ends),
+                    sum(row["cached_read_tokens"] or 0 for row in priced_ends),
                 ),
                 harbor_reported_tokens=facts.harbor_reported_tokens,
                 turns=details.turns,

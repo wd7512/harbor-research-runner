@@ -64,6 +64,7 @@ def _checks(tmp_path: Path) -> CheckDeps:
         },
         docker_memory_mb=lambda: 32768,
         bind_port=lambda _host, _port: None,
+        children_resolve=lambda: (True, "Python child and Harbor executable resolve"),
     )
 
 

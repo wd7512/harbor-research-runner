@@ -749,7 +749,6 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
             encoding="utf-8",
         )
     limits = {
-        "min_spare_memory_mb": 0,
         "max_swapped_out_pages": 100000,
         "min_free_disk_gb": 0,
         "host_breach_halt_s": 30,

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import stat
+import sys
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -52,6 +53,8 @@ def test_sampler_command_writes_inside_the_run_directory(tmp_path: Path) -> None
 
     command = sampler_command(run_dir, 42)
 
+    assert command[0] == sys.executable
+    assert "uv" not in command
     assert command[command.index("--out") + 1] == str(run_dir / "resource-stats.jsonl")
     assert command[command.index("--interval") + 1] == "10.0"
 
@@ -452,6 +455,7 @@ def dependencies(
             docker_memory_mb=lambda: 32768,
             bind_port=_bind_port,
             processes=lambda _run_dir: [],
+            children_resolve=lambda: (True, "children resolve"),
         ),
         tool=ToolIdentity("0.1.0", "a" * 40),
         host=lambda: _HOST,
@@ -490,6 +494,7 @@ def _resume_dependencies(
             docker_memory_mb=lambda: 32768,
             bind_port=_bind_port,
             processes=lambda _run_dir: [],
+            children_resolve=lambda: (True, "children resolve"),
         ),
         tool=ToolIdentity("0.1.0", "a" * 40),
         host=lambda: {
@@ -574,8 +579,8 @@ def test_invalid_trial_is_set_aside_before_resume_pass(tmp_path: Path) -> None:
     starts = [row for row in events if row.get("type") == "harbor_start" and row["job"] == "main"]
     assert result == 0
     assert len(starts) == 2
-    assert commands[0][3] == "run"
-    assert commands[1][3:5] == ["jobs", "resume"]
+    assert commands[0][1] == "run"
+    assert commands[1][1:3] == ["jobs", "resume"]
     assert [row["trial"] for row in events if row.get("type") == "set_aside"] == ["trial-invalid"]
     assert stat.S_IMODE(session.run_dir.stat().st_mode) & stat.S_IWUSR == 0
 
@@ -714,6 +719,7 @@ def _launch_with_machine_check(
         bind_port=_bind_port,
         processes=lambda _run_dir: [],
         digest_of=lambda _ref: "sha256:" + "0" * 64,
+        children_resolve=lambda: (True, "children resolve"),
     )
     deps = RunDeps(
         checks=checks,
@@ -1455,7 +1461,7 @@ def test_resume_on_a_different_node_restarts_harbor_when_a_slot_has_unplanned_tr
     assert resume_event["tool_version"] == "0.1.1"
     assert resume_event["tool_commit"] == "b" * 40
     assert (run_dir / "run-metadata.json").read_bytes() == metadata_before
-    assert commands[0][3:5] == ["jobs", "resume"]
+    assert commands[0][1:3] == ["jobs", "resume"]
     assert commands[0][-2:] == ["--pk", f"stop_launching_at={stop_launching_at}"]
     assert len(observed_deadlines) == 1
     assert observed_deadlines[0][0] == stop_launching_at
@@ -1824,6 +1830,7 @@ def test_resume_keeps_absolute_task_path_from_stored_job(tmp_path: Path) -> None
 
 def test_mark_resumed_appends_resume_event(tmp_path: Path) -> None:
     session = _create(tmp_path)
+    session.tool = ToolIdentity("0.1.0", "a" * 40, "v0.1.0")
 
     session.mark_resumed(lambda: 1794480100.5)
 
@@ -1833,6 +1840,7 @@ def test_mark_resumed_appends_resume_event(tmp_path: Path) -> None:
         "t": 1794480100.5,
         "tool_version": "0.1.0",
         "tool_commit": "a" * 40,
+        "tool_revision": "v0.1.0",
         "pid": __import__("os").getpid(),
     }
 
