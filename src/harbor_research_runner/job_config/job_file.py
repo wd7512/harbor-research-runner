@@ -70,7 +70,6 @@ _LIMITS = {
     "request_latency_max_s",
     "halt_after_consecutive_invalid",
     "halt_after_consecutive_failed_requests",
-    "min_spare_memory_mb",
     "memory_reserve_mb",
     "max_swapped_out_pages",
     "min_free_disk_gb",
@@ -210,6 +209,10 @@ def load_job(path: Path) -> Job:
     if "zero_billed_window_s" in limits:
         raise JobFileError(
             "limits.zero_billed_window_s was replaced by halt_after_consecutive_failed_requests"
+        )
+    if "min_spare_memory_mb" in limits:
+        raise JobFileError(
+            "limits.min_spare_memory_mb is retired; admission uses memory reservation"
         )
     _keys(limits, _LIMITS, "limits")
     return Job(

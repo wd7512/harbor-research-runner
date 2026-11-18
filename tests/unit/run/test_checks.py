@@ -768,7 +768,7 @@ def test_single_run_check_passes_and_keeps_lock_held(tmp_path: Path) -> None:
 
 
 def test_host_resources_check_fails_when_host_breaches_limits(tmp_path: Path) -> None:
-    deps = _deps(tmp_path, measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0))
+    deps = _deps(tmp_path, measure=lambda **_kwargs: (_sample(swapped_out_pages=1), 0))
     result = _by_name(_run(tmp_path, deps=deps), "host_resources")
 
     assert not result.ok
@@ -1132,7 +1132,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
     deps = _deps(
         tmp_path,
         inventory=lambda: Inventory(True, "ok", ("trial__env-main-1",), (), (), ()),
-        measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0),
+        measure=lambda **_kwargs: (_sample(swapped_out_pages=1), 0),
     )
     results = _run(tmp_path, card=_card(withdrawn=True), deps=deps)
 
@@ -1196,7 +1196,7 @@ def test_machine_check_launch_checks_reports_each_failure(tmp_path: Path) -> Non
     deps = _deps(
         tmp_path,
         inventory=lambda: Inventory(True, "ok", ("residue",), (), (), ()),
-        measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0),
+        measure=lambda **_kwargs: (_sample(swapped_out_pages=1), 0),
     )
 
     results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)

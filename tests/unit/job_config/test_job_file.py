@@ -78,6 +78,13 @@ def test_job_accepts_memory_reserve_limit(tmp_path: Path) -> None:
     assert job.limit_overrides["memory_reserve_mb"] == 2048
 
 
+def test_job_rejects_retired_spare_memory_limit_with_reservation_guidance(tmp_path: Path) -> None:
+    text = valid_job().replace("limits: {}", "limits: {min_spare_memory_mb: 2048}")
+
+    with pytest.raises(JobFileError, match="reservation"):
+        load_job(write_job(tmp_path, text))
+
+
 def test_job_accepts_native_image_build_mode(tmp_path: Path) -> None:
     job = load_job(
         write_job(
