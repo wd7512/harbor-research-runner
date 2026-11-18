@@ -24,7 +24,7 @@ def _run_with_status(status: str):
 def test_tool_identity_uses_current_package_version_and_clean_commit() -> None:
     identity = tool_identity(_run_with_status(""))
 
-    assert identity == ToolIdentity("0.1.0", _COMMIT)
+    assert identity == ToolIdentity(metadata.version("harbor-research-runner"), _COMMIT)
 
 
 def test_tool_identity_marks_a_dirty_checkout() -> None:

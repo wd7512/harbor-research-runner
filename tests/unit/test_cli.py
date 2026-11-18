@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -364,7 +365,7 @@ def test_version_prints_package_metadata(capsys: pytest.CaptureFixture[str]) -> 
     with pytest.raises(SystemExit) as error:
         cli.main(["--version"])
     assert error.value.code == 0
-    assert "0.1.0" in capsys.readouterr().out
+    assert version("harbor-research-runner") in capsys.readouterr().out
 
 
 def test_clean_docker_dry_run_is_default(tmp_path: Path) -> None:
