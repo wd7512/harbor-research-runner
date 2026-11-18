@@ -2,9 +2,12 @@ from dataclasses import dataclass
 
 from harbor_research_runner.records.jsonl import ReadResult, bad_line_time_spans
 from harbor_research_runner.records.limits import Limits, host_breach
+from harbor_research_runner.records.memory_watch import memory_watch_stats
 from harbor_research_runner.records.proxy_ledger import is_valid_row, rows_for_trial
 from harbor_research_runner.trial_validity.phase_table import failed_phase
 from harbor_research_runner.trial_validity.upstream import upstream_reason
+
+KERNEL_OOM_HOST_FAULT_RATIO = 0.5
 
 
 def compose_project(trial: str) -> str:
@@ -256,16 +259,20 @@ def _labels(
     trial_rows: list[dict],
     setup_repeated: bool,
     oom_killed: bool,
+    oom_peak_unknown: bool,
 ) -> tuple[str, ...]:
     labels = []
     if setup_repeated:
         labels.append("harness_could_not_start")
     if oom_killed:
         labels.append("oom_killed")
-    elif facts.exception_type == "AgentTimeoutError":
-        labels.append("timed_out")
-    elif phase == "agent" and facts.exception_type is not None:
-        labels.append("exit_nonzero")
+    if oom_peak_unknown:
+        labels.append("oom_peak_unknown")
+    if not oom_killed:
+        if facts.exception_type == "AgentTimeoutError":
+            labels.append("timed_out")
+        elif phase == "agent" and facts.exception_type is not None:
+            labels.append("exit_nonzero")
     if phase == "verifier":
         labels.append("verifier_failed")
     if not any(row.get("type") == "request_start" for row in trial_rows):
@@ -346,6 +353,25 @@ def judge_trial(
                 oom_sources.append((float(event["t"]), "watchdog"))
     oom_source = min(oom_sources)[1] if oom_sources else None
     oom_killed = oom_source is not None
+    oom_peak_unknown = False
+    kernel_oom_host_fault = False
+    if oom_source == "kernel":
+        location = "canary-job" if facts.task == "canary/say-hello" else "harbor-job"
+        peak, memory_limit = memory_watch_stats(memory_watch_events.rows, start=start, end=end).get(
+            (location, facts.trial), (None, None)
+        )
+        memory_damage = False
+        if start is not None and end is not None:
+            memory_damage = any(
+                span_start <= end and span_end >= start
+                for span_start, span_end in bad_line_time_spans(memory_watch_events, finished=False)
+            )
+        if memory_damage:
+            peak = None
+        if peak is None or memory_limit is None:
+            oom_peak_unknown = True
+        else:
+            kernel_oom_host_fault = peak < memory_limit * KERNEL_OOM_HOST_FAULT_RATIO
 
     def invalid(reason: str, instrument: str) -> Verdict:
         return Verdict(False, reason, instrument, (), measured, unmeasured_reason, None)
@@ -363,12 +389,14 @@ def judge_trial(
             True,
             None,
             None,
-            _labels(facts, phase, trial_rows, True, False),
+            _labels(facts, phase, trial_rows, True, False, False),
             measured,
             unmeasured_reason,
             None,
         )
     if _host_fault(facts, resource_rows, limits):
+        return invalid("host_fault", "host")
+    if kernel_oom_host_fault:
         return invalid("host_fault", "host")
     reason = upstream_reason(usable_rows, limits)
     if reason is not None:
@@ -380,7 +408,7 @@ def judge_trial(
         True,
         None,
         None,
-        _labels(facts, phase, trial_rows, False, oom_killed),
+        _labels(facts, phase, trial_rows, False, oom_killed, oom_peak_unknown),
         measured,
         unmeasured_reason,
         oom_source,

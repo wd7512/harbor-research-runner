@@ -38,7 +38,7 @@ Source layout:
 src/harbor_research_runner/
   cli.py
   local_http.py
-  records/          jsonl.py  proxy_ledger.py  proxy_control.py  run_metadata.py
+  records/          jsonl.py  memory_watch.py  proxy_ledger.py  proxy_control.py  run_metadata.py
                     run_events.py  resource_stats.py  trials.py  limits.py  machine_check.py  manifest.py
   job_config/       job_file.py  model_cards.py  model_cards/<provider>/<model>.json
   trial_validity/   verdict.py  upstream.py  phase_table.py  run_health.py
@@ -319,7 +319,7 @@ Rules, first match wins:
 | 10 | `reward` is null and the failed phase is not `verifier` | invalid, `no_verdict`, harbor |
 | 11 | otherwise | valid |
 
-Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`).
+Labels added to a valid verdict: `timed_out` (`exception_type == "AgentTimeoutError"`), `exit_nonzero` (any other exception in the `agent` phase), `verifier_failed` (failed phase is `verifier`; the trial counts as a failure with reward 0), `oom_killed` (a kernel OOM or watchdog kill occurred in the trial window), `oom_peak_unknown` (a kernel OOM occurred but its in-window memory-watch peak or declared limit is unknown), `no_requests` (zero `request_start` rows), `possible_bypass` (`harbor_reported_tokens > 0` and zero `request_end` rows), `refused_after_close` (one or more `refused` rows with reason `closed`). For a kernel OOM, a known memory-watch peak below half the task's declared memory limit is invalid `host_fault` with instrument `host`, not a valid `oom_killed` result; at or above that threshold it remains valid. Watchdog kills are unchanged.
 
 `measured` is false, with a reason, when: the trial has a `request_start` with no matching `request_end` although a `close` row exists (`request_not_recorded`); the trial has an `open` row and a Harbor result but no `close` row, so its deadline was not enforced at the proxy (`close_not_recorded`); a `bad_lines` entry or a sequence gap falls between the trial's `open` and `close` rows (`ledger_damaged`); a trial has a Harbor result or made requests but has no `open` row (`no_open_row`); a trial reached the agent phase but has no usable agent/verifier time window (`phase_times_missing`); any `ok` request has a null prompt or completion token count (`usage_incomplete`); host samples are malformed or have a gap greater than three times `sampler_interval_s` overlapping the agent-to-verifier window (`host_samples_damaged`); a malformed Docker OOM-event or memory-watch line overlaps that window (`telemetry_damaged`); or a required telemetry file is missing after `harbor_start` (`telemetry_missing`). For malformed rows, the interval between parsed rows on either side is attributed to it; a missing side extends the interval to infinity. While live, a torn final line is ignored as a write in progress; after writers stop, it is damage from the latest parsed row to positive infinity. A host breach still invalidates a damaged trial. An unmeasured trial is not re-run; it stops the run from exiting 0.
 
