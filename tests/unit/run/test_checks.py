@@ -41,7 +41,6 @@ _HOST_PROFILE = {
     "rootless": False,
     "cgroup_version": "2",
     "docker_memory_mb": 32768,
-    "host_memory_mb": 65536,
     "container_network": "bridge",
 }
 
@@ -147,6 +146,7 @@ def _deps(
     profile: dict = _HOST_PROFILE,
     harbor_version: str = "0.23.0",
     read_docker_memory=lambda: 8123,
+    host_memory_mb=lambda: 65536,
     bind_port=lambda _host, _port: None,
     processes=lambda _run_dir: [],
     digest_of=lambda _ref: _DIGEST,
@@ -162,6 +162,7 @@ def _deps(
         host_profile=lambda: profile,
         harbor_version=lambda: harbor_version,
         docker_memory_mb=read_docker_memory,
+        host_memory_mb=host_memory_mb,
         bind_port=bind_port,
         processes=processes,
         digest_of=digest_of,
@@ -323,8 +324,8 @@ def test_memory_fits_accepts_watchdog_enforced_host_without_kernel_memory_cap(
 
 
 def test_host_headroom_fails_when_i5_vm_leaves_less_than_reserve(tmp_path: Path) -> None:
-    profile = {**_HOST_PROFILE, "host_memory_mb": 32768, "docker_memory_mb": 24029}
-    deps = _deps(tmp_path, profile=profile)
+    profile = {**_HOST_PROFILE, "docker_memory_mb": 24029}
+    deps = _deps(tmp_path, profile=profile, host_memory_mb=lambda: 32768)
 
     result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
 
@@ -334,8 +335,8 @@ def test_host_headroom_fails_when_i5_vm_leaves_less_than_reserve(tmp_path: Path)
 
 
 def test_host_headroom_passes_with_expected_vm_headroom(tmp_path: Path) -> None:
-    profile = {**_HOST_PROFILE, "host_memory_mb": 32768, "docker_memory_mb": 16384}
-    deps = _deps(tmp_path, profile=profile)
+    profile = {**_HOST_PROFILE, "docker_memory_mb": 16384}
+    deps = _deps(tmp_path, profile=profile, host_memory_mb=lambda: 32768)
 
     result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
 
@@ -344,13 +345,22 @@ def test_host_headroom_passes_with_expected_vm_headroom(tmp_path: Path) -> None:
 
 
 def test_host_headroom_passes_when_docker_memory_matches_host(tmp_path: Path) -> None:
-    profile = {**_HOST_PROFILE, "host_memory_mb": 32768, "docker_memory_mb": 32768}
-    deps = _deps(tmp_path, profile=profile)
+    profile = {**_HOST_PROFILE, "docker_memory_mb": 32768}
+    deps = _deps(tmp_path, profile=profile, host_memory_mb=lambda: 32768)
 
     result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
 
     assert result.ok
     assert result.detail == "docker memory equals host memory (no VM)"
+
+
+def test_host_headroom_fails_when_host_memory_is_unknown(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, host_memory_mb=lambda: 0)
+
+    result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
+
+    assert not result.ok
+    assert result.detail == "host memory unknown"
 
 
 def test_host_network_refuses_unreachable_proxy_hostname(tmp_path: Path) -> None:

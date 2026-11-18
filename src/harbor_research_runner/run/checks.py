@@ -62,6 +62,7 @@ class CheckDeps:
     host_fingerprint: Callable[[], str]
     harbor_version: Callable[[], str]
     docker_memory_mb: Callable[[], int]
+    host_memory_mb: Callable[[], int]
     host_profile: Callable[[], dict] = lambda: {}
     bind_port: Callable[[str, int], None] = _bind_port
     processes: Callable[[Path], list[int]] = pids_naming_run
@@ -350,17 +351,16 @@ def run_checks(
 
     def host_headroom_check() -> tuple[bool, str]:
         profile = deps.host_profile()
-        host_memory = profile.get("host_memory_mb")
+        host_memory = deps.host_memory_mb()
         docker_memory = profile.get("docker_memory_mb")
+        if not isinstance(host_memory, int) or isinstance(host_memory, bool) or host_memory <= 0:
+            return False, "host memory unknown"
         if (
-            not isinstance(host_memory, int)
-            or isinstance(host_memory, bool)
-            or host_memory < 0
-            or not isinstance(docker_memory, int)
+            not isinstance(docker_memory, int)
             or isinstance(docker_memory, bool)
             or docker_memory < 0
         ):
-            raise ValueError("host or Docker memory is unavailable or invalid")
+            raise ValueError("Docker memory unavailable or invalid")
         if docker_memory >= host_memory - NATIVE_DOCKER_TOLERANCE_MB:
             return True, "docker memory equals host memory (no VM)"
         headroom = host_memory - docker_memory

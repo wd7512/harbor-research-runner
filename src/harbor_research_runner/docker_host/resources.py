@@ -12,12 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from harbor_research_runner.docker_host.cleanup import is_residue_container
-from harbor_research_runner.docker_host.profile import (
-    canonical_profile,
-)
-from harbor_research_runner.docker_host.profile import (
-    host_profile as docker_host_profile,
-)
+from harbor_research_runner.docker_host.profile import canonical_profile, host_profile
 from harbor_research_runner.records.resource_stats import Sample
 
 LINUX_MEMINFO = Path("/proc/meminfo")
@@ -53,58 +48,8 @@ def _parse_memavailable(text: str) -> int:
     raise ValueError("MemAvailable is missing from /proc/meminfo")
 
 
-def _parse_memtotal(text: str) -> int:
-    for line in text.splitlines():
-        name, separator, rest = line.partition(":")
-        fields = rest.split()
-        if not separator or name.strip() != "MemTotal":
-            continue
-        if len(fields) < 2 or fields[1] != "kB":
-            raise ValueError("unparseable MemTotal value")
-        try:
-            value = int(fields[0])
-        except ValueError as exc:
-            raise ValueError(f"unparseable MemTotal value {fields[0]!r}") from exc
-        if value < 0:
-            raise ValueError(f"negative MemTotal value {value}")
-        return value // 1024
-    raise ValueError("MemTotal is missing from /proc/meminfo")
-
-
-def host_memory_mb(
-    run: Callable = subprocess.run,
-    read_text: Callable = Path.read_text,
-) -> int:
-    try:
-        text = read_text(LINUX_MEMINFO, encoding="utf-8")
-    except FileNotFoundError:
-        text = None
-    if text is not None:
-        return _parse_memtotal(text)
-
-    try:
-        result = _run_result(run, ["sysctl", "-n", "hw.memsize"])
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise OSError(f"cannot run sysctl -n hw.memsize: {exc}") from exc
-    if result.returncode != 0:
-        raise OSError(f"sysctl -n hw.memsize exited {result.returncode}: {result.stderr.strip()}")
-    try:
-        memory_bytes = int(result.stdout.strip())
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise ValueError("sysctl returned an invalid hw.memsize value") from exc
-    if memory_bytes < 0:
-        raise ValueError(f"sysctl returned a negative hw.memsize value {memory_bytes}")
-    return memory_bytes // (1024**2)
-
-
-def host_profile(
-    run: Callable = subprocess.run,
-    read_text: Callable = Path.read_text,
-) -> dict:
-    return {
-        **docker_host_profile(run),
-        "host_memory_mb": host_memory_mb(run, read_text),
-    }
+def host_memory_mb(sysconf: Callable = os.sysconf) -> int:
+    return sysconf("SC_PAGE_SIZE") * sysconf("SC_PHYS_PAGES") // (1024**2)
 
 
 def _parse_pswpout(text: str) -> int:
@@ -244,7 +189,7 @@ def host_fingerprint(run: Callable = subprocess.run, *, profile: dict | None = N
 
 def host_description(run: Callable = subprocess.run) -> dict:
     try:
-        memory_mb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // (1024**2)
+        memory_mb = host_memory_mb()
     except (AttributeError, OSError, ValueError):
         memory_mb = 0
     try:

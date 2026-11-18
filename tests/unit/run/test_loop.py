@@ -68,7 +68,6 @@ _PROFILE = {
     "rootless": False,
     "cgroup_version": "2",
     "docker_memory_mb": 32768,
-    "host_memory_mb": 32768,
     "container_network": "bridge",
 }
 
@@ -454,6 +453,7 @@ def dependencies(
             host_fingerprint=lambda: "fingerprint",
             harbor_version=lambda: "0.23.0",
             docker_memory_mb=lambda: 32768,
+            host_memory_mb=lambda: 32768,
             bind_port=_bind_port,
             processes=lambda _run_dir: [],
             children_resolve=lambda: (True, "children resolve"),
@@ -493,6 +493,7 @@ def _resume_dependencies(
             host_profile=lambda: profile,
             harbor_version=lambda: "0.23.0",
             docker_memory_mb=lambda: 32768,
+            host_memory_mb=lambda: 32768,
             bind_port=_bind_port,
             processes=lambda _run_dir: [],
             children_resolve=lambda: (True, "children resolve"),
@@ -717,6 +718,7 @@ def _launch_with_machine_check(
         host_profile=lambda: _PROFILE,
         harbor_version=lambda: "0.23.0",
         docker_memory_mb=lambda: 32768,
+        host_memory_mb=lambda: 32768,
         bind_port=_bind_port,
         processes=lambda _run_dir: [],
         digest_of=lambda _ref: "sha256:" + "0" * 64,

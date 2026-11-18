@@ -7,17 +7,13 @@ import pytest
 
 from harbor_research_runner.docker_host.profile import (
     canonical_profile,
+    host_profile,
     profile_differences,
 )
-from harbor_research_runner.docker_host.resources import host_fingerprint, host_profile
+from harbor_research_runner.docker_host.resources import host_fingerprint
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "docker_info"
 NETWORK_FIXTURES = Path(__file__).parents[2] / "fixtures" / "docker_network"
-HOST_MEMINFO = "MemTotal: 33554432 kB\n"
-
-
-def _read_host_meminfo(_path: Path, **_kwargs) -> str:
-    return HOST_MEMINFO
 
 
 def _run_fixture(path: Path):
@@ -39,7 +35,7 @@ def _run_fixture(path: Path):
 def test_host_profile_reads_docker_capabilities():
     run, calls = _run_fixture(FIXTURES / "docker-desktop-macos.json")
 
-    profile = host_profile(run=run, read_text=_read_host_meminfo)
+    profile = host_profile(run=run)
 
     assert profile == {
         "arch": "arm64",
@@ -50,7 +46,6 @@ def test_host_profile_reads_docker_capabilities():
         "rootless": False,
         "cgroup_version": "2",
         "docker_memory_mb": 15969,
-        "host_memory_mb": 32768,
         "container_network": "bridge",
     }
     assert len(calls) == 2
@@ -70,7 +65,6 @@ def test_host_profile_detects_bridge_network_from_fixture():
 
     profile = host_profile(
         run=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=next(calls), stderr=""),
-        read_text=_read_host_meminfo,
     )
 
     assert profile["container_network"] == "bridge"
@@ -87,7 +81,7 @@ def test_host_profile_detects_missing_bridge_network_from_fixture():
             returncode=0, stdout=info if argv[:2] == ["docker", "info"] else networks, stderr=""
         )
 
-    profile = host_profile(run=run, read_text=_read_host_meminfo)
+    profile = host_profile(run=run)
 
     assert profile["container_network"] == "host"
 
@@ -96,7 +90,7 @@ def test_host_profile_identifies_rootless_daemon():
     """The rootless Docker info variant is hand-written from the documented fields."""
     run, _calls = _run_fixture(FIXTURES / "rootless.json")
 
-    profile = host_profile(run=run, read_text=_read_host_meminfo)
+    profile = host_profile(run=run)
 
     assert profile["memory_cap"] == "none"
     assert profile["swap_limit"] is False
@@ -106,7 +100,7 @@ def test_host_profile_identifies_rootless_daemon():
 def test_host_profile_preserves_missing_cgroup_version():
     run, _calls = _run_fixture(FIXTURES / "no-cgroup.json")
 
-    assert host_profile(run=run, read_text=_read_host_meminfo)["cgroup_version"] == ""
+    assert host_profile(run=run)["cgroup_version"] == ""
 
 
 def test_host_profile_raises_when_docker_info_fails():
@@ -119,7 +113,7 @@ def test_host_profile_raises_when_docker_info_fails():
 
 def test_host_fingerprint_does_not_depend_on_hostname():
     run, _calls = _run_fixture(FIXTURES / "docker-desktop-macos.json")
-    profile = host_profile(run=run, read_text=_read_host_meminfo)
+    profile = host_profile(run=run)
     first_host = {"hostname": "node-a", **profile}
     second_host = {"hostname": "node-b", **profile}
     expected = hashlib.sha256(

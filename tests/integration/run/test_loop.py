@@ -44,7 +44,6 @@ _PROFILE = {
     "rootless": False,
     "cgroup_version": "2",
     "docker_memory_mb": 32768,
-    "host_memory_mb": 32768,
     "container_network": "host",
 }
 _NOW = 1794480000.123456
@@ -138,6 +137,7 @@ def _run_deps(
         host_fingerprint=lambda: "fingerprint",
         harbor_version=lambda: "0.23.0",
         docker_memory_mb=lambda: 32768,
+        host_memory_mb=lambda: 32768,
         host_profile=lambda: _PROFILE,
         processes=lambda _run_dir: [],
     )
