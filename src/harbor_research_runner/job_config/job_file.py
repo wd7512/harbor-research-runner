@@ -69,7 +69,7 @@ _LIMITS = {
     "inter_chunk_gap_max_s",
     "request_latency_max_s",
     "halt_after_consecutive_invalid",
-    "zero_billed_window_s",
+    "halt_after_consecutive_failed_requests",
     "min_spare_memory_mb",
     "memory_reserve_mb",
     "max_swapped_out_pages",
@@ -207,6 +207,10 @@ def load_job(path: Path) -> Job:
     limits = _mapping(_required(data, "limits"), "limits")
     if "max_swap_used_mb" in limits:
         raise JobFileError("limits.max_swap_used_mb was replaced by max_swapped_out_pages")
+    if "zero_billed_window_s" in limits:
+        raise JobFileError(
+            "limits.zero_billed_window_s was replaced by halt_after_consecutive_failed_requests"
+        )
     _keys(limits, _LIMITS, "limits")
     return Job(
         path=path.resolve(),

@@ -212,7 +212,7 @@ Written by `hrr check-machine`, read by the launch checks. A task's `name` every
 
 One record, declared in the job file under `limits`, copied into `run-metadata.json` and `proxy-config.json`. Defaults in brackets.
 
-Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_output_rate_min` [2.0 tokens/s], `first_chunk_max_s` [180], `inter_chunk_gap_max_s` [180], `request_latency_max_s` [1200], `halt_after_consecutive_invalid` [5], `zero_billed_window_s` [900].
+Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_output_rate_min` [2.0 tokens/s], `first_chunk_max_s` [180], `inter_chunk_gap_max_s` [180], `request_latency_max_s` [1200], `halt_after_consecutive_invalid` [5], `halt_after_consecutive_failed_requests` [10].
 
 Host: `min_spare_memory_mb` [2048], `memory_reserve_mb` [4096], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` field. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
 
@@ -333,7 +333,7 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 |---|---|
 | `quota_exhausted` | any `request_end` row with that status since the last `harbor_start` |
 | `upstream_invalid_streak` | the last `halt_after_consecutive_invalid` trial verdicts written since the latest `resume` event all have instrument `proxy` and `valid` false |
-| `zero_billed_window` | at least one trial is open and no `ok` `request_end` row for `zero_billed_window_s` |
+| `upstream_failure_streak` | the trailing streak of `request_end` rows since pass start with status `rate_limited`, `server_error`, `transport_error`, `stalled`, `truncated` or `upstream_auth` reaches `halt_after_consecutive_failed_requests`; `ok` resets the streak, while `client_error` and `client_disconnect` neither count nor reset it |
 | `proxy_dead` | the proxy process has exited |
 | `oom_watch_dead` | the Docker OOM watcher process has exited |
 | `sampler_dead` | no resource sample for 40 seconds |
