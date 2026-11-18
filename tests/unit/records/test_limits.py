@@ -15,6 +15,7 @@ def test_limits_defaults_include_repetition_derived_cap():
     assert limits.trial_output_rate_min == 2.0
     assert limits.verifier_timeout_multiplier == 1.5
     assert limits.memory_reserve_mb == 4096
+    assert limits.host_reserve_mb == 12288
 
 
 def test_limits_rejects_job_override_of_machine_value():
@@ -41,12 +42,14 @@ def test_limits_row_recorded_before_86_loads_with_defaults():
     row = _limits().to_row()
     row.pop("max_swapped_out_pages")
     row.pop("memory_reserve_mb")
+    row.pop("host_reserve_mb")
     row["max_swap_used_mb"] = 512
 
     limits = Limits.from_row(row)
 
     assert limits.max_swapped_out_pages == 0
     assert limits.memory_reserve_mb == 4096
+    assert limits.host_reserve_mb == 12288
 
 
 @pytest.mark.parametrize(
@@ -54,7 +57,7 @@ def test_limits_row_recorded_before_86_loads_with_defaults():
     [
         name
         for name in _limits().to_row()
-        if name not in {"max_swapped_out_pages", "memory_reserve_mb"}
+        if name not in {"max_swapped_out_pages", "memory_reserve_mb", "host_reserve_mb"}
     ],
 )
 def test_limits_parser_rejects_missing_field(field):

@@ -43,6 +43,7 @@ _PROFILE = {
     "rootless": False,
     "cgroup_version": "2",
     "docker_memory_mb": 32768,
+    "host_memory_mb": 32768,
     "container_network": "host",
 }
 _NOW = 1794480000.123456

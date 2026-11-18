@@ -41,6 +41,7 @@ _HOST_PROFILE = {
     "rootless": False,
     "cgroup_version": "2",
     "docker_memory_mb": 32768,
+    "host_memory_mb": 65536,
     "container_network": "bridge",
 }
 
@@ -258,7 +259,7 @@ def test_memory_fits_fails_when_concurrent_task_memory_exceeds_docker_memory(
     tmp_path: Path,
 ) -> None:
     machine_check = _machine_check(
-        tasks=[{"name": "task-a", "memory_mb": 2048}],
+        tasks=[{"name": "task-a", "memory_mb": 8192}],
         included=["task-a"],
     )
     deps = _deps(
@@ -269,10 +270,10 @@ def test_memory_fits_fails_when_concurrent_task_memory_exceeds_docker_memory(
     result = _by_name(_run(tmp_path, job=_job(concurrency=4), deps=deps), "memory_fits")
 
     assert not result.ok
-    assert "4" in result.detail
-    assert "2048" in result.detail
-    assert "4096" in result.detail
-    assert "8123" in result.detail
+    assert "concurrency=4" in result.detail
+    assert "max_task_memory_mb=8192" in result.detail
+    assert "memory_reserve_mb=4096" in result.detail
+    assert "docker_memory_mb=8123" in result.detail
 
 
 def test_memory_fits_passes_when_concurrent_task_memory_fits_docker_memory(
@@ -291,6 +292,64 @@ def test_memory_fits_passes_when_concurrent_task_memory_fits_docker_memory(
     result = _by_name(_run(tmp_path, job=_job(concurrency=2), deps=deps), "memory_fits")
 
     assert result.ok
+
+
+def test_memory_fits_ignores_concurrency_when_one_trial_fits(tmp_path: Path) -> None:
+    machine_check = _machine_check(
+        tasks=[{"name": "task-a", "memory_mb": 8192}],
+        included=["task-a"],
+    )
+    deps = _deps(
+        tmp_path,
+        read_machine_check=lambda _path: machine_check,
+        read_docker_memory=lambda: 16384,
+    )
+    job = replace(_job(concurrency=4), limit_overrides={"memory_reserve_mb": 4096})
+
+    result = _by_name(_run(tmp_path, job=job, deps=deps), "memory_fits")
+
+    assert result.ok
+
+
+def test_memory_fits_accepts_watchdog_enforced_host_without_kernel_memory_cap(
+    tmp_path: Path,
+) -> None:
+    deps = _deps(tmp_path, profile={**_HOST_PROFILE, "memory_cap": "none"})
+
+    result = _by_name(_run(tmp_path, deps=deps), "memory_fits")
+
+    assert result.ok
+
+
+def test_host_headroom_fails_when_i5_vm_leaves_less_than_reserve(tmp_path: Path) -> None:
+    profile = {**_HOST_PROFILE, "host_memory_mb": 32768, "docker_memory_mb": 24029}
+    deps = _deps(tmp_path, profile=profile)
+
+    result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
+
+    assert not result.ok
+    assert "headroom_mb=8739" in result.detail
+    assert "host_reserve_mb=12288" in result.detail
+
+
+def test_host_headroom_passes_with_expected_vm_headroom(tmp_path: Path) -> None:
+    profile = {**_HOST_PROFILE, "host_memory_mb": 32768, "docker_memory_mb": 16384}
+    deps = _deps(tmp_path, profile=profile)
+
+    result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
+
+    assert result.ok
+    assert "headroom_mb=16384" in result.detail
+
+
+def test_host_headroom_passes_when_docker_memory_matches_host(tmp_path: Path) -> None:
+    profile = {**_HOST_PROFILE, "host_memory_mb": 32768, "docker_memory_mb": 32768}
+    deps = _deps(tmp_path, profile=profile)
+
+    result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
+
+    assert result.ok
+    assert result.detail == "docker memory equals host memory (no VM)"
 
 
 def test_host_network_refuses_unreachable_proxy_hostname(tmp_path: Path) -> None:
@@ -1148,6 +1207,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
         "machine_check_matches",
         "tasks_included",
         "memory_fits",
+        "host_headroom",
         "proxy_host_reachable",
     ]
     assert not _by_name(results, "model_card").ok

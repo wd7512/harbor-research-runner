@@ -3,7 +3,11 @@ from dataclasses import dataclass, field, fields
 from typing import Any, cast
 
 _RETIRED_FIELDS = {"max_swap_used_mb"}
-_ADDED_FIELDS = {"max_swapped_out_pages": 0, "memory_reserve_mb": 4096}
+_ADDED_FIELDS = {
+    "max_swapped_out_pages": 0,
+    "memory_reserve_mb": 4096,
+    "host_reserve_mb": 12288,
+}
 
 
 @dataclass(frozen=True)
@@ -18,6 +22,7 @@ class Limits:
     zero_billed_window_s: float = 900
     min_spare_memory_mb: int = 2048
     memory_reserve_mb: int = 4096
+    host_reserve_mb: int = 12288
     max_swapped_out_pages: int = 0
     min_free_disk_gb: int = 20
     host_breach_halt_s: float = 120

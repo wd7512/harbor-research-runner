@@ -9,10 +9,41 @@ from harbor_research_runner.docker_host.resources import (
     _parse_swapouts,
     host_description,
     host_fingerprint,
+    host_memory_mb,
     measure,
     spare_memory_mb,
 )
 from harbor_research_runner.run.loop import HOST_FIELDS
+
+
+def test_host_memory_reads_memtotal_from_linux_meminfo() -> None:
+    def read_text(path: Path, **kwargs) -> str:
+        assert str(path) == "/proc/meminfo"
+        return "MemTotal:       33554432 kB\nMemAvailable: 1000000 kB\n"
+
+    assert host_memory_mb(read_text=read_text) == 32768
+
+
+def test_host_memory_reads_sysctl_when_proc_meminfo_is_absent() -> None:
+    def read_text(path: Path, **kwargs) -> str:
+        raise FileNotFoundError(path)
+
+    def run(argv, **kwargs):
+        assert argv == ["sysctl", "-n", "hw.memsize"]
+        return SimpleNamespace(returncode=0, stdout="34359738368\n", stderr="")
+
+    assert host_memory_mb(run=run, read_text=read_text) == 32768
+
+
+def test_host_memory_fails_closed_when_sysctl_cannot_read_ram() -> None:
+    def read_text(path: Path, **kwargs) -> str:
+        raise FileNotFoundError(path)
+
+    def run(argv, **kwargs):
+        return SimpleNamespace(returncode=1, stdout="", stderr="sysctl unavailable")
+
+    with pytest.raises(OSError, match="sysctl unavailable"):
+        host_memory_mb(run=run, read_text=read_text)
 
 
 def test_linux_memavailable_is_spare() -> None:
@@ -315,6 +346,8 @@ def test_host_description_records_hostname_and_profile_fields() -> None:
     def run(argv, **kwargs):
         if argv == ["docker", "info", "--format", "{{json .}}"]:
             return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+        if argv == ["sysctl", "-n", "hw.memsize"]:
+            return SimpleNamespace(returncode=0, stdout="34359738368\n", stderr="")
         assert argv == ["docker", "network", "ls", "--format", "{{json .}}"]
         return SimpleNamespace(returncode=0, stdout=networks, stderr="")
 
@@ -325,6 +358,7 @@ def test_host_description_records_hostname_and_profile_fields() -> None:
     assert description["host_profile"]["memory_cap"] == "kernel"
     assert description["host_profile"]["rootless"] is False
     assert description["host_profile"]["container_network"] == "bridge"
+    assert description["host_profile"]["host_memory_mb"] == 32768
 
 
 def test_host_fingerprint_fails_when_docker_is_unavailable() -> None:
