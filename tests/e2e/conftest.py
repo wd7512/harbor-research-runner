@@ -330,6 +330,7 @@ class E2ERun:
     job_data: dict
     upstream: FakeUpstream
     proxy_port: int
+    tmp_path_factory: pytest.TempPathFactory
     process: subprocess.Popen[str] | None = None
     last_result: subprocess.CompletedProcess[str] | None = None
 
@@ -359,9 +360,10 @@ class E2ERun:
         return read_rows(path).rows if path.is_file() else []
 
     def cli(self, arguments: list[str], timeout: float = 270) -> subprocess.CompletedProcess[str]:
+        prefix, cwd = _hrr_command_and_cwd(self.tmp_path_factory)
         return subprocess.run(
-            ["uv", "run", "hrr", *arguments],
-            cwd=ROOT,
+            [*prefix, *arguments],
+            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -378,12 +380,13 @@ class E2ERun:
     ) -> subprocess.Popen[str]:
         if self.process is not None and self.process.poll() is None:
             raise AssertionError("a runner is already active")
-        selected_runs_dir = runs_dir or self.runs_dir
+        prefix, cwd = _hrr_command_and_cwd(self.tmp_path_factory)
+        selected_runs_dir = (runs_dir or self.runs_dir).resolve()
         arguments = ["run"]
         if resume:
             arguments.extend(["--resume", self.run_id])
         else:
-            arguments.append(str(job_path or self.job_path))
+            arguments.append(str((job_path or self.job_path).resolve()))
         arguments.extend(
             [
                 "--runs-dir",
@@ -397,8 +400,8 @@ class E2ERun:
         if stop_launching_at is not None:
             arguments.extend(["--stop-launching-at", stop_launching_at])
         self.process = subprocess.Popen(
-            ["uv", "run", "hrr", *arguments],
-            cwd=ROOT,
+            [*prefix, *arguments],
+            cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -425,7 +428,7 @@ class E2ERun:
 
     def resume(self) -> subprocess.CompletedProcess[str]:
         self.kill_proxy()
-        _clean_docker_and_wait(self.runs_dir)
+        _clean_docker_and_wait(self.runs_dir, self.tmp_path_factory)
         self.start(resume=True)
         return self.wait()
 
@@ -658,11 +661,19 @@ def _docker_listing() -> str:
     return result.stdout + result.stderr
 
 
-def _clean_docker_and_wait(runs_dir: Path) -> None:
+def _hrr_command_and_cwd(tmp_path_factory: pytest.TempPathFactory) -> tuple[list[str], Path]:
+    installed_hrr = os.environ.get("HRR_E2E_HRR")
+    if installed_hrr is not None:
+        return [installed_hrr], tmp_path_factory.mktemp("installed-hrr-cwd")
+    return ["uv", "run", "hrr"], ROOT
+
+
+def _clean_docker_and_wait(runs_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
     runs_dir.mkdir(parents=True, exist_ok=True)
-    command = ["uv", "run", "hrr", "clean-docker", "--apply", "--runs-dir", str(runs_dir)]
+    prefix, cwd = _hrr_command_and_cwd(tmp_path_factory)
+    command = [*prefix, "clean-docker", "--apply", "--runs-dir", str(runs_dir.resolve())]
     result = subprocess.run(
-        command, cwd=ROOT, capture_output=True, text=True, timeout=60, check=False
+        command, cwd=cwd, capture_output=True, text=True, timeout=60, check=False
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -671,9 +682,10 @@ def _clean_docker_and_wait(runs_dir: Path) -> None:
         )
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
+        prefix, cwd = _hrr_command_and_cwd(tmp_path_factory)
         dry_run = subprocess.run(
-            ["uv", "run", "hrr", "clean-docker", "--runs-dir", str(runs_dir)],
-            cwd=ROOT,
+            [*prefix, "clean-docker", "--runs-dir", str(runs_dir.resolve())],
+            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=30,
@@ -689,7 +701,9 @@ def _clean_docker_and_wait(runs_dir: Path) -> None:
 
 
 @pytest.fixture
-def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
+def e2e_run(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+):
     options = getattr(request, "param", {})
     if shutil.which("docker") is None:
         pytest.skip("docker not installed")
@@ -699,7 +713,7 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
 
     runs_dir = tmp_path / "runs"
     evidence_dir = tmp_path / "evidence"
-    _clean_docker_and_wait(runs_dir)
+    _clean_docker_and_wait(runs_dir, tmp_path_factory)
     proxy_host, container_host = _docker_proxy_network()
 
     upstream = FakeUpstream(options.get("upstream_script", ["ok"]), model="fake-model")
@@ -827,6 +841,7 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
         job_data,
         upstream,
         proxy_port,
+        tmp_path_factory,
     )
     try:
         yield test_run
@@ -845,4 +860,4 @@ def e2e_run(tmp_path: Path, request: pytest.FixtureRequest):
                 try:
                     upstream.stop()
                 finally:
-                    _clean_docker_and_wait(runs_dir)
+                    _clean_docker_and_wait(runs_dir, tmp_path_factory)
