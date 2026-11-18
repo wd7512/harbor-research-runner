@@ -11,6 +11,7 @@ from harbor_research_runner.harbor_adapter.job_folder import (
     trial_folders,
 )
 from harbor_research_runner.records.jsonl import bad_line_time_spans, read_rows
+from harbor_research_runner.records.memory_watch import memory_watch_stats
 from harbor_research_runner.records.proxy_ledger import (
     COUNTS_AGAINST_TRIAL,
     is_valid_row,
@@ -47,22 +48,7 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
     memory_result = read_rows(memory_path)
     memory_rows = memory_result.rows
     memory_bad_spans = bad_line_time_spans(memory_result, finished=telemetry_finished(events))
-    memory_peaks = {}
-    memory_limits = {}
-    for sample in memory_rows:
-        trial = sample.get("trial")
-        location = sample.get("location")
-        if not isinstance(trial, str) or location not in {"harbor-job", "canary-job"}:
-            continue
-        key = (location, trial)
-        limit_mb = sample.get("limit_mb")
-        if isinstance(limit_mb, int) or limit_mb is None:
-            memory_limits[key] = limit_mb
-        if sample.get("type") != "sample":
-            continue
-        used_mb = sample.get("used_mb")
-        if isinstance(used_mb, (int, float)) and not isinstance(used_mb, bool):
-            memory_peaks[key] = max(memory_peaks.get(key, float("-inf")), used_mb)
+    memory_stats = memory_watch_stats(memory_rows)
     machine_check = json.loads((run_dir / "machine-check.json").read_text(encoding="utf-8"))
     task_memory = {row["name"]: row.get("memory_mb") for row in machine_check["tasks"]}
     sample_locations = {"set-aside-trials": "harbor-job"}
@@ -139,10 +125,12 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 unmeasured_reason=verdict["unmeasured_reason"],
                 oom_source=verdict.get("oom_source"),
                 peak_memory_mb=(
-                    None if memory_damaged else memory_peaks.get((sample_location, facts.trial))
+                    None
+                    if memory_damaged
+                    else memory_stats.get((sample_location, facts.trial), (None, None))[0]
                 ),
                 memory_limit_mb=(
-                    memory_limits.get((sample_location, facts.trial))
+                    memory_stats.get((sample_location, facts.trial), (None, None))[1]
                     if sample_location == "canary-job"
                     else task_memory.get(facts.task)
                 ),

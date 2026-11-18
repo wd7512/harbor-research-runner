@@ -347,9 +347,91 @@ def test_agent_oom_event_labels_valid_reward_one_trial():
     verdict = _judge(facts, oom_events=_fixture_oom_events())
 
     assert verdict.valid
-    assert verdict.labels == ("oom_killed", "no_requests")
+    assert verdict.labels == ("oom_killed", "oom_peak_unknown", "no_requests")
     assert verdict.oom_source == "kernel"
     assert facts.reward == 1.0
+
+
+def test_kernel_oom_below_memory_limit_is_a_host_fault():
+    event = _docker_oom_event(4.0)
+    samples = [
+        {**_memory_sample(3.0), "used_mb": 1500, "limit_mb": 8192},
+        {**_memory_sample(4.0), "used_mb": 1500, "limit_mb": 8192},
+    ]
+
+    verdict = _judge(oom_events=[event], memory_watch_events=samples)
+
+    assert verdict.valid is False
+    assert verdict.reason == "host_fault"
+    assert verdict.instrument == "host"
+
+
+def test_kernel_oom_above_half_memory_limit_remains_valid():
+    event = _docker_oom_event(4.0)
+    samples = [
+        {**_memory_sample(3.0), "used_mb": 5000, "limit_mb": 8192},
+        {**_memory_sample(4.0), "used_mb": 5000, "limit_mb": 8192},
+    ]
+
+    verdict = _judge(oom_events=[event], memory_watch_events=samples)
+
+    assert verdict.valid is True
+    assert "oom_killed" in verdict.labels
+
+
+def test_kernel_oom_with_unknown_peak_keeps_valid_and_labels_unknown():
+    event = _docker_oom_event(4.0)
+
+    verdict = _judge(oom_events=[event])
+
+    assert verdict.valid is True
+    assert "oom_killed" in verdict.labels
+    assert "oom_peak_unknown" in verdict.labels
+
+
+def test_kernel_oom_uses_memory_peak_from_matching_location():
+    facts = _facts(task="canary/say-hello")
+    event = _docker_oom_event(4.0)
+    samples = [
+        {
+            **_memory_sample(3.0),
+            "location": "harbor-job",
+            "used_mb": 5000,
+            "limit_mb": 8192,
+        },
+        {
+            **_memory_sample(4.0),
+            "location": "canary-job",
+            "used_mb": 1500,
+            "limit_mb": 8192,
+        },
+    ]
+
+    verdict = _judge(facts, oom_events=[event], memory_watch_events=samples)
+
+    assert verdict.valid is False
+    assert verdict.reason == "host_fault"
+    assert verdict.instrument == "host"
+
+
+def test_kernel_oom_with_damaged_memory_peak_keeps_existing_verdict(tmp_path):
+    event = _docker_oom_event(4.0)
+    memory = _telemetry_read(
+        tmp_path,
+        "memory-watch.jsonl",
+        [
+            {**_memory_sample(2.0), "used_mb": 1500, "limit_mb": 8192},
+            {**_memory_sample(6.0), "used_mb": 1500, "limit_mb": 8192},
+        ],
+        2,
+    )
+
+    verdict = _judge(oom_events=[event], memory_watch_events=memory)
+
+    assert verdict.valid is True
+    assert verdict.measured is False
+    assert "oom_killed" in verdict.labels
+    assert "oom_peak_unknown" in verdict.labels
 
 
 def test_earlier_watchdog_kill_sets_oom_source_and_precedes_kernel_event():
@@ -423,7 +505,7 @@ def test_verifier_oom_event_labels_valid_zero_reward_trial():
     verdict = _judge(facts, oom_events=_fixture_oom_events())
 
     assert verdict.valid
-    assert verdict.labels == ("oom_killed", "verifier_failed", "no_requests")
+    assert verdict.labels == ("oom_killed", "oom_peak_unknown", "verifier_failed", "no_requests")
     assert facts.reward is None
 
 
