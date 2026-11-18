@@ -79,6 +79,15 @@ def test_report_includes_tool_commit_for_resume():
     assert f"resume — 0 (commit {commit})" in report
 
 
+def test_report_lists_a_halt_event_which_carries_no_tool_commit():
+    report = _render(
+        "clean",
+        [{"type": "halt", "t": 2, "reason": "deadline", "detail": "stop_launching_at reached"}],
+    )
+
+    assert "halt — deadline: stop_launching_at reached" in report
+
+
 def test_report_states_when_tool_commit_is_unknown():
     run_dir = FIXTURES / "clean"
     rows = build_trial_rows(run_dir)
