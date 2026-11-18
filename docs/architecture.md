@@ -172,9 +172,9 @@ A request for a trial that is not open gets HTTP 410 with body `{"error": {"mess
 
 Written once, atomically, before anything else starts: write a temporary file in the same folder, `fsync` it, then link it into place without replacing any existing destination. An existing destination, including a dangling symlink, raises `FileExistsError` and is left unchanged. Never rewritten.
 
-Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds).
+Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `tool_revision` (optional string or null; the requested git revision of a git install, or null when unknown or for a work-tree install), `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds).
 
-`tool_version` is the installed `harbor-research-runner` package version. `tool_commit` is the 40-hex commit of the checkout containing the package, with `+dirty` appended when tracked files have changes; it is `none` when Git is unavailable or the package is not in a Git checkout.
+`tool_version` is the installed `harbor-research-runner` package version. `tool_commit` is the 40-hex commit of the checkout containing the package, with `+dirty` appended when tracked files have changes; for a non-work-tree git install it is the 40-hex commit in `direct_url.json`; it is `none` when no commit is available. `tool_revision` is that install's requested git revision, such as `v0.1.0`, and is null when unknown or for a work-tree install. Older run metadata without `tool_revision` remains readable.
 
 ### 4.4 `run-events.jsonl`
 
@@ -182,7 +182,7 @@ Each row has `t` and `type`:
 
 | `type` | Fields |
 |---|---|
-| `launch` | `tool_version`, `tool_commit`, `pid` |
+| `launch` | `tool_version`, `tool_commit`, `tool_revision` (optional string or null; old rows may omit it), `pid` |
 | `launch_check` | `name`, `ok`, `detail` |
 | `harbor_start` | `pass` (0 for `harbor run`, then 1, 2, ...), `command`, `job` (`canary` or `main`) |
 | `harbor_exit` | `pass`, `returncode`, `job` |
@@ -191,7 +191,7 @@ Each row has `t` and `type`:
 | `trial_measurement_amended` | `trial`, `unmeasured_reason` (`telemetry_damaged` or `host_samples_damaged`) |
 | `set_aside` | `trial`, `task`, `arm`, `reason` |
 | `halt` | `reason`, `detail` |
-| `resume` | `tool_version`, `tool_commit`, `pid` |
+| `resume` | `tool_version`, `tool_commit`, `tool_revision` (optional string or null; old rows may omit it), `pid` |
 | `finish` | `exit_code`, `slots_complete`, `slots_incomplete` |
 
 A `trial_verdict` is written exactly once per trial, by `run`, when the trial has finished or is found unfinished at a halt or resume. Nothing else decides validity. The event includes `oom_source` (`kernel`, `watchdog`, or null); if both OOM records fall within the trial's agent/verifier window, the earlier record determines the source. A watchdog `kill` or `kill_failed` row for the trial counts as a watchdog breach at any location.
@@ -212,9 +212,9 @@ Written by `hrr check-machine`, read by the launch checks. A task's `name` every
 
 One record, declared in the job file under `limits`, copied into `run-metadata.json` and `proxy-config.json`. Defaults in brackets.
 
-Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_output_rate_min` [2.0 tokens/s], `first_chunk_max_s` [180], `inter_chunk_gap_max_s` [180], `request_latency_max_s` [1200], `halt_after_consecutive_invalid` [5], `zero_billed_window_s` [900].
+Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_output_rate_min` [2.0 tokens/s], `first_chunk_max_s` [180], `inter_chunk_gap_max_s` [180], `request_latency_max_s` [1200], `halt_after_consecutive_invalid` [5], `halt_after_consecutive_failed_requests` [10].
 
-Host: `min_spare_memory_mb` [2048], `memory_reserve_mb` [4096], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` field. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
+Host: `memory_reserve_mb` [4096], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0]. Admission reserves each started task's declared `memory_mb`; a trial starts only when admitted reservations plus its memory plus `memory_reserve_mb` fit Docker MemTotal. The reservation is released at Harbor's trial `END` event. `mem_available_mb` remains telemetry and does not trigger `host_breach`; swap-outs, disk space and Docker health do. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` and `min_spare_memory_mb` fields. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
 
 Run: `max_set_asides_per_slot` [2 x repetitions; `deferred` and `run_halted` set-asides do not count toward the cap], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
 
@@ -333,11 +333,11 @@ Validity never reads `reward`, except rule 10, which reads only whether a reward
 |---|---|
 | `quota_exhausted` | any `request_end` row with that status since the last `harbor_start` |
 | `upstream_invalid_streak` | the last `halt_after_consecutive_invalid` trial verdicts written since the latest `resume` event all have instrument `proxy` and `valid` false |
-| `zero_billed_window` | at least one trial is open and no `ok` `request_end` row for `zero_billed_window_s` |
+| `upstream_failure_streak` | the trailing streak of `request_end` rows since pass start with status `rate_limited`, `server_error`, `transport_error`, `stalled`, `truncated` or `upstream_auth` reaches `halt_after_consecutive_failed_requests`; `ok` resets the streak, while `client_error` and `client_disconnect` neither count nor reset it |
 | `proxy_dead` | the proxy process has exited |
 | `oom_watch_dead` | the Docker OOM watcher process has exited |
 | `sampler_dead` | no resource sample for 40 seconds |
-| `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit; swap breaches only when pages were swapped out since the previous sample above `max_swapped_out_pages` |
+| `host_breach` | every sample in the last `host_breach_halt_s` breaches a host limit (swap-outs above `max_swapped_out_pages`, low disk, or Docker unavailable); swap breaches only when pages were swapped out since the previous sample |
 | `inactive` | no ledger row and no new `result.json` for longer than the largest task agent budget x Harbor's timeout multiplier + the largest verifier budget x `verifier_timeout_multiplier` + `inactivity_margin_s` |
 | `deadline` | the timezone-aware launch deadline plus two watch poll intervals has passed and no trial opened in this pass remains unjudged |
 | `harbor_exit` | Harbor exited on its own, nothing is left to set aside, and planned trials have no trial folder; the detail names Harbor's exit code. The run stays resumable. A non-zero exit code alone is not a halt: Harbor exits non-zero in normal flows |
@@ -379,7 +379,7 @@ Machine checks run `<hrr-env>/harbor run --config <check-dir>/<config-name> --jo
 
 The Harbor plugin (`harbor_adapter/plugin.py`), on Harbor's trial events:
 
-- `START`: wait until spare memory is above the limit and `launch_min_interval_s` has passed since the last launch (ported from OLD's launch gate).
+- `START`: reserve the task's declared `memory_mb` only when admitted reservations plus that memory plus `memory_reserve_mb` fit Docker MemTotal; otherwise wait with back-off. Release the reservation at Harbor's `END` event. Preserve `launch_min_interval_s` pacing between admissions.
 - `AGENT_START`: when `stop_launching_at` is set and its time has passed, wait indefinitely before opening the proxy trial; otherwise `POST /control/open` with the trial name, task name and the arm label from the agent's settings.
 - `AGENT_END`: `POST /control/close`. This fires when the agent phase ends for any reason, including Harbor's timeout, and before the verifier starts.
 - `on_job_start`: when `task_order` is `slowest_first`, stably sort Harbor's remaining trial configs by descending agent budget from each task's `task.toml`; ties keep Harbor's order.

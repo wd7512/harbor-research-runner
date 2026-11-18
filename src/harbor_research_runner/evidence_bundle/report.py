@@ -94,7 +94,7 @@ def render_report(
         "## Run",
         "",
         f"- Run id: {metadata['run_id']}",
-        f"- Tool version: {metadata['tool_version']} (commit {metadata['tool_commit']})",
+        f"- Tool version: {metadata['tool_version']} (commit {_commit_label(metadata['tool_commit'])})",
         f"- Model: {metadata['model_card']['id']}",
         f"- Task source: {_task_source(metadata)}",
         f"- Tasks: {len(task_names)} run; {len(excluded_tasks)} excluded by the machine check ({', '.join(excluded_tasks) or 'none'})",
@@ -145,7 +145,7 @@ def render_report(
             detail = (
                 f" — {event.get('reason')}: {event.get('detail')}"
                 if event.get("type") == "halt"
-                else f" — {event.get('tool_version')} (commit {event['tool_commit']})"
+                else f" — {event.get('tool_version')} (commit {_commit_label(event['tool_commit'])})"
             )
             report.append(f"- {_timestamp(event['t'])}: {event['type']}{detail}")
     else:
@@ -225,3 +225,7 @@ def render_report(
         report.append("| None | 0 |")
     report.extend(["", f"Tokens spent: {complete.set_aside_tokens}", ""])
     return "\n".join(report)
+
+
+def _commit_label(commit: str) -> str:
+    return "unknown" if commit == "none" else commit

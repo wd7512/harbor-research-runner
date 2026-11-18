@@ -24,6 +24,7 @@ class RunMetadata:
     proxy: dict
     limits: dict
     sampler_interval_s: float
+    tool_revision: str | None = None
 
     def to_row(self) -> dict:
         return {item.name: getattr(self, item.name) for item in fields(self)}
@@ -33,7 +34,10 @@ class RunMetadata:
 
     @classmethod
     def from_row(cls, row: dict) -> "RunMetadata":
-        if set(row) != {item.name for item in fields(cls)}:
+        expected = {item.name for item in fields(cls)}
+        if set(row) == expected - {"tool_revision"}:
+            row = {**row, "tool_revision": None}
+        if set(row) != expected:
             raise ValueError("run metadata fields do not match")
         return cls(**row)
 

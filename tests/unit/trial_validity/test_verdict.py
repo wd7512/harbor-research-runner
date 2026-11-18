@@ -579,7 +579,7 @@ def test_harbor_tokens_without_proxy_rows_is_possible_bypass():
 
 
 def test_host_breach_in_agent_window_invalidates_trial():
-    samples = [_sample(4.0, mem_available_mb=100)]
+    samples = [_sample(4.0, swapped_out_pages=1)]
 
     verdict = _judge(samples=samples)
 
@@ -588,7 +588,7 @@ def test_host_breach_in_agent_window_invalidates_trial():
 
 @pytest.mark.parametrize("timestamp", [3.0, 5.0])
 def test_host_breach_at_agent_window_boundary_invalidates_trial(timestamp):
-    verdict = _judge(samples=[_sample(timestamp, mem_available_mb=100)])
+    verdict = _judge(samples=[_sample(timestamp, swapped_out_pages=1)])
 
     _assert_invalid(verdict, "host_fault", "host")
 
@@ -597,22 +597,22 @@ def test_host_breach_during_verifier_invalidates_trial():
     started, finished = _phases(verifier=(6.0, 8.0))
     facts = _facts(phase_started=started, phase_finished=finished)
 
-    verdict = _judge(facts, samples=[_sample(7.0, mem_available_mb=100)])
+    verdict = _judge(facts, samples=[_sample(7.0, swapped_out_pages=1)])
 
     _assert_invalid(verdict, "host_fault", "host")
 
 
 @pytest.mark.parametrize("timestamp", [True, "bad"])
 def test_host_breach_with_invalid_sample_time_is_ignored(timestamp):
-    verdict = _judge(samples=[_sample(timestamp, mem_available_mb=100)])
+    verdict = _judge(samples=[_sample(timestamp, swapped_out_pages=1)])
 
     assert verdict.reason != "host_fault"
 
 
 def test_host_fault_search_continues_after_invalid_sample_time():
     samples = [
-        _sample("bad", mem_available_mb=100),
-        _sample(4.0, mem_available_mb=100),
+        _sample("bad", swapped_out_pages=1),
+        _sample(4.0, swapped_out_pages=1),
     ]
 
     verdict = _judge(samples=samples)
@@ -740,7 +740,7 @@ def test_missing_host_samples_make_trial_unmeasured():
 
 
 def test_host_breach_wins_over_damaged_host_sample_line():
-    samples = ReadResult([_sample(4.0, mem_available_mb=100)], False, [2])
+    samples = ReadResult([_sample(4.0, swapped_out_pages=1)], False, [2])
 
     verdict = judge_trial(
         _facts(),
@@ -1188,7 +1188,7 @@ def test_first_harness_setup_failure_is_invalid():
 
 
 def test_host_breach_outside_agent_window_is_ignored():
-    samples = [_sample(2.0, mem_available_mb=100)]
+    samples = [_sample(2.0, swapped_out_pages=1)]
 
     verdict = _judge(samples=samples)
 
@@ -1196,7 +1196,7 @@ def test_host_breach_outside_agent_window_is_ignored():
 
 
 def test_host_breach_after_agent_finish_is_ignored_without_verifier():
-    samples = [_sample(6.0, mem_available_mb=100)]
+    samples = [_sample(6.0, swapped_out_pages=1)]
 
     verdict = _judge(samples=samples)
 
@@ -1214,7 +1214,7 @@ def test_docker_not_ok_in_agent_window_invalidates_trial():
 def test_host_breach_does_not_apply_without_agent_start():
     started, finished = _phases(agent=(None, None), verifier=(None, None))
     facts = _facts(phase_started=started, phase_finished=finished)
-    samples = [_sample(4.0, mem_available_mb=100)]
+    samples = [_sample(4.0, swapped_out_pages=1)]
 
     verdict = _judge(facts, samples=samples)
 
@@ -1630,7 +1630,7 @@ def test_reward_does_not_change_an_invalid_verdict():
             [],
             [],
         ),
-        ("host_fault", _facts(), _clean_ledger(), [_sample(4.0, mem_available_mb=100)]),
+        ("host_fault", _facts(), _clean_ledger(), [_sample(4.0, swapped_out_pages=1)]),
         ("upstream_terminal_error", _facts(), _requests(["ok", "server_error"]), []),
         ("upstream_errors", _facts(), _requests(["server_error"] * 3 + ["ok"] * 97), []),
         (

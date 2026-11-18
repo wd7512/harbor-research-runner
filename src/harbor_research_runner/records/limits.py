@@ -2,8 +2,12 @@ import json
 from dataclasses import dataclass, field, fields
 from typing import Any, cast
 
-_RETIRED_FIELDS = {"max_swap_used_mb"}
-_ADDED_FIELDS = {"max_swapped_out_pages": 0, "memory_reserve_mb": 4096}
+_RETIRED_FIELDS = {"max_swap_used_mb", "zero_billed_window_s", "min_spare_memory_mb"}
+_ADDED_FIELDS = {
+    "max_swapped_out_pages": 0,
+    "memory_reserve_mb": 4096,
+    "halt_after_consecutive_failed_requests": 10,
+}
 
 
 @dataclass(frozen=True)
@@ -15,8 +19,7 @@ class Limits:
     inter_chunk_gap_max_s: float = 180
     request_latency_max_s: float = 1200
     halt_after_consecutive_invalid: int = 5
-    zero_billed_window_s: float = 900
-    min_spare_memory_mb: int = 2048
+    halt_after_consecutive_failed_requests: int = 10
     memory_reserve_mb: int = 4096
     max_swapped_out_pages: int = 0
     min_free_disk_gb: int = 20
@@ -64,8 +67,7 @@ class Limits:
 
 def host_breach(sample: dict, limits: Limits) -> bool:
     return (
-        sample["mem_available_mb"] < limits.min_spare_memory_mb
-        or sample.get("swapped_out_pages", 0) > limits.max_swapped_out_pages
+        sample.get("swapped_out_pages", 0) > limits.max_swapped_out_pages
         or sample["disk_free_gb"] < limits.min_free_disk_gb
         or not sample["docker_ok"]
     )
