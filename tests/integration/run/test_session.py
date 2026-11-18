@@ -177,7 +177,7 @@ def test_services_restart_records_both_proxy_starts_in_the_ledger(tmp_path: Path
     try:
         session.start_services(restart=False)
         session.stop_services()
-        session.start_services(restart=True)
+        session.start_services(restart=True, restart_cooldown_s=0.01, health_poll_s=0.01)
         session.stop_services()
         ledger = [
             json.loads(line)

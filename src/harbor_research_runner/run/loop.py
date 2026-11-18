@@ -215,7 +215,13 @@ class RunSession:
     def event(self, event) -> None:
         _append_event(self.run_dir, event)
 
-    def start_services(self, restart: bool) -> None:
+    def start_services(
+        self,
+        restart: bool,
+        *,
+        restart_cooldown_s: float | None = None,
+        health_poll_s: float = 0.5,
+    ) -> None:
         config = ProxyConfig(
             host=self.job.proxy_host,
             port=self.job.proxy_port,
@@ -223,7 +229,9 @@ class RunSession:
             bodies_dir=str(self.run_dir / "request-bodies"),
             model=_card_to_row(self.card),
             limits=self.limits.to_row(),
-            restart_cooldown_s=60.0 if restart else 0.0,
+            restart_cooldown_s=(
+                restart_cooldown_s if restart_cooldown_s is not None else (60.0 if restart else 0.0)
+            ),
             session_id=session_id_for_run(self.run_dir.name),
         )
         config_path = self.run_dir / "proxy-config.json"
@@ -306,16 +314,16 @@ class RunSession:
                         return
             except (OSError, urllib.error.URLError):
                 pass
-            time.sleep(0.5)
+            time.sleep(health_poll_s)
         self.stop_services()
         raise TimeoutError("proxy did not become healthy within 30 seconds")
 
-    def stop_services(self) -> None:
+    def stop_services(self, *, grace_s: float = 15.0) -> None:
         try:
             for name in ("_proxy", "_sampler", "_oom_watch", "_memory_watch"):
                 process = getattr(self, name)
                 if process is not None and process.poll() is None:
-                    process_group.stop_group(process, grace_s=15)
+                    process_group.stop_group(process, grace_s=grace_s)
                 setattr(self, name, None)
         finally:
             if self._lifeline_write_fd is not None:

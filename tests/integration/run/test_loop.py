@@ -162,8 +162,12 @@ def _run_deps(
         },
         start_harbor=start_harbor,
         watch=lambda *_args: None,
-        start_services=lambda session, restart: session.start_services(restart),
-        stop_services=lambda session: session.stop_services(),
+        start_services=lambda session, restart: session.start_services(
+            restart,
+            restart_cooldown_s=0.01 if restart else 0.0,
+            health_poll_s=0.01,
+        ),
+        stop_services=lambda session: session.stop_services(grace_s=0.1),
         now=lambda: _NOW,
     )
     return job_path, manifest_path, tmp_path / "runs", deps, port
@@ -578,7 +582,7 @@ def test_resume_restarts_the_proxy_with_the_restart_cooldown(
     assert resumed.exit_code == 0
     assert resumed.run_dir is not None
     proxy_config = json.loads((resumed.run_dir / "proxy-config.json").read_text(encoding="utf-8"))
-    assert proxy_config["restart_cooldown_s"] == 60.0
+    assert proxy_config["restart_cooldown_s"] == 0.01
     _assert_proxy_stopped(port)
 
 

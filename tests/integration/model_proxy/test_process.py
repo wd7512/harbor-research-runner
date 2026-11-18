@@ -196,7 +196,7 @@ def test_sigterm_waits_for_stream_to_finish(proxy):
     assert b"data: [DONE]" in result["body"]
 
 
-@pytest.mark.parametrize("proxy", [{"script": ["slow:20"]}], indirect=True)
+@pytest.mark.parametrize("proxy", [{"script": ["slow:100"]}], indirect=True)
 def test_proxy_lifeline_waits_for_stream_to_finish(proxy):
     assert proxy.stop() == 0
     read_fd, write_fd = os.pipe()
