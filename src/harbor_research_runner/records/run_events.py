@@ -20,6 +20,7 @@ class Launch(_Event):
     tool_version: str
     tool_commit: str
     pid: int
+    tool_revision: str | None = None
     type: str = "launch"
 
 
@@ -112,6 +113,7 @@ class Resume(_Event):
     tool_version: str
     tool_commit: str
     pid: int
+    tool_revision: str | None = None
     type: str = "resume"
 
 
@@ -190,6 +192,8 @@ def parse_event(row: dict):
     if "pass_number" in names:
         names.remove("pass_number")
         names.add("pass")
+    if event_type in {Launch, Resume} and set(row) == names - {"tool_revision"}:
+        row = {**row, "tool_revision": None}
     if set(row) != names:
         raise ValueError("run event fields do not match")
     values = dict(row)

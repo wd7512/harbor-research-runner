@@ -88,13 +88,14 @@ def render_report(
         )
         or "unknown"
     )
+    tool_commit = "unknown" if metadata["tool_commit"] == "none" else metadata["tool_commit"]
     report = [
         "# Run report",
         "",
         "## Run",
         "",
         f"- Run id: {metadata['run_id']}",
-        f"- Tool version: {metadata['tool_version']} (commit {metadata['tool_commit']})",
+        f"- Tool version: {metadata['tool_version']} (commit {tool_commit})",
         f"- Model: {metadata['model_card']['id']}",
         f"- Task source: {_task_source(metadata)}",
         f"- Tasks: {len(task_names)} run; {len(excluded_tasks)} excluded by the machine check ({', '.join(excluded_tasks) or 'none'})",
@@ -142,10 +143,11 @@ def render_report(
     history = [event for event in events if event.get("type") in ("halt", "resume")]
     if history:
         for event in history:
+            event_commit = "unknown" if event.get("tool_commit") == "none" else event["tool_commit"]
             detail = (
                 f" — {event.get('reason')}: {event.get('detail')}"
                 if event.get("type") == "halt"
-                else f" — {event.get('tool_version')} (commit {event['tool_commit']})"
+                else f" — {event.get('tool_version')} (commit {event_commit})"
             )
             report.append(f"- {_timestamp(event['t'])}: {event['type']}{detail}")
     else:

@@ -1824,6 +1824,7 @@ def test_resume_keeps_absolute_task_path_from_stored_job(tmp_path: Path) -> None
 
 def test_mark_resumed_appends_resume_event(tmp_path: Path) -> None:
     session = _create(tmp_path)
+    session.tool = ToolIdentity("0.1.0", "a" * 40, "v0.1.0")
 
     session.mark_resumed(lambda: 1794480100.5)
 
@@ -1833,6 +1834,7 @@ def test_mark_resumed_appends_resume_event(tmp_path: Path) -> None:
         "t": 1794480100.5,
         "tool_version": "0.1.0",
         "tool_commit": "a" * 40,
+        "tool_revision": "v0.1.0",
         "pid": __import__("os").getpid(),
     }
 

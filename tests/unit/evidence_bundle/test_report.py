@@ -79,6 +79,30 @@ def test_report_includes_tool_commit_for_resume():
     assert f"resume — 0 (commit {commit})" in report
 
 
+def test_report_states_when_tool_commit_is_unknown():
+    run_dir = FIXTURES / "clean"
+    rows = build_trial_rows(run_dir)
+    metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+    metadata["tool_commit"] = "none"
+    events = [
+        json.loads(line)
+        for line in (run_dir / "run-events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    tasks = sorted({row.task for row in rows if row.location != "canary-job"})
+
+    report = render_report(
+        rows,
+        metadata,
+        events,
+        list(product(tasks, [arm["label"] for arm in metadata["arms"]])),
+        metadata["job"]["repetitions"],
+        machine_check=read(run_dir / "machine-check.json"),
+        unjudged_trials=0,
+    )
+
+    assert "commit unknown" in report
+
+
 def test_report_includes_host_memory_cap_and_rootless_status():
     run_dir = FIXTURES / "clean"
     rows = build_trial_rows(run_dir)
