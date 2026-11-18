@@ -7,6 +7,7 @@ _ADDED_FIELDS = {
     "max_swapped_out_pages": 0,
     "memory_reserve_mb": 4096,
     "halt_after_consecutive_failed_requests": 10,
+    "host_reserve_mb": 12288,
 }
 
 
@@ -21,6 +22,7 @@ class Limits:
     halt_after_consecutive_invalid: int = 5
     halt_after_consecutive_failed_requests: int = 10
     memory_reserve_mb: int = 4096
+    host_reserve_mb: int = 12288
     max_swapped_out_pages: int = 0
     min_free_disk_gb: int = 20
     host_breach_halt_s: float = 120

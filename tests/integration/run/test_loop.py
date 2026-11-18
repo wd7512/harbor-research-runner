@@ -137,6 +137,7 @@ def _run_deps(
         host_fingerprint=lambda: "fingerprint",
         harbor_version=lambda: "0.23.0",
         docker_memory_mb=lambda: 32768,
+        host_memory_mb=lambda: 32768,
         host_profile=lambda: _PROFILE,
         processes=lambda _run_dir: [],
     )

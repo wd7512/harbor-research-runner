@@ -15,6 +15,7 @@ def test_limits_defaults_include_repetition_derived_cap():
     assert limits.trial_output_rate_min == 2.0
     assert limits.verifier_timeout_multiplier == 1.5
     assert limits.memory_reserve_mb == 4096
+    assert limits.host_reserve_mb == 12288
 
 
 def test_limits_rejects_job_override_of_machine_value():
@@ -41,6 +42,7 @@ def test_limits_row_recorded_before_86_loads_with_defaults():
     row = _limits().to_row()
     row.pop("max_swapped_out_pages")
     row.pop("memory_reserve_mb")
+    row.pop("host_reserve_mb")
     row["max_swap_used_mb"] = 512
     row["min_spare_memory_mb"] = 2048
 
@@ -48,6 +50,7 @@ def test_limits_row_recorded_before_86_loads_with_defaults():
 
     assert limits.max_swapped_out_pages == 0
     assert limits.memory_reserve_mb == 4096
+    assert limits.host_reserve_mb == 12288
 
 
 def test_limits_row_with_retired_zero_billed_window_loads_with_new_default():
@@ -70,6 +73,7 @@ def test_limits_row_with_retired_zero_billed_window_loads_with_new_default():
             "max_swapped_out_pages",
             "memory_reserve_mb",
             "halt_after_consecutive_failed_requests",
+            "host_reserve_mb",
         }
     ],
 )

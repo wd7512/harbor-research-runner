@@ -9,10 +9,20 @@ from harbor_research_runner.docker_host.resources import (
     _parse_swapouts,
     host_description,
     host_fingerprint,
+    host_memory_mb,
     measure,
     spare_memory_mb,
 )
 from harbor_research_runner.run.loop import HOST_FIELDS
+
+
+def test_host_memory_reads_system_configuration() -> None:
+    values = {"SC_PAGE_SIZE": 4096, "SC_PHYS_PAGES": 15983 * 256}
+
+    def sysconf(name: str) -> int:
+        return values[name]
+
+    assert host_memory_mb(sysconf=sysconf) == 15983
 
 
 def test_linux_memavailable_is_spare() -> None:

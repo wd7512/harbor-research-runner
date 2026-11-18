@@ -35,6 +35,8 @@ from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
 from harbor_research_runner.run.canary import canary_memory_mb
 
+NATIVE_DOCKER_TOLERANCE_MB = 1024
+
 
 def _bind_port(host: str, port: int) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -60,6 +62,7 @@ class CheckDeps:
     host_fingerprint: Callable[[], str]
     harbor_version: Callable[[], str]
     docker_memory_mb: Callable[[], int]
+    host_memory_mb: Callable[[], int]
     host_profile: Callable[[], dict] = lambda: {}
     bind_port: Callable[[str, int], None] = _bind_port
     processes: Callable[[Path], list[int]] = pids_naming_run
@@ -341,10 +344,34 @@ def run_checks(
             return False, f"machine check is unavailable; {numbers}"
         if max_task_memory is None:
             return False, f"task memory could not be determined; {numbers}"
-        required = concurrency * max_task_memory + reserve
+        required = max_task_memory + reserve
         if required > docker_memory:
             return False, f"required_memory_mb={required} exceeds Docker memory; {numbers}"
         return True, f"required_memory_mb={required} fits Docker memory; {numbers}"
+
+    def host_headroom_check() -> tuple[bool, str]:
+        profile = deps.host_profile()
+        host_memory = deps.host_memory_mb()
+        docker_memory = profile.get("docker_memory_mb")
+        if not isinstance(host_memory, int) or isinstance(host_memory, bool) or host_memory <= 0:
+            return False, "host memory unknown"
+        if (
+            not isinstance(docker_memory, int)
+            or isinstance(docker_memory, bool)
+            or docker_memory < 0
+        ):
+            raise ValueError("Docker memory unavailable or invalid")
+        if docker_memory >= host_memory - NATIVE_DOCKER_TOLERANCE_MB:
+            return True, "docker memory equals host memory (no VM)"
+        headroom = host_memory - docker_memory
+        reserve = Limits.from_dict(job.limit_overrides, job.repetitions, 1.0).host_reserve_mb
+        detail = (
+            f"host_memory_mb={host_memory}, docker_memory_mb={docker_memory}, "
+            f"headroom_mb={headroom}, host_reserve_mb={reserve}"
+        )
+        if headroom < reserve:
+            return False, f"host headroom is below the required reserve; {detail}"
+        return True, f"host headroom meets the required reserve; {detail}"
 
     return [
         _evaluate("children_resolve", deps.children_resolve),
@@ -368,6 +395,7 @@ def run_checks(
         _evaluate("machine_check_matches", machine_check_matches_check),
         _evaluate("tasks_included", tasks_included_check),
         _evaluate("memory_fits", memory_fits_check),
+        _evaluate("host_headroom", host_headroom_check),
         _evaluate("proxy_host_reachable", lambda: proxy_host_reachable_check(job, deps)),
     ]
 
