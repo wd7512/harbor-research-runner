@@ -49,12 +49,27 @@ def test_limits_row_recorded_before_86_loads_with_defaults():
     assert limits.memory_reserve_mb == 4096
 
 
+def test_limits_row_with_retired_zero_billed_window_loads_with_new_default():
+    row = _limits().to_row()
+    row.pop("halt_after_consecutive_failed_requests", None)
+    row["zero_billed_window_s"] = 900
+
+    limits = Limits.from_row(row)
+
+    assert limits.halt_after_consecutive_failed_requests == 10
+
+
 @pytest.mark.parametrize(
     "field",
     [
         name
         for name in _limits().to_row()
-        if name not in {"max_swapped_out_pages", "memory_reserve_mb"}
+        if name
+        not in {
+            "max_swapped_out_pages",
+            "memory_reserve_mb",
+            "halt_after_consecutive_failed_requests",
+        }
     ],
 )
 def test_limits_parser_rejects_missing_field(field):

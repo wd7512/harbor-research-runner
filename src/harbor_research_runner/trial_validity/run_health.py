@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from harbor_research_runner.records.limits import Limits, host_breach
+from harbor_research_runner.records.proxy_ledger import COUNTS_AGAINST_TRIAL
 
 SAMPLER_STALE_S = 40.0
 
@@ -37,22 +38,6 @@ def _time(row: dict) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
-
-
-def _zero_billed_anchor(snapshot: RunSnapshot, rows: list[dict]) -> float:
-    ok_times = [
-        time
-        for row in rows
-        if row.get("type") == "request_end"
-        and row.get("upstream_status") == "ok"
-        and (time := _time(row)) is not None
-    ]
-    anchor = max(ok_times) if ok_times else None
-    if rows:
-        first = _time(rows[0])
-        if first is not None:
-            anchor = first if anchor is None else max(anchor, first)
-    return snapshot.last_activity_t if anchor is None else anchor
 
 
 def _samples(snapshot: RunSnapshot) -> list[dict]:
@@ -99,14 +84,23 @@ def should_halt(
                 f"{streak} consecutive proxy-invalid trial verdicts",
             )
 
-    if snapshot.open_trials >= 1:
-        anchor = _zero_billed_anchor(snapshot, rows)
-        elapsed = snapshot.now - anchor
-        if elapsed >= limits.zero_billed_window_s:
-            return (
-                "zero_billed_window",
-                f"no billed request for {elapsed:.0f}s with {snapshot.open_trials} trial(s) open",
-            )
+    failed_requests = 0
+    last_failed_status = None
+    for row in rows:
+        if row.get("type") != "request_end":
+            continue
+        status = row.get("upstream_status")
+        if status in COUNTS_AGAINST_TRIAL:
+            failed_requests += 1
+            last_failed_status = status
+        elif status == "ok":
+            failed_requests = 0
+            last_failed_status = None
+    if failed_requests and failed_requests >= limits.halt_after_consecutive_failed_requests:
+        return (
+            "upstream_failure_streak",
+            f"{failed_requests} consecutive failed requests (last status {last_failed_status})",
+        )
 
     if not snapshot.proxy_alive:
         return ("proxy_dead", "proxy process exited")

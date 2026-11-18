@@ -52,6 +52,24 @@ def test_rejects_obsolete_swap_limit_with_replacement_name(tmp_path: Path) -> No
         load_job(write_job(tmp_path, text))
 
 
+def test_rejects_obsolete_zero_billed_window_limit_with_replacement_name(tmp_path: Path) -> None:
+    text = valid_job().replace("limits: {}", "limits: {zero_billed_window_s: 900}")
+
+    with pytest.raises(
+        JobFileError,
+        match="limits.zero_billed_window_s was replaced by halt_after_consecutive_failed_requests",
+    ):
+        load_job(write_job(tmp_path, text))
+
+
+def test_job_accepts_upstream_failure_streak_limit(tmp_path: Path) -> None:
+    text = valid_job().replace("limits: {}", "limits: {halt_after_consecutive_failed_requests: 7}")
+
+    assert load_job(write_job(tmp_path, text)).limit_overrides == {
+        "halt_after_consecutive_failed_requests": 7
+    }
+
+
 def test_job_accepts_memory_reserve_limit(tmp_path: Path) -> None:
     text = valid_job().replace("limits: {}", "limits: {memory_reserve_mb: 2048}")
 
