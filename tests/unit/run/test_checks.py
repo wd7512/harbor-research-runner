@@ -164,6 +164,7 @@ def _deps(
         bind_port=bind_port,
         processes=processes,
         digest_of=digest_of,
+        children_resolve=lambda: (True, "Python child and Harbor executable resolve"),
     )
 
 
@@ -1136,6 +1137,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
     results = _run(tmp_path, card=_card(withdrawn=True), deps=deps)
 
     assert [result.name for result in results] == [
+        "children_resolve",
         "model_card",
         "keys_present",
         "arms_pinned",
@@ -1181,6 +1183,7 @@ def test_machine_check_launch_checks_pass_and_leave_host_lock_held(tmp_path: Pat
     results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
 
     assert results == [
+        CheckResult("children_resolve", True, "Python child and Harbor executable resolve"),
         CheckResult("docker_clean", True, "Docker inventory is clean"),
         CheckResult("single_run", True, "this process holds the host lock"),
         CheckResult("host_resources", True, "host resources meet the job limits"),
@@ -1199,13 +1202,15 @@ def test_machine_check_launch_checks_reports_each_failure(tmp_path: Path) -> Non
     results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
 
     assert [result.name for result in results] == [
+        "children_resolve",
         "docker_clean",
         "single_run",
         "host_resources",
     ]
-    assert not results[0].ok
-    assert results[1].ok
-    assert not results[2].ok
+    assert results[0].ok
+    assert not results[1].ok
+    assert results[2].ok
+    assert not results[3].ok
     deps.host_lock.release()
 
 
@@ -1224,8 +1229,8 @@ def test_machine_check_single_run_reports_the_lock_holder(tmp_path: Path) -> Non
     finally:
         holder.release()
 
-    assert not results[1].ok
-    assert results[1].detail == "host lock is held by run run-holder"
+    assert not results[2].ok
+    assert results[2].detail == "host lock is held by run run-holder"
 
 
 @pytest.mark.parametrize("message", ["docker unavailable", ""])
