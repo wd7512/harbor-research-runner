@@ -29,7 +29,9 @@ def test_run_metadata_round_trips():
     assert RunMetadata.from_row(metadata.to_row()) == metadata
 
 
-@pytest.mark.parametrize("field", list(_metadata().to_row()))
+@pytest.mark.parametrize(
+    "field", [field for field in _metadata().to_row() if field != "tool_revision"]
+)
 def test_run_metadata_parser_rejects_missing_field(field):
     row = _metadata().to_row()
     row.pop(field)
@@ -44,6 +46,13 @@ def test_run_metadata_parser_rejects_unknown_field():
 
     with pytest.raises(ValueError):
         RunMetadata.from_row(row)
+
+
+def test_run_metadata_parser_loads_rows_without_tool_revision():
+    row = _metadata().to_row()
+    row.pop("tool_revision")
+
+    assert RunMetadata.from_row(row).tool_revision is None
 
 
 def test_run_metadata_write_is_atomic(tmp_path):

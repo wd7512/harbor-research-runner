@@ -172,9 +172,9 @@ A request for a trial that is not open gets HTTP 410 with body `{"error": {"mess
 
 Written once, atomically, before anything else starts: write a temporary file in the same folder, `fsync` it, then link it into place without replacing any existing destination. An existing destination, including a dangling symlink, raises `FileExistsError` and is left unchanged. Never rewritten.
 
-Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds).
+Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `tool_revision` (optional string or null; the requested git revision of a git install, or null when unknown or for a work-tree install), `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds).
 
-`tool_version` is the installed `harbor-research-runner` package version. `tool_commit` is the 40-hex commit of the checkout containing the package, with `+dirty` appended when tracked files have changes; it is `none` when Git is unavailable or the package is not in a Git checkout.
+`tool_version` is the installed `harbor-research-runner` package version. `tool_commit` is the 40-hex commit of the checkout containing the package, with `+dirty` appended when tracked files have changes; for a non-work-tree git install it is the 40-hex commit in `direct_url.json`; it is `none` when no commit is available. `tool_revision` is that install's requested git revision, such as `v0.1.0`, and is null when unknown or for a work-tree install. Older run metadata without `tool_revision` remains readable.
 
 ### 4.4 `run-events.jsonl`
 
@@ -182,7 +182,7 @@ Each row has `t` and `type`:
 
 | `type` | Fields |
 |---|---|
-| `launch` | `tool_version`, `tool_commit`, `pid` |
+| `launch` | `tool_version`, `tool_commit`, `tool_revision` (optional string or null; old rows may omit it), `pid` |
 | `launch_check` | `name`, `ok`, `detail` |
 | `harbor_start` | `pass` (0 for `harbor run`, then 1, 2, ...), `command`, `job` (`canary` or `main`) |
 | `harbor_exit` | `pass`, `returncode`, `job` |
@@ -191,7 +191,7 @@ Each row has `t` and `type`:
 | `trial_measurement_amended` | `trial`, `unmeasured_reason` (`telemetry_damaged` or `host_samples_damaged`) |
 | `set_aside` | `trial`, `task`, `arm`, `reason` |
 | `halt` | `reason`, `detail` |
-| `resume` | `tool_version`, `tool_commit`, `pid` |
+| `resume` | `tool_version`, `tool_commit`, `tool_revision` (optional string or null; old rows may omit it), `pid` |
 | `finish` | `exit_code`, `slots_complete`, `slots_incomplete` |
 
 A `trial_verdict` is written exactly once per trial, by `run`, when the trial has finished or is found unfinished at a halt or resume. Nothing else decides validity. The event includes `oom_source` (`kernel`, `watchdog`, or null); if both OOM records fall within the trial's agent/verifier window, the earlier record determines the source. A watchdog `kill` or `kill_failed` row for the trial counts as a watchdog breach at any location.

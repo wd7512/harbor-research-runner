@@ -41,8 +41,18 @@ def test_run_event_round_trips(event):
 
 @pytest.mark.parametrize(
     ("event", "field"),
-    [(event, field) for event in EVENTS for field in event.to_row()],
-    ids=[f"{event.type}-{field}" for event in EVENTS for field in event.to_row()],
+    [
+        (event, field)
+        for event in EVENTS
+        for field in event.to_row()
+        if not (event.type in {"launch", "resume"} and field == "tool_revision")
+    ],
+    ids=[
+        f"{event.type}-{field}"
+        for event in EVENTS
+        for field in event.to_row()
+        if not (event.type in {"launch", "resume"} and field == "tool_revision")
+    ],
 )
 def test_run_event_parser_rejects_missing_field(event, field):
     row = event.to_row()
@@ -59,6 +69,14 @@ def test_run_event_parser_rejects_unknown_field(event):
 
     with pytest.raises(ValueError):
         parse_event(row)
+
+
+@pytest.mark.parametrize("event", [EVENTS[0], EVENTS[10]], ids=["launch", "resume"])
+def test_run_event_parser_loads_rows_without_tool_revision(event):
+    row = event.to_row()
+    row.pop("tool_revision")
+
+    assert parse_event(row).tool_revision is None
 
 
 def test_final_verdicts_applies_amendment():
