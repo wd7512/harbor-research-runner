@@ -221,6 +221,7 @@ class RunSession:
         *,
         restart_cooldown_s: float | None = None,
         health_poll_s: float = 0.5,
+        health_timeout_s: float = 30.0,
     ) -> None:
         config = ProxyConfig(
             host=self.job.proxy_host,
@@ -300,7 +301,7 @@ class RunSession:
         except BaseException:
             self.stop_services()
             raise
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + health_timeout_s
         while time.monotonic() < deadline:
             if not self.proxy_alive():
                 self.stop_services()
@@ -316,7 +317,7 @@ class RunSession:
                 pass
             time.sleep(health_poll_s)
         self.stop_services()
-        raise TimeoutError("proxy did not become healthy within 30 seconds")
+        raise TimeoutError(f"proxy did not become healthy within {health_timeout_s:g} seconds")
 
     def stop_services(self, *, grace_s: float = 15.0) -> None:
         try:

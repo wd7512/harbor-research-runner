@@ -221,3 +221,18 @@ def test_stopping_services_closes_lifeline_writer(tmp_path: Path) -> None:
     finally:
         session.stop_services()
         upstream.stop()
+
+
+def test_services_start_fails_fast_when_the_proxy_misses_the_health_deadline(
+    tmp_path: Path,
+) -> None:
+    upstream = FakeUpstream(["ok"])
+    upstream_url = upstream.start()
+    session = _session(tmp_path, upstream_url)
+    try:
+        with pytest.raises(TimeoutError, match="within 0 seconds"):
+            session.start_services(restart=False, health_timeout_s=0.0)
+        assert session._proxy is None
+    finally:
+        session.stop_services()
+        upstream.stop()
