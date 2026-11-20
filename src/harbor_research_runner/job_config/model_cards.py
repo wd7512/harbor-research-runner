@@ -118,7 +118,14 @@ def load_card(model_id: str, extra_dir: Path | None = None) -> ModelCard:
         if not isinstance(request, dict):
             raise ModelCardError("model card request must be an object")
         unknown_request = sorted(
-            set(request) - {"drop_message_fields", "max_tokens_cap", "headers", "session_header"}
+            set(request)
+            - {
+                "drop_message_fields",
+                "drop_request_keys",
+                "max_tokens_cap",
+                "headers",
+                "session_header",
+            }
         )
         if unknown_request:
             raise ModelCardError(f"unknown request key(s): {', '.join(unknown_request)}")
@@ -129,6 +136,19 @@ def load_card(model_id: str, extra_dir: Path | None = None) -> ModelCard:
             )
         ):
             raise ModelCardError("request drop_message_fields must be a list of non-empty strings")
+        if "drop_request_keys" in request and (
+            not isinstance(request["drop_request_keys"], list)
+            or any(
+                not isinstance(value, str) or not value for value in request["drop_request_keys"]
+            )
+        ):
+            raise ModelCardError("request drop_request_keys must be a list of non-empty strings")
+        if "drop_request_keys" in request:
+            forbidden = {"model", "messages", "input", "stream"}
+            listed_forbidden = forbidden & set(request["drop_request_keys"])
+            if listed_forbidden:
+                key = sorted(listed_forbidden)[0]
+                raise ModelCardError(f"request drop_request_keys cannot include {key!r}")
         if "max_tokens_cap" in request:
             cap = request["max_tokens_cap"]
             if cap is not None and (not isinstance(cap, int) or isinstance(cap, bool) or cap <= 0):

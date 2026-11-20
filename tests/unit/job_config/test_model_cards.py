@@ -78,6 +78,12 @@ def test_beam_card_loads_with_default_variant_max() -> None:
     assert load_card("ollama/beam:cloud").default_variant == "max"
 
 
+def test_luna_card_loads_with_top_level_request_keys_to_drop() -> None:
+    card = load_card("opencodego/gpt-6-luna")
+
+    assert card.request["drop_request_keys"] == ["temperature", "top_p"]
+
+
 def test_card_with_no_default_variant_key_loads_with_none(tmp_path: Path) -> None:
     _write_card(tmp_path)
     assert load_card("provider/model", tmp_path).default_variant is None
@@ -142,6 +148,14 @@ def test_unknown_request_shaping_key_is_rejected(tmp_path: Path) -> None:
         load_card("provider/model", tmp_path)
 
 
+@pytest.mark.parametrize("key", ["model", "messages", "input", "stream"])
+def test_request_keys_that_break_api_bodies_are_rejected(tmp_path: Path, key: str) -> None:
+    _write_card(tmp_path, request={"drop_request_keys": [key]})
+
+    with pytest.raises(ModelCardError, match=key):
+        load_card("provider/model", tmp_path)
+
+
 @pytest.mark.parametrize(
     "shaping",
     [
@@ -149,6 +163,8 @@ def test_unknown_request_shaping_key_is_rejected(tmp_path: Path) -> None:
         {"drop_message_fields": "reasoning_content"},
         {"drop_message_fields": [""]},
         {"drop_message_fields": [1]},
+        {"drop_request_keys": "temperature"},
+        {"drop_request_keys": [""]},
         {"max_tokens_cap": True},
         {"max_tokens_cap": 0},
         {"max_tokens_cap": -1},
