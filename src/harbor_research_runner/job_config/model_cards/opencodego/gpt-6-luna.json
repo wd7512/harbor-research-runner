@@ -35,6 +35,10 @@
   "withdrawn": false,
   "reason": null,
   "request": {
+    "drop_request_keys": [
+      "temperature",
+      "top_p"
+    ],
     "session_header": "x-opencode-session",
     "headers": {
       "User-Agent": "OpenAI/Python 1.x"

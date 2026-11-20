@@ -1,5 +1,8 @@
-from harbor_research_runner.model_proxy.adapters.responses import ResponsesAdapter
-from harbor_research_runner.model_proxy.shaping import shape_request
+from harbor_research_runner.model_proxy.adapters.responses import (
+    ResponsesAdapter,
+    chat_to_responses,
+)
+from harbor_research_runner.model_proxy.shaping import request_keys_to_drop, shape_request
 
 
 def test_groq_chat_drops_configured_message_fields_and_clamps_token_limits():
@@ -86,3 +89,38 @@ def test_request_shaping_passes_non_integer_token_fields_through():
         for value in ("999", 999.0, True, False, None, [999]):
             body = {key: value}
             assert shape_request(body, {"request": {"max_tokens_cap": 128}}) == body
+
+
+def test_request_shaping_drops_luna_keys_from_translated_opencode_body():
+    chat_body = {
+        "model": "opencodego/gpt-6-luna",
+        "messages": [{"role": "user", "content": "question"}],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "tools": [{"type": "function", "function": {"name": "lookup"}}],
+        "max_tokens": 4096,
+    }
+    outbound = chat_to_responses(chat_body, "gpt-6-luna")
+
+    shaped = shape_request(outbound, {"request": {"drop_request_keys": ["temperature", "top_p"]}})
+
+    assert shaped == {
+        "model": "gpt-6-luna",
+        "input": [{"role": "user", "content": "question"}],
+        "stream": True,
+        "tools": [{"type": "function", "name": "lookup"}],
+        "max_output_tokens": 4096,
+    }
+    assert "temperature" not in shaped
+    assert "top_p" not in shaped
+
+
+def test_request_shaping_reports_only_present_card_declared_keys():
+    body = {"temperature": 0.6}
+
+    assert request_keys_to_drop(
+        body, {"request": {"drop_request_keys": ["temperature", "top_p"]}}
+    ) == ["temperature"]
+    assert request_keys_to_drop(body, {"request": {"drop_request_keys": ["top_p"]}}) == []

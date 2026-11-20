@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import re
 import socket
@@ -25,7 +26,7 @@ from harbor_research_runner.model_proxy.chars import (
 from harbor_research_runner.model_proxy.control import TrialClosed
 from harbor_research_runner.model_proxy.ledger import LedgerWriter
 from harbor_research_runner.model_proxy.pacing import Pacer, Reservation, estimate_request_tokens
-from harbor_research_runner.model_proxy.shaping import shape_request
+from harbor_research_runner.model_proxy.shaping import request_keys_to_drop, shape_request
 from harbor_research_runner.model_proxy.status import (
     UpstreamOutcome,
     classify,
@@ -39,6 +40,7 @@ from harbor_research_runner.records.proxy_ledger import RequestEnd, RequestStart
 _UNAVAILABLE_BODY = (
     b'{"error": {"message": "upstream unavailable", "type": "upstream_unavailable"}}'
 )
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -398,7 +400,10 @@ def relay(
     requested_model = payload.get("model")
     model = requested_model if isinstance(requested_model, str) else deps.model["id"]
     outbound, _warnings = adapter.build_request(payload, deps.model["upstream_model"])
+    dropped_keys = request_keys_to_drop(outbound, deps.model)
     outbound = shape_request(outbound, deps.model)
+    if dropped_keys:
+        logger.warning("dropping card-declared request keys %s", dropped_keys)
     request_config = deps.model.get("request")
     max_tokens_cap = (
         request_config.get("max_tokens_cap") if isinstance(request_config, dict) else None

@@ -20,7 +20,7 @@
 3. **Add optional settings when needed.**
 
 - `default_variant`: a declared variant ID or `null`. If omitted, it defaults to `null`.
-- `request`: optional request settings. `drop_message_fields` is a list of nonempty strings; `max_tokens_cap` is a positive integer or `null`; `headers` maps nonempty header names to fixed nonempty strings and cannot set `authorization`, `content-type`, or the session header; `session_header` is a nonempty header name or `null`.
+- `request`: optional request settings. `drop_message_fields` and `drop_request_keys` are lists of nonempty strings; `drop_request_keys` removes top-level keys from the translated upstream body and cannot include `model`, `messages`, `input` or `stream`. `max_tokens_cap` is a positive integer or `null`; `headers` maps nonempty header names to fixed nonempty strings and cannot set `authorization`, `content-type`, or the session header; `session_header` is a nonempty header name or `null`.
 
 4. **Check the card shape and keep credentials out of it.** For example:
 
@@ -37,7 +37,7 @@
   "default_variant": "standard",
   "withdrawn": false,
   "reason": null,
-  "request": {"drop_message_fields": [], "max_tokens_cap": null}
+  "request": {"drop_message_fields": [], "drop_request_keys": [], "max_tokens_cap": null}
 }
 ```
 

@@ -289,6 +289,33 @@ def test_relay_shapes_groq_request_before_pacing_and_body_capture(tmp_path):
     assert body_rows[0]["request"] == request_body.decode()
 
 
+def test_relay_drops_card_declared_request_keys_and_logs_warning(tmp_path, caplog):
+    upstream = FakeUpstream(["ok"], model="served-model")
+    base_url = upstream.start()
+    card = {**_CARD, "request": {"drop_request_keys": ["temperature", "top_p"]}}
+    deps, ledger, client = _deps(tmp_path, base_url, card=card)
+    request_body = json.dumps(
+        {
+            "model": "card/model",
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.6,
+            "top_p": 0.95,
+        }
+    ).encode()
+    try:
+        response = relay(request_body, {}, "trial-drop-keys", deps, ChatAdapter())
+        b"".join(response.chunks)
+    finally:
+        ledger.close()
+        client.close()
+        upstream.stop()
+
+    assert "temperature" not in upstream.requests[0]["body"]
+    assert "top_p" not in upstream.requests[0]["body"]
+    assert "dropping card-declared request keys ['temperature', 'top_p']" in caplog.text
+
+
 def test_relay_without_request_shaping_preserves_outbound_bytes(tmp_path):
     go_card = asdict(load_card("opencodego/mimo-v2.6-pro"))
     upstream = FakeUpstream(["ok"], model=go_card["upstream_model"])
