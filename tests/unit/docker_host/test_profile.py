@@ -64,7 +64,7 @@ def test_host_profile_detects_bridge_network_from_fixture():
     calls = iter([info, networks])
 
     profile = host_profile(
-        run=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=next(calls), stderr="")
+        run=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=next(calls), stderr=""),
     )
 
     assert profile["container_network"] == "bridge"

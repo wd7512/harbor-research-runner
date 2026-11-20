@@ -68,14 +68,37 @@ jobs:
     timeout-minutes: 60
     name: e2e (${{ matrix.shard.name }})
     steps:
-      - uses: actions/checkout@v4
+      - &e2e_checkout
+        uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: astral-sh/setup-uv@v6
+      - &e2e_setup_uv
+        uses: astral-sh/setup-uv@v6
         with: { enable-cache: true, version: "0.12.13" }
-      - uses: actions/setup-python@v5
+      - &e2e_setup_python
+        uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: uv sync --all-extras --locked
+      - &e2e_sync
+        run: uv sync --all-extras --locked
       - run: uv run pytest -p no:cacheprovider --durations=0 ${{ join(matrix.shard.files, ' ') }}
+
+  installed_tool:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    name: e2e (installed_tool)
+    steps:
+      - *e2e_checkout
+      - *e2e_setup_uv
+      - *e2e_setup_python
+      - *e2e_sync
+      - run: |
+          echo "UV_TOOL_DIR=$RUNNER_TEMP/uv-tools" >> "$GITHUB_ENV"
+          echo "UV_TOOL_BIN_DIR=$RUNNER_TEMP/uv-bin" >> "$GITHUB_ENV"
+      - run: uv tool install --python 3.12 "harbor-research-runner @ git+file://$GITHUB_WORKSPACE@$GITHUB_SHA"
+      - run: |
+          echo "HRR_E2E_HRR=$UV_TOOL_BIN_DIR/hrr" >> "$GITHUB_ENV"
+          echo "HRR_E2E_EXPECT_COMMIT=$GITHUB_SHA" >> "$GITHUB_ENV"
+      - run: uv run pytest -p no:cacheprovider --durations=0 tests/e2e/test_lifecycle.py
 
   gate:
     strategy:

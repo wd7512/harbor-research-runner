@@ -210,6 +210,8 @@ def verify(bundle_dir: Path) -> list[Problem]:
     request_rows = _jsonl_gzip(bundle_dir / "proxy-requests.jsonl.gz")
     metadata = _json(bundle_dir / "run-metadata.json")
     report = (bundle_dir / "report.md").read_text(encoding="utf-8")
+    if metadata.get("tool_commit") == "none":
+        _problem(problems, "tool_commit", "run-metadata.json", "known commit", "none")
     resource_path = bundle_dir / "resource-stats.jsonl.gz"
     resource_data = gzip.decompress(resource_path.read_bytes()) if resource_path.exists() else None
     resource_rows, resource_bad_lines, resource_torn_last_line = (

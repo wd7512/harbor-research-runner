@@ -11,8 +11,10 @@ from pathlib import Path
 
 from harbor_research_runner.docker_host import cleanup, resources
 from harbor_research_runner.docker_host.host_lock import HostLock
+from harbor_research_runner.docker_host.profile import host_profile
 from harbor_research_runner.evidence_bundle import build as evidence_build
 from harbor_research_runner.evidence_bundle.verify import verify as verify_evidence
+from harbor_research_runner.harbor_adapter import commands
 from harbor_research_runner.harness import build as harness_build
 from harbor_research_runner.job_config.job_file import load_job
 from harbor_research_runner.model_proxy.adapters import select_adapter
@@ -106,9 +108,10 @@ def _check_deps() -> CheckDeps:
         host_lock=HostLock(),
         read_machine_check=read,
         host_fingerprint=resources.host_fingerprint,
-        host_profile=resources.host_profile,
+        host_profile=host_profile,
         harbor_version=lambda: version("harbor"),
         docker_memory_mb=cleanup.docker_memory_mb,
+        host_memory_mb=resources.host_memory_mb,
     )
 
 
@@ -126,17 +129,14 @@ def _run_deps() -> loop.RunDeps:
 
 
 def _start_harbor(argv: list[str], cwd: Path, lifeline_fd: int):
-    command = [
-        "uv",
-        "run",
-        "python",
+    command = commands.python_command(
         "-m",
         "harbor_research_runner.run.harbor_guard",
         "--lifeline-fd",
         str(lifeline_fd),
         "--",
         *argv,
-    ]
+    )
     return process_group.spawn_group(
         command,
         env=os.environ.copy(),

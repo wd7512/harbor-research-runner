@@ -1,6 +1,6 @@
 [project]
 name = "harbor-research-runner"
-version = "0.1.0"
+version = "0.1.1"
 description = "Run coding-agent harness versions on benchmark tasks under one model and measure every model request"
 readme = "README.md"
 license = "Apache-2.0"

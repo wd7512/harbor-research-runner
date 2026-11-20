@@ -48,6 +48,10 @@ def _parse_memavailable(text: str) -> int:
     raise ValueError("MemAvailable is missing from /proc/meminfo")
 
 
+def host_memory_mb(sysconf: Callable = os.sysconf) -> int:
+    return sysconf("SC_PAGE_SIZE") * sysconf("SC_PHYS_PAGES") // (1024**2)
+
+
 def _parse_pswpout(text: str) -> int:
     for line in text.splitlines():
         name, _, value = line.partition(" ")
@@ -185,7 +189,7 @@ def host_fingerprint(run: Callable = subprocess.run, *, profile: dict | None = N
 
 def host_description(run: Callable = subprocess.run) -> dict:
     try:
-        memory_mb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // (1024**2)
+        memory_mb = host_memory_mb()
     except (AttributeError, OSError, ValueError):
         memory_mb = 0
     try:

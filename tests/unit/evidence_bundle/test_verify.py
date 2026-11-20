@@ -214,6 +214,22 @@ def test_clean_and_retry_bundles_verify(tmp_path: Path) -> None:
     assert verify(_bundle("retries", tmp_path)) == []
 
 
+def test_unknown_tool_commit_is_reported(tmp_path: Path) -> None:
+    bundle = _bundle("clean", tmp_path)
+    metadata_path = bundle / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["tool_commit"] = "none"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    report_path = bundle / "report.md"
+    report_path.write_text(
+        report_path.read_text(encoding="utf-8").replace("commit 0", "commit unknown"),
+        encoding="utf-8",
+    )
+    _refresh_manifest(bundle)
+
+    assert Problem("tool_commit", "run-metadata.json", "known commit", "none") in verify(bundle)
+
+
 def test_unmeasured_reason_mismatch_is_reported(tmp_path: Path) -> None:
     bundle = _bundle("retries", tmp_path)
     trials_path = bundle / "trials.jsonl"

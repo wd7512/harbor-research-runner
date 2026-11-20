@@ -146,6 +146,7 @@ def _deps(
     profile: dict = _HOST_PROFILE,
     harbor_version: str = "0.23.0",
     read_docker_memory=lambda: 8123,
+    host_memory_mb=lambda: 65536,
     bind_port=lambda _host, _port: None,
     processes=lambda _run_dir: [],
     digest_of=lambda _ref: _DIGEST,
@@ -161,9 +162,11 @@ def _deps(
         host_profile=lambda: profile,
         harbor_version=lambda: harbor_version,
         docker_memory_mb=read_docker_memory,
+        host_memory_mb=host_memory_mb,
         bind_port=bind_port,
         processes=processes,
         digest_of=digest_of,
+        children_resolve=lambda: (True, "Python child and Harbor executable resolve"),
     )
 
 
@@ -258,7 +261,7 @@ def test_memory_fits_fails_when_concurrent_task_memory_exceeds_docker_memory(
     tmp_path: Path,
 ) -> None:
     machine_check = _machine_check(
-        tasks=[{"name": "task-a", "memory_mb": 2048}],
+        tasks=[{"name": "task-a", "memory_mb": 8192}],
         included=["task-a"],
     )
     deps = _deps(
@@ -269,10 +272,10 @@ def test_memory_fits_fails_when_concurrent_task_memory_exceeds_docker_memory(
     result = _by_name(_run(tmp_path, job=_job(concurrency=4), deps=deps), "memory_fits")
 
     assert not result.ok
-    assert "4" in result.detail
-    assert "2048" in result.detail
-    assert "4096" in result.detail
-    assert "8123" in result.detail
+    assert "concurrency=4" in result.detail
+    assert "max_task_memory_mb=8192" in result.detail
+    assert "memory_reserve_mb=4096" in result.detail
+    assert "docker_memory_mb=8123" in result.detail
 
 
 def test_memory_fits_passes_when_concurrent_task_memory_fits_docker_memory(
@@ -291,6 +294,73 @@ def test_memory_fits_passes_when_concurrent_task_memory_fits_docker_memory(
     result = _by_name(_run(tmp_path, job=_job(concurrency=2), deps=deps), "memory_fits")
 
     assert result.ok
+
+
+def test_memory_fits_ignores_concurrency_when_one_trial_fits(tmp_path: Path) -> None:
+    machine_check = _machine_check(
+        tasks=[{"name": "task-a", "memory_mb": 8192}],
+        included=["task-a"],
+    )
+    deps = _deps(
+        tmp_path,
+        read_machine_check=lambda _path: machine_check,
+        read_docker_memory=lambda: 16384,
+    )
+    job = replace(_job(concurrency=4), limit_overrides={"memory_reserve_mb": 4096})
+
+    result = _by_name(_run(tmp_path, job=job, deps=deps), "memory_fits")
+
+    assert result.ok
+
+
+def test_memory_fits_accepts_watchdog_enforced_host_without_kernel_memory_cap(
+    tmp_path: Path,
+) -> None:
+    deps = _deps(tmp_path, profile={**_HOST_PROFILE, "memory_cap": "none"})
+
+    result = _by_name(_run(tmp_path, deps=deps), "memory_fits")
+
+    assert result.ok
+
+
+def test_host_headroom_fails_when_i5_vm_leaves_less_than_reserve(tmp_path: Path) -> None:
+    profile = {**_HOST_PROFILE, "docker_memory_mb": 24029}
+    deps = _deps(tmp_path, profile=profile, host_memory_mb=lambda: 32768)
+
+    result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
+
+    assert not result.ok
+    assert "headroom_mb=8739" in result.detail
+    assert "host_reserve_mb=12288" in result.detail
+
+
+def test_host_headroom_passes_with_expected_vm_headroom(tmp_path: Path) -> None:
+    profile = {**_HOST_PROFILE, "docker_memory_mb": 16384}
+    deps = _deps(tmp_path, profile=profile, host_memory_mb=lambda: 32768)
+
+    result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
+
+    assert result.ok
+    assert "headroom_mb=16384" in result.detail
+
+
+def test_host_headroom_passes_when_docker_memory_matches_host(tmp_path: Path) -> None:
+    profile = {**_HOST_PROFILE, "docker_memory_mb": 32768}
+    deps = _deps(tmp_path, profile=profile, host_memory_mb=lambda: 32768)
+
+    result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
+
+    assert result.ok
+    assert result.detail == "docker memory equals host memory (no VM)"
+
+
+def test_host_headroom_fails_when_host_memory_is_unknown(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, host_memory_mb=lambda: 0)
+
+    result = _by_name(_run(tmp_path, deps=deps), "host_headroom")
+
+    assert not result.ok
+    assert result.detail == "host memory unknown"
 
 
 def test_host_network_refuses_unreachable_proxy_hostname(tmp_path: Path) -> None:
@@ -767,7 +837,7 @@ def test_single_run_check_passes_and_keeps_lock_held(tmp_path: Path) -> None:
 
 
 def test_host_resources_check_fails_when_host_breaches_limits(tmp_path: Path) -> None:
-    deps = _deps(tmp_path, measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0))
+    deps = _deps(tmp_path, measure=lambda **_kwargs: (_sample(swapped_out_pages=1), 0))
     result = _by_name(_run(tmp_path, deps=deps), "host_resources")
 
     assert not result.ok
@@ -1131,11 +1201,12 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
     deps = _deps(
         tmp_path,
         inventory=lambda: Inventory(True, "ok", ("trial__env-main-1",), (), (), ()),
-        measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0),
+        measure=lambda **_kwargs: (_sample(swapped_out_pages=1), 0),
     )
     results = _run(tmp_path, card=_card(withdrawn=True), deps=deps)
 
     assert [result.name for result in results] == [
+        "children_resolve",
         "model_card",
         "keys_present",
         "arms_pinned",
@@ -1148,6 +1219,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
         "machine_check_matches",
         "tasks_included",
         "memory_fits",
+        "host_headroom",
         "proxy_host_reachable",
     ]
     assert not _by_name(results, "model_card").ok
@@ -1181,6 +1253,7 @@ def test_machine_check_launch_checks_pass_and_leave_host_lock_held(tmp_path: Pat
     results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
 
     assert results == [
+        CheckResult("children_resolve", True, "Python child and Harbor executable resolve"),
         CheckResult("docker_clean", True, "Docker inventory is clean"),
         CheckResult("single_run", True, "this process holds the host lock"),
         CheckResult("host_resources", True, "host resources meet the job limits"),
@@ -1193,19 +1266,21 @@ def test_machine_check_launch_checks_reports_each_failure(tmp_path: Path) -> Non
     deps = _deps(
         tmp_path,
         inventory=lambda: Inventory(True, "ok", ("residue",), (), (), ()),
-        measure=lambda **_kwargs: (_sample(mem_available_mb=1024), 0),
+        measure=lambda **_kwargs: (_sample(swapped_out_pages=1), 0),
     )
 
     results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
 
     assert [result.name for result in results] == [
+        "children_resolve",
         "docker_clean",
         "single_run",
         "host_resources",
     ]
-    assert not results[0].ok
-    assert results[1].ok
-    assert not results[2].ok
+    assert results[0].ok
+    assert not results[1].ok
+    assert results[2].ok
+    assert not results[3].ok
     deps.host_lock.release()
 
 
@@ -1224,8 +1299,8 @@ def test_machine_check_single_run_reports_the_lock_holder(tmp_path: Path) -> Non
     finally:
         holder.release()
 
-    assert not results[1].ok
-    assert results[1].detail == "host lock is held by run run-holder"
+    assert not results[2].ok
+    assert results[2].detail == "host lock is held by run run-holder"
 
 
 @pytest.mark.parametrize("message", ["docker unavailable", ""])

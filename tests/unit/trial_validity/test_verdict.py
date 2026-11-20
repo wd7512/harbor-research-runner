@@ -347,9 +347,91 @@ def test_agent_oom_event_labels_valid_reward_one_trial():
     verdict = _judge(facts, oom_events=_fixture_oom_events())
 
     assert verdict.valid
-    assert verdict.labels == ("oom_killed", "no_requests")
+    assert verdict.labels == ("oom_killed", "oom_peak_unknown", "no_requests")
     assert verdict.oom_source == "kernel"
     assert facts.reward == 1.0
+
+
+def test_kernel_oom_below_memory_limit_is_a_host_fault():
+    event = _docker_oom_event(4.0)
+    samples = [
+        {**_memory_sample(3.0), "used_mb": 1500, "limit_mb": 8192},
+        {**_memory_sample(4.0), "used_mb": 1500, "limit_mb": 8192},
+    ]
+
+    verdict = _judge(oom_events=[event], memory_watch_events=samples)
+
+    assert verdict.valid is False
+    assert verdict.reason == "host_fault"
+    assert verdict.instrument == "host"
+
+
+def test_kernel_oom_above_half_memory_limit_remains_valid():
+    event = _docker_oom_event(4.0)
+    samples = [
+        {**_memory_sample(3.0), "used_mb": 5000, "limit_mb": 8192},
+        {**_memory_sample(4.0), "used_mb": 5000, "limit_mb": 8192},
+    ]
+
+    verdict = _judge(oom_events=[event], memory_watch_events=samples)
+
+    assert verdict.valid is True
+    assert "oom_killed" in verdict.labels
+
+
+def test_kernel_oom_with_unknown_peak_keeps_valid_and_labels_unknown():
+    event = _docker_oom_event(4.0)
+
+    verdict = _judge(oom_events=[event])
+
+    assert verdict.valid is True
+    assert "oom_killed" in verdict.labels
+    assert "oom_peak_unknown" in verdict.labels
+
+
+def test_kernel_oom_uses_memory_peak_from_matching_location():
+    facts = _facts(task="canary/say-hello")
+    event = _docker_oom_event(4.0)
+    samples = [
+        {
+            **_memory_sample(3.0),
+            "location": "harbor-job",
+            "used_mb": 5000,
+            "limit_mb": 8192,
+        },
+        {
+            **_memory_sample(4.0),
+            "location": "canary-job",
+            "used_mb": 1500,
+            "limit_mb": 8192,
+        },
+    ]
+
+    verdict = _judge(facts, oom_events=[event], memory_watch_events=samples)
+
+    assert verdict.valid is False
+    assert verdict.reason == "host_fault"
+    assert verdict.instrument == "host"
+
+
+def test_kernel_oom_with_damaged_memory_peak_keeps_existing_verdict(tmp_path):
+    event = _docker_oom_event(4.0)
+    memory = _telemetry_read(
+        tmp_path,
+        "memory-watch.jsonl",
+        [
+            {**_memory_sample(2.0), "used_mb": 1500, "limit_mb": 8192},
+            {**_memory_sample(6.0), "used_mb": 1500, "limit_mb": 8192},
+        ],
+        2,
+    )
+
+    verdict = _judge(oom_events=[event], memory_watch_events=memory)
+
+    assert verdict.valid is True
+    assert verdict.measured is False
+    assert "oom_killed" in verdict.labels
+    assert "oom_peak_unknown" in verdict.labels
 
 
 def test_earlier_watchdog_kill_sets_oom_source_and_precedes_kernel_event():
@@ -423,7 +505,7 @@ def test_verifier_oom_event_labels_valid_zero_reward_trial():
     verdict = _judge(facts, oom_events=_fixture_oom_events())
 
     assert verdict.valid
-    assert verdict.labels == ("oom_killed", "verifier_failed", "no_requests")
+    assert verdict.labels == ("oom_killed", "oom_peak_unknown", "verifier_failed", "no_requests")
     assert facts.reward is None
 
 
@@ -579,7 +661,7 @@ def test_harbor_tokens_without_proxy_rows_is_possible_bypass():
 
 
 def test_host_breach_in_agent_window_invalidates_trial():
-    samples = [_sample(4.0, mem_available_mb=100)]
+    samples = [_sample(4.0, swapped_out_pages=1)]
 
     verdict = _judge(samples=samples)
 
@@ -588,7 +670,7 @@ def test_host_breach_in_agent_window_invalidates_trial():
 
 @pytest.mark.parametrize("timestamp", [3.0, 5.0])
 def test_host_breach_at_agent_window_boundary_invalidates_trial(timestamp):
-    verdict = _judge(samples=[_sample(timestamp, mem_available_mb=100)])
+    verdict = _judge(samples=[_sample(timestamp, swapped_out_pages=1)])
 
     _assert_invalid(verdict, "host_fault", "host")
 
@@ -597,22 +679,22 @@ def test_host_breach_during_verifier_invalidates_trial():
     started, finished = _phases(verifier=(6.0, 8.0))
     facts = _facts(phase_started=started, phase_finished=finished)
 
-    verdict = _judge(facts, samples=[_sample(7.0, mem_available_mb=100)])
+    verdict = _judge(facts, samples=[_sample(7.0, swapped_out_pages=1)])
 
     _assert_invalid(verdict, "host_fault", "host")
 
 
 @pytest.mark.parametrize("timestamp", [True, "bad"])
 def test_host_breach_with_invalid_sample_time_is_ignored(timestamp):
-    verdict = _judge(samples=[_sample(timestamp, mem_available_mb=100)])
+    verdict = _judge(samples=[_sample(timestamp, swapped_out_pages=1)])
 
     assert verdict.reason != "host_fault"
 
 
 def test_host_fault_search_continues_after_invalid_sample_time():
     samples = [
-        _sample("bad", mem_available_mb=100),
-        _sample(4.0, mem_available_mb=100),
+        _sample("bad", swapped_out_pages=1),
+        _sample(4.0, swapped_out_pages=1),
     ]
 
     verdict = _judge(samples=samples)
@@ -740,7 +822,7 @@ def test_missing_host_samples_make_trial_unmeasured():
 
 
 def test_host_breach_wins_over_damaged_host_sample_line():
-    samples = ReadResult([_sample(4.0, mem_available_mb=100)], False, [2])
+    samples = ReadResult([_sample(4.0, swapped_out_pages=1)], False, [2])
 
     verdict = judge_trial(
         _facts(),
@@ -1188,7 +1270,7 @@ def test_first_harness_setup_failure_is_invalid():
 
 
 def test_host_breach_outside_agent_window_is_ignored():
-    samples = [_sample(2.0, mem_available_mb=100)]
+    samples = [_sample(2.0, swapped_out_pages=1)]
 
     verdict = _judge(samples=samples)
 
@@ -1196,7 +1278,7 @@ def test_host_breach_outside_agent_window_is_ignored():
 
 
 def test_host_breach_after_agent_finish_is_ignored_without_verifier():
-    samples = [_sample(6.0, mem_available_mb=100)]
+    samples = [_sample(6.0, swapped_out_pages=1)]
 
     verdict = _judge(samples=samples)
 
@@ -1214,7 +1296,7 @@ def test_docker_not_ok_in_agent_window_invalidates_trial():
 def test_host_breach_does_not_apply_without_agent_start():
     started, finished = _phases(agent=(None, None), verifier=(None, None))
     facts = _facts(phase_started=started, phase_finished=finished)
-    samples = [_sample(4.0, mem_available_mb=100)]
+    samples = [_sample(4.0, swapped_out_pages=1)]
 
     verdict = _judge(facts, samples=samples)
 
@@ -1630,7 +1712,7 @@ def test_reward_does_not_change_an_invalid_verdict():
             [],
             [],
         ),
-        ("host_fault", _facts(), _clean_ledger(), [_sample(4.0, mem_available_mb=100)]),
+        ("host_fault", _facts(), _clean_ledger(), [_sample(4.0, swapped_out_pages=1)]),
         ("upstream_terminal_error", _facts(), _requests(["ok", "server_error"]), []),
         ("upstream_errors", _facts(), _requests(["server_error"] * 3 + ["ok"] * 97), []),
         (

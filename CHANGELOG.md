@@ -4,6 +4,33 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 
 <!-- towncrier release notes start -->
 
+## 0.1.1 (2026-11-20)
+
+**Upgrade notes.** A job file that sets `limits.zero_billed_window_s` or `limits.min_spare_memory_mb` is now refused; remove the key. The new halt limit is `halt_after_consecutive_failed_requests` (default 10). On a host where Docker runs in a VM, the VM must leave at least `host_reserve_mb` (default 12288 MiB) of host RAM free, or launch is refused: on a 32 GB Mac, size the Docker VM to 16 GB or less and rerun `hrr check-machine`. Evidence from 0.1.0 records `tool_commit: none`; verify those bundles with the 0.1.0 tool that produced them.
+
+### Added
+
+- Child processes now use the installed runner's Python interpreter and Harbor executable, so runs work when `harbor-research-runner` is installed as a uv tool. ([#192](https://github.com/wd7512/harbor-research-runner/issues/192))
+- Add an end-to-end CI shard that runs the lifecycle with `hrr` installed as a uv tool from outside the checkout. ([#196](https://github.com/wd7512/harbor-research-runner/issues/196))
+
+### Fixed
+
+- Model cards can now remove declared top-level keys from translated upstream request bodies, and the proxy logs each removal. The Luna card drops `temperature` and `top_p` for its Responses API requests. ([#211](https://github.com/wd7512/harbor-research-runner/issues/211))
+- Evidence bundles exclude request usage with unknown prompt tokens from cost estimates. Request counts and the recorded token totals remain available in trial rows. ([#190](https://github.com/wd7512/harbor-research-runner/issues/190))
+- Git installs now record their pinned commit and requested revision in run provenance. Evidence verification flags unknown tool commits, and reports label them plainly. ([#193](https://github.com/wd7512/harbor-research-runner/issues/193))
+- Replace the idle billing window halt with a configurable consecutive upstream failure streak. Preserve loading of older limits records while refusing the retired job limit key. ([#194](https://github.com/wd7512/harbor-research-runner/issues/194))
+- A kernel OOM with an in-window memory peak below half the task limit is now invalidated as a host fault. Unknown peaks retain the existing OOM verdict and receive an `oom_peak_unknown` label. ([#195](https://github.com/wd7512/harbor-research-runner/issues/195))
+- Trial admission now reserves declared task memory against Docker MemTotal and releases the reservation when Harbor ends the trial. Host breach checks no longer use live available memory, and the retired spare-memory job limit is rejected with reservation guidance. ([#195](https://github.com/wd7512/harbor-research-runner/issues/195))
+- A new `host_headroom` launch check requires host RAM minus Docker memory to meet `host_reserve_mb` (default 12288), so a Docker VM sized close to host RAM is refused before launch; `memory_fits` now needs only the largest task plus `memory_reserve_mb` to fit, since admission does the per-trial accounting. ([#195](https://github.com/wd7512/harbor-research-runner/issues/195))
+- Evidence verification no longer refuses a bundle when only the Docker OOM-events file is damaged over a trial: memory peaks are checked against memory-watch damage alone, the same rule the builder uses.
+
+### Internal
+
+- Integration tests inject shorter service polling, restart cooldown and teardown grace values while retaining their behavioral assertions. ([#205](https://github.com/wd7512/harbor-research-runner/issues/205))
+- Ignore root `evidence/` and `checks/` folders, so evidence bundles and machine checks written by a run started inside a checkout cannot be committed by accident.
+- Set the package version to 0.1.1, and make the version tests read the installed package version instead of a literal.
+
+
 ## 0.1.0 (2026-11-15)
 
 ### Added

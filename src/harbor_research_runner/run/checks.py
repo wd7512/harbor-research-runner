@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import socket
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +19,7 @@ from harbor_research_runner.docker_host.host_lock import (
 )
 from harbor_research_runner.docker_host.processes import pids_naming_run
 from harbor_research_runner.docker_host.profile import profile_differences
+from harbor_research_runner.harbor_adapter import commands
 from harbor_research_runner.harbor_adapter.task_files import task_content_hash
 from harbor_research_runner.harness.manifest import (
     ImageEntry,
@@ -31,6 +34,8 @@ from harbor_research_runner.records.limits import Limits, host_breach
 from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
 from harbor_research_runner.run.canary import canary_memory_mb
+
+NATIVE_DOCKER_TOLERANCE_MB = 1024
 
 
 def _bind_port(host: str, port: int) -> None:
@@ -57,10 +62,12 @@ class CheckDeps:
     host_fingerprint: Callable[[], str]
     harbor_version: Callable[[], str]
     docker_memory_mb: Callable[[], int]
+    host_memory_mb: Callable[[], int]
     host_profile: Callable[[], dict] = lambda: {}
     bind_port: Callable[[str, int], None] = _bind_port
     processes: Callable[[Path], list[int]] = pids_naming_run
     digest_of: Callable[[str], str | None] = local_image_digest
+    children_resolve: Callable[[], tuple[bool, str]] = lambda: children_resolve_check()
 
 
 def _evaluate(name: str, check: Callable[[], tuple[bool, str]]) -> CheckResult:
@@ -70,6 +77,30 @@ def _evaluate(name: str, check: Callable[[], tuple[bool, str]]) -> CheckResult:
         detail = str(exc) or exc.__class__.__name__
         return CheckResult(name, False, detail)
     return CheckResult(name, ok, detail)
+
+
+def children_resolve_check(harbor_path: Path | None = None) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            commands.python_command("-c", "import harbor_research_runner"),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "hrr Python child did not import harbor_research_runner within 60 s"
+    except OSError as exc:
+        return False, f"hrr Python child could not start: {str(exc) or exc.__class__.__name__}"
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or str(result.returncode)
+        return False, f"hrr Python child cannot import harbor_research_runner: {detail}"
+    path = commands.harbor_executable_path() if harbor_path is None else harbor_path
+    if not path.exists():
+        return False, f"Harbor executable does not exist at {path}"
+    if not os.access(path, os.X_OK):
+        return False, f"Harbor executable is not executable at {path}"
+    return True, f"Python child and Harbor executable resolve; Harbor: {path}"
 
 
 def docker_clean_check(deps: CheckDeps) -> tuple[bool, str]:
@@ -130,6 +161,7 @@ def run_folder_not_live_check(run_dir: Path | None, deps: CheckDeps) -> tuple[bo
 
 def machine_check_launch_checks(job: Job, runs_dir: Path, deps: CheckDeps) -> list[CheckResult]:
     return [
+        _evaluate("children_resolve", deps.children_resolve),
         _evaluate("docker_clean", lambda: docker_clean_check(deps)),
         _evaluate("single_run", lambda: single_run_check(runs_dir, deps)),
         _evaluate("host_resources", lambda: host_resources_check(job, deps, 1.0, runs_dir)),
@@ -312,12 +344,37 @@ def run_checks(
             return False, f"machine check is unavailable; {numbers}"
         if max_task_memory is None:
             return False, f"task memory could not be determined; {numbers}"
-        required = concurrency * max_task_memory + reserve
+        required = max_task_memory + reserve
         if required > docker_memory:
             return False, f"required_memory_mb={required} exceeds Docker memory; {numbers}"
         return True, f"required_memory_mb={required} fits Docker memory; {numbers}"
 
+    def host_headroom_check() -> tuple[bool, str]:
+        profile = deps.host_profile()
+        host_memory = deps.host_memory_mb()
+        docker_memory = profile.get("docker_memory_mb")
+        if not isinstance(host_memory, int) or isinstance(host_memory, bool) or host_memory <= 0:
+            return False, "host memory unknown"
+        if (
+            not isinstance(docker_memory, int)
+            or isinstance(docker_memory, bool)
+            or docker_memory < 0
+        ):
+            raise ValueError("Docker memory unavailable or invalid")
+        if docker_memory >= host_memory - NATIVE_DOCKER_TOLERANCE_MB:
+            return True, "docker memory equals host memory (no VM)"
+        headroom = host_memory - docker_memory
+        reserve = Limits.from_dict(job.limit_overrides, job.repetitions, 1.0).host_reserve_mb
+        detail = (
+            f"host_memory_mb={host_memory}, docker_memory_mb={docker_memory}, "
+            f"headroom_mb={headroom}, host_reserve_mb={reserve}"
+        )
+        if headroom < reserve:
+            return False, f"host headroom is below the required reserve; {detail}"
+        return True, f"host headroom meets the required reserve; {detail}"
+
     return [
+        _evaluate("children_resolve", deps.children_resolve),
         _evaluate("model_card", model_card_check),
         _evaluate("keys_present", keys_present_check),
         _evaluate("arms_pinned", arms_pinned_check),
@@ -338,6 +395,7 @@ def run_checks(
         _evaluate("machine_check_matches", machine_check_matches_check),
         _evaluate("tasks_included", tasks_included_check),
         _evaluate("memory_fits", memory_fits_check),
+        _evaluate("host_headroom", host_headroom_check),
         _evaluate("proxy_host_reachable", lambda: proxy_host_reachable_check(job, deps)),
     ]
 
