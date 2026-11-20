@@ -4,7 +4,7 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 
 <!-- towncrier release notes start -->
 
-## 0.1.1 (2026-11-18)
+## 0.1.1 (2026-11-20)
 
 **Upgrade notes.** A job file that sets `limits.zero_billed_window_s` or `limits.min_spare_memory_mb` is now refused; remove the key. The new halt limit is `halt_after_consecutive_failed_requests` (default 10). On a host where Docker runs in a VM, the VM must leave at least `host_reserve_mb` (default 12288 MiB) of host RAM free, or launch is refused: on a 32 GB Mac, size the Docker VM to 16 GB or less and rerun `hrr check-machine`. Evidence from 0.1.0 records `tool_commit: none`; verify those bundles with the 0.1.0 tool that produced them.
 
@@ -15,6 +15,7 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 
 ### Fixed
 
+- Model cards can now remove declared top-level keys from translated upstream request bodies, and the proxy logs each removal. The Luna card drops `temperature` and `top_p` for its Responses API requests. ([#211](https://github.com/wd7512/harbor-research-runner/issues/211))
 - Evidence bundles exclude request usage with unknown prompt tokens from cost estimates. Request counts and the recorded token totals remain available in trial rows. ([#190](https://github.com/wd7512/harbor-research-runner/issues/190))
 - Git installs now record their pinned commit and requested revision in run provenance. Evidence verification flags unknown tool commits, and reports label them plainly. ([#193](https://github.com/wd7512/harbor-research-runner/issues/193))
 - Replace the idle billing window halt with a configurable consecutive upstream failure streak. Preserve loading of older limits records while refusing the retired job limit key. ([#194](https://github.com/wd7512/harbor-research-runner/issues/194))
