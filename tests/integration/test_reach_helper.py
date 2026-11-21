@@ -1,8 +1,12 @@
+import functools
+import http.server
 import os
 import shlex
-import shutil
 import socket
 import subprocess
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,47 +34,53 @@ def _run(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _assert_reachable(root: Path, port: int, env: dict[str, str]) -> None:
+@contextmanager
+def _serving(root: Path) -> Iterator[int]:
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_start_reach_helper_serves_from_the_folder_without_directory_option(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    record = tmp_path / "python3-call"
+    fake = bin_dir / "python3"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'for arg in "$@"; do\n'
+        '  if [ "$arg" = --directory ]; then exit 2; fi\n'
+        "done\n"
+        f'{{ pwd; printf "%s\\n" "$@"; }} > {shlex.quote(str(record))}\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    served = tmp_path / "served"
+    served.mkdir()
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
     result = _run(
-        f'. "{HELPER}"; start_reach_helper "{root}" {port}; '
-        "trap 'kill \"$reach_helper_pid\" 2>/dev/null || true' EXIT; "
-        f'kill -0 "$reach_helper_pid" && reach_helper_up {port} 3',
+        f'. "{HELPER}"; start_reach_helper "{served}" 41234; wait "$reach_helper_pid"',
         env,
     )
     assert result.returncode == 0, result.stderr
+    cwd, *argv = record.read_text(encoding="utf-8").splitlines()
+    assert Path(cwd).resolve() == served.resolve()
+    assert argv == ["-m", "http.server", "41234", "--bind", "0.0.0.0"]
 
 
-def test_reach_helper_works_when_python_rejects_directory_option(tmp_path: Path) -> None:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    real_python = shutil.which("python3")
-    assert real_python is not None
-    wrapper = bin_dir / "python3"
-    wrapper.write_text(
-        "#!/bin/sh\n"
-        'for arg in "$@"; do\n'
-        '  if [ "$arg" = --directory ]; then\n'
-        "    echo 'error: unrecognized arguments: --directory' >&2\n"
-        "    exit 2\n"
-        "  fi\n"
-        "done\n"
-        f'exec {shlex.quote(real_python)} "$@"\n',
-        encoding="utf-8",
-    )
-    wrapper.chmod(0o755)
-    root = tmp_path / "served"
-    root.mkdir()
-    (root / "summary.txt").write_text("reachable\n", encoding="utf-8")
-    port = _port()
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
-    _assert_reachable(root, port, env)
-
-
-def test_reach_helper_serves_file_from_directory(tmp_path: Path) -> None:
-    root = tmp_path / "served"
-    root.mkdir()
-    (root / "summary.txt").write_text("reachable\n", encoding="utf-8")
-    _assert_reachable(root, _port(), os.environ.copy())
+def test_reach_helper_up_reads_summary_through_a_proxy_environment(tmp_path: Path) -> None:
+    (tmp_path / "summary.txt").write_text("reachable\n", encoding="utf-8")
+    with _serving(tmp_path) as port:
+        result = _run(f'. "{HELPER}"; reach_helper_up {port} 3', os.environ.copy())
+    assert result.returncode == 0, result.stderr
 
 
 def test_reach_helper_reports_down_when_port_refuses_connection() -> None:
