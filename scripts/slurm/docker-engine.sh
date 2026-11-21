@@ -1,5 +1,5 @@
 # shellcheck shell=bash disable=SC2154
-# Sourced by the Slurm scripts in this folder: provides a Docker API inside one allocation.
+# Sourced by the Slurm scripts in this folder: provides a Docker API and Compose plugin inside one allocation.
 # Expects $work (a job-local directory) and $log (a file for engine output) to be set.
 # After start_docker_engine, DOCKER_HOST points at the engine and $engine_selected names it:
 # existing, podman or rootless-docker. stop_docker_engine stops what was started.
@@ -7,6 +7,7 @@
 engine_pid=""
 engine_selected=none
 docker_version="${HRR_DOCKER_VERSION:-29.9.3}"
+compose_version="${HRR_COMPOSE_VERSION:-2.39.4}"
 
 docker_ready() {
     local _
@@ -31,6 +32,17 @@ fetch_docker_release() {
         export PATH="$work/docker-rootless-extras:$PATH"
     fi
     export PATH="$work/docker:$PATH"
+}
+
+ensure_compose_plugin() {
+    if docker compose version >/dev/null 2>&1; then return 0; fi
+    export DOCKER_CONFIG="$work/docker-config"
+    mkdir -p "$DOCKER_CONFIG/cli-plugins" || return 1
+    curl -fsSL --retry 2 --max-time 180 \
+        "https://github.com/docker/compose/releases/download/v$compose_version/docker-compose-linux-$(uname -m)" \
+        -o "$DOCKER_CONFIG/cli-plugins/docker-compose" || return 1
+    chmod 700 "$DOCKER_CONFIG/cli-plugins/docker-compose" || return 1
+    docker compose version
 }
 
 start_existing_engine() {
@@ -92,5 +104,6 @@ start_docker_engine() {
             ;;
         *) printf 'unknown HRR_ENGINE %s\n' "$HRR_ENGINE" >>"$log" ;;
     esac
-    [ "$engine_selected" != none ]
+    [ "$engine_selected" != none ] || return 1
+    ensure_compose_plugin
 }

@@ -13,6 +13,7 @@
 #   HRR_GATEWAY_URL     model gateway base URL to test for reachability (no key is sent)
 #   HRR_ENGINE          auto (default), existing, podman or rootless-docker
 #   HRR_DOCKER_VERSION  static Docker release for rootless-docker (default 29.9.3)
+#   HRR_COMPOSE_VERSION Compose CLI plugin release (default 2.39.4)
 #   HRR_REF             hrr git ref to install and run check-machine with (default: skip)
 # Every check runs even when an earlier one fails; results go to summary.txt.
 
@@ -105,6 +106,7 @@ if [ "$selected" = none ]; then
     cat "$summary"
     exit 1
 fi
+check compose docker compose version
 
 docker info --format '{{json .}}' >"$receipt/docker-info.json" 2>"$receipt/docker-info.err"
 docker network ls >"$receipt/docker-networks.log" 2>&1

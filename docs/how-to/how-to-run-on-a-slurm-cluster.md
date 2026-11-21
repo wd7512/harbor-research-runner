@@ -31,6 +31,7 @@ Read the summary in this order:
 | Line | Needed | Meaning |
 | --- | --- | --- |
 | `engine` | not `none` | Which Docker API started: `existing` (a site daemon), `podman` (Podman's Docker-compatible service) or `rootless-docker` (a static Docker release started inside the job). `none` ends the probe: hrr cannot run on this node. Set `HRR_ENGINE` to force one. |
+| `compose` | `0` | Harbor runs trials through `docker compose`; the scripts download the plugin when the engine lacks it. |
 | `net_gateway`, `net_docker_hub`, `net_ghcr` | an HTTP status, not `000` | `000` means the node cannot reach that host. Registries answer `401` when reachable. Without registry access, load images from a `docker save` archive. |
 | `pull`, `run_host_network` | `0` | The engine can pull and run a container with host networking. |
 | `bridge_network`, `run_default_network` | either | Without a bridge, hrr uses host networking for task containers; set `proxy.container_host` (step 3). Tasks whose Compose files add sidecar services need a bridge and are excluded at machine check. |
@@ -82,7 +83,7 @@ Do not loop on exit `2` inside one allocation: the stop time has passed, and hrr
 
 ## Known working configuration
 
-Rootless Docker 29.9.3 on Isambard-AI (aarch64) used: no bridge, no iptables,
+Rootless Docker 29.9.3 on Isambard-AI (aarch64) used: Compose v2.39.4 as a CLI plugin under `$DOCKER_CONFIG`, no bridge, no iptables,
 `native.cgroupdriver=cgroupfs`, the `vfs` storage driver with job-local data, host loopback
 enabled (task containers reach the host at `10.0.2.2`), and `DETACH_NETNS=false`. `docker-engine.sh`
 starts the daemon with exactly these settings. Keep Docker data and work folders on node-local

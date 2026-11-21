@@ -23,6 +23,7 @@
 #   HRR_STOP_MARGIN_MIN  minutes before the allocation ends to stop launching (default 120)
 #   HRR_ENGINE           auto (default), existing, podman or rootless-docker
 #   HRR_DOCKER_VERSION   static Docker release for rootless-docker (default 29.9.3)
+#   HRR_COMPOSE_VERSION  Compose CLI plugin release (default 2.39.4)
 
 set -eu
 umask 077
@@ -82,7 +83,7 @@ cleanup() {
 }
 trap cleanup EXIT
 if ! start_docker_engine; then
-    printf 'no Docker API on this node; see %s\n' "$log" >&2
+    printf 'no Docker API or Compose plugin on this node; see %s\n' "$log" >&2
     exit 1
 fi
 
