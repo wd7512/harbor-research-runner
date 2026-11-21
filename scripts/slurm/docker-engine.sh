@@ -6,6 +6,7 @@
 
 engine_pid=""
 engine_selected=none
+engine_storage_driver=""
 docker_version="${HRR_DOCKER_VERSION:-29.9.3}"
 compose_version="${HRR_COMPOSE_VERSION:-2.39.4}"
 
@@ -60,8 +61,8 @@ start_podman_engine() {
     docker_ready
 }
 
-start_rootless_docker_engine() {
-    fetch_docker_release rootless || return 1
+start_rootless_docker_with_driver() {
+    local storage_driver="$1"
     mkdir -p "$work/run" "$work/data" "$work/exec"
     export XDG_RUNTIME_DIR="$work/run"
     export DOCKER_HOST="unix://$work/run/docker.sock"
@@ -73,9 +74,23 @@ start_rootless_docker_engine() {
         --ip6tables=false --bridge=none --ip-forward=false --ip-masq=false \
         --host "$DOCKER_HOST" --data-root "$work/data" --exec-root "$work/exec" \
         --pidfile "$work/run/docker.pid" --config-file "$work/daemon.json" \
-        --storage-driver vfs >>"$log" 2>&1 &
+        --storage-driver "$storage_driver" >>"$log" 2>&1 &
     engine_pid=$!
     docker_ready
+}
+
+start_rootless_docker_engine() {
+    local storage_driver="${HRR_STORAGE_DRIVER:-auto}"
+    fetch_docker_release rootless || return 1
+    if [ "$storage_driver" = auto ]; then
+        if start_rootless_docker_with_driver overlay2; then return 0; fi
+        stop_docker_engine
+        rm -rf "$work/data" "$work/exec"
+        printf 'storage driver unavailable: falling back from overlay2 to vfs\n' >>"$log"
+        start_rootless_docker_with_driver vfs
+        return $?
+    fi
+    start_rootless_docker_with_driver "$storage_driver"
 }
 
 stop_docker_engine() {
@@ -105,5 +120,7 @@ start_docker_engine() {
         *) printf 'unknown HRR_ENGINE %s\n' "$HRR_ENGINE" >>"$log" ;;
     esac
     [ "$engine_selected" != none ] || return 1
-    ensure_compose_plugin
+    ensure_compose_plugin || return 1
+    engine_storage_driver="$(docker info --format '{{.Driver}}')" || return 1
+    export engine_storage_driver
 }
