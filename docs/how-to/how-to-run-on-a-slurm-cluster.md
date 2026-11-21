@@ -38,7 +38,7 @@ Read the summary in this order:
 | `memory_cap` | either | `kernel`: Docker enforces each task's memory limit. `none`: it cannot (usual for rootless engines inside a Slurm cgroup), and hrr's memory watchdog enforces the limit instead. |
 | `bind_mount_persistent` | `0`, or use `HRR_RUNS_LOCAL=1` | Whether containers can mount the persistent directory. Rootless user namespaces often cannot read parallel file systems such as Lustre. |
 | `reach_helper` | `0` | The host's temporary HTTP server started and answered a local request. When it is `1`, all `reach_host_*` checks are `skipped`, so a refused connection cannot be mistaken for a failed address. |
-| `reach_host_127.0.0.1`, `reach_host_10.0.2.2`, `reach_host_node_ip`, `reach_host_gateway` | at least one `0` | Which address lets a task container reach a service on the job host, which is how agents reach the hrr proxy. The first that returns `0` is the `proxy.container_host` value (`host-gateway` means `host.docker.internal`). On both clusters, a field test on 21 Nov found that a host-network container reaches the job host at `10.0.2.2`. |
+| `reach_host_127.0.0.1`, `reach_host_10.0.2.2`, `reach_host_node_ip`, `reach_host_gateway` | at least one `0` | Which address lets a task container reach a service on the job host, which is how agents reach the hrr proxy. The first that returns `0` is the `proxy.container_host` value (`host-gateway` means `host.docker.internal`). With the rootless engine from `docker-engine.sh`, host-network containers usually reach the job host at `10.0.2.2` (RootlessKit's host loopback). |
 
 Set `HRR_REF` to a release tag to also check that hrr installs on the node.
 
