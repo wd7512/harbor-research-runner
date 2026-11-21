@@ -22,6 +22,7 @@
 #                        copies it back at the end, for storage containers cannot mount
 #   HRR_STOP_MARGIN_MIN  minutes before the allocation ends to stop launching (default 120)
 #   HRR_ENGINE           auto (default), existing, podman or rootless-docker
+#   HRR_STORAGE_DRIVER   auto (default), overlay2 first then vfs, or a specific driver
 #   HRR_DOCKER_VERSION   static Docker release for rootless-docker (default 29.9.3)
 #   HRR_COMPOSE_VERSION  Compose CLI plugin release (default 2.39.4)
 #   HRR_REGISTRY_AUTH    registry credentials file (mode 600), when registry login is needed
@@ -83,7 +84,7 @@ cleanup() {
     fi
     chmod -R u+w "$work" 2>/dev/null
     rm -rf "$work"
-    printf 'job=%s exit=%s engine=%s stop_at=%s\n' "$job_id" "$rc" "$engine_selected" "$stop_at" \
+    printf 'job=%s exit=%s engine=%s storage_driver=%s stop_at=%s\n' "$job_id" "$rc" "$engine_selected" "$engine_storage_driver" "$stop_at" \
         >>"$study/slurm-logs/jobs.txt"
     exit "$rc"
 }

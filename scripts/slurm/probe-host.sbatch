@@ -12,6 +12,7 @@
 #   HRR_PROBE_DIR       persistent directory for the receipt (default: the submit directory)
 #   HRR_GATEWAY_URL     model gateway base URL to test for reachability (no key is sent)
 #   HRR_ENGINE          auto (default), existing, podman or rootless-docker
+#   HRR_STORAGE_DRIVER  auto (default), overlay2 first then vfs, or a specific driver
 #   HRR_DOCKER_VERSION  static Docker release for rootless-docker (default 29.9.3)
 #   HRR_COMPOSE_VERSION Compose CLI plugin release (default 2.39.4)
 #   HRR_REF             hrr git ref to install and run check-machine with (default: skip)
@@ -101,6 +102,7 @@ log="$receipt/engine.log"
 start_docker_engine
 selected="$engine_selected"
 record engine "$selected"
+record storage_driver "$engine_storage_driver"
 if [ "$selected" = none ]; then
     record verdict "no-docker-api"
     cat "$summary"

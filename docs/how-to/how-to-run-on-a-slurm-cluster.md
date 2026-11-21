@@ -31,6 +31,7 @@ Read the summary in this order:
 | Line | Needed | Meaning |
 | --- | --- | --- |
 | `engine` | not `none` | Which Docker API started: `existing` (a site daemon), `podman` (Podman's Docker-compatible service) or `rootless-docker` (a static Docker release started inside the job). `none` ends the probe: hrr cannot run on this node. Set `HRR_ENGINE` to force one. |
+| `storage_driver` | a Docker storage driver | The driver reported by `docker info`; set `HRR_STORAGE_DRIVER` to `auto` (default) or a specific driver. |
 | `compose` | `0` | Harbor runs trials through `docker compose`; the scripts download the plugin when the engine lacks it. |
 | `net_gateway`, `net_docker_hub`, `net_ghcr` | an HTTP status, not `000` | `000` means the node cannot reach that host. Registries answer `401` when reachable. Without registry access, load images from a `docker save` archive. |
 | `pull`, `run_host_network` | `0` | The engine can pull and run a container with host networking. |
@@ -40,6 +41,7 @@ Read the summary in this order:
 | `reach_host_127.0.0.1`, `reach_host_10.0.2.2`, `reach_host_gateway` | at least one `0` | Which address lets a task container reach a service on the job host, which is how agents reach the hrr proxy. The first that returns `0` is the `proxy.container_host` value (`host-gateway` means `host.docker.internal`). |
 
 Set `HRR_REF` to a release tag to also check that hrr installs on the node.
+When rootless Docker starts, `auto` tries `overlay2` before `vfs` because overlay2 avoids copying the full filesystem for every image layer and container; set `HRR_STORAGE_DRIVER` to select a driver explicitly.
 
 ## 2. Prepare the study folder
 
