@@ -188,10 +188,17 @@ def proxy_host_reachable_check(job: Job, deps: CheckDeps) -> tuple[bool, str]:
 def host_network_concurrency_check(job: Job, deps: CheckDeps) -> tuple[bool, str]:
     if deps.host_profile().get("container_network") != "host" or job.concurrency == 1:
         return True, "task container networking supports the job concurrency"
+    if job.tasks.host_ports == "none":
+        return (
+            True,
+            "tasks declare no host ports (tasks.host_ports: none); "
+            f"concurrency {job.concurrency} on host networking",
+        )
     return False, (
         "task containers use host networking and share the host's ports; concurrent trials "
         "of a task that serves on a fixed port collide. Set concurrency: 1 and split the task "
-        f"set across hosts for throughput (job concurrency is {job.concurrency})"
+        f"set across hosts for throughput (job concurrency is {job.concurrency}), or declare "
+        "tasks.host_ports: none when no included task listens on a fixed port"
     )
 
 

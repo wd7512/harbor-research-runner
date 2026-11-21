@@ -97,6 +97,27 @@ def test_job_accepts_native_image_build_mode(tmp_path: Path) -> None:
     assert job.tasks.images == "build"
 
 
+def test_job_accepts_no_host_ports_declaration(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "  dataset: example/data", "  dataset: example/data\n  host_ports: none"
+    )
+
+    assert load_job(write_job(tmp_path, text)).tasks.host_ports == "none"
+
+
+def test_job_defaults_host_ports_to_unknown(tmp_path: Path) -> None:
+    assert load_job(write_job(tmp_path, valid_job())).tasks.host_ports == "unknown"
+
+
+def test_job_rejects_unknown_host_ports_declaration(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "  dataset: example/data", "  dataset: example/data\n  host_ports: some"
+    )
+
+    with pytest.raises(JobFileError, match="unknown.*none"):
+        load_job(write_job(tmp_path, text))
+
+
 def test_job_rejects_unknown_image_mode(tmp_path: Path) -> None:
     with pytest.raises(JobFileError, match="images"):
         load_job(
