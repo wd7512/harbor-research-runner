@@ -1,5 +1,6 @@
 # shellcheck shell=bash disable=SC2154
 # Sourced by the Slurm scripts in this folder: provides a Docker API and Compose plugin inside one allocation.
+# Rootless Docker exec inherits the daemon's umask, so runc needs a wrapper that restores 022.
 # Expects $work (a job-local directory) and $log (a file for engine output) to be set.
 # After start_docker_engine, DOCKER_HOST points at the engine and $engine_selected names it:
 # existing, podman or rootless-docker. stop_docker_engine stops what was started.
@@ -33,6 +34,16 @@ fetch_docker_release() {
         export PATH="$work/docker-rootless-extras:$PATH"
     fi
     export PATH="$work/docker:$PATH"
+}
+
+install_runc_umask_wrapper() {
+    mkdir -p "$work/runc-umask" || return 1
+    {
+        printf '%s\n' '#!/bin/sh' 'umask 022'
+        printf 'exec "%s" "$@"\n' "$work/docker/runc"
+    } >"$work/runc-umask/runc" || return 1
+    chmod 755 "$work/runc-umask/runc" || return 1
+    export PATH="$work/runc-umask:$PATH"
 }
 
 ensure_compose_plugin() {
@@ -82,6 +93,7 @@ start_rootless_docker_with_driver() {
 start_rootless_docker_engine() {
     local storage_driver="${HRR_STORAGE_DRIVER:-auto}"
     fetch_docker_release rootless || return 1
+    install_runc_umask_wrapper || return 1
     if [ "$storage_driver" = auto ]; then
         if start_rootless_docker_with_driver overlay2; then return 0; fi
         stop_docker_engine

@@ -43,6 +43,7 @@ Read the summary in this order:
 
 Set `HRR_REF` to a release tag to also check that hrr installs on the node.
 When rootless Docker starts, `auto` tries `overlay2` before `vfs` because overlay2 avoids copying the full filesystem for every image layer and container; set `HRR_STORAGE_DRIVER` to select a driver explicitly.
+The rootless engine wraps `runc` so processes started with `docker exec` use umask `022`, which lets services such as `sshd` create files with safe permissions.
 
 ## 2. Prepare the study folder
 
