@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -34,10 +35,12 @@ def _run(
     slurm_dir.mkdir()
     (slurm_dir / "docker-engine.sh").write_text(
         "engine_selected=test\n"
+        "engine_storage_driver=''\n"
         "start_docker_engine() { printf 'engine-start\\n' >> \"$CALL_LOG\"; return 0; }\n"
         "stop_docker_engine() { printf 'engine-stop\\n' >> \"$CALL_LOG\"; }\n",
         encoding="utf-8",
     )
+    shutil.copyfile(ROOT / "scripts/slurm/registry.sh", slurm_dir / "registry.sh")
     script = tmp_path / "run-study.sbatch"
     script.write_text(
         SCRIPT.read_text(encoding="utf-8").replace(

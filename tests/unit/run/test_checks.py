@@ -377,6 +377,52 @@ def test_host_network_accepts_rootlesskit_proxy_address(tmp_path: Path) -> None:
     assert result.ok
 
 
+def test_host_network_with_concurrent_trials_fails_launch_check(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, profile={**_HOST_PROFILE, "container_network": "host"})
+
+    result = _by_name(
+        _run(tmp_path, job=_job(concurrency=2), deps=deps), "host_network_concurrency"
+    )
+
+    assert not result.ok
+    assert "concurrency: 1" in result.detail
+
+
+def test_host_network_with_one_trial_passes_launch_check(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, profile={**_HOST_PROFILE, "container_network": "host"})
+
+    result = _by_name(
+        _run(tmp_path, job=_job(concurrency=1), deps=deps), "host_network_concurrency"
+    )
+
+    assert result.ok
+
+
+def test_bridge_network_allows_concurrent_trials(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, profile={**_HOST_PROFILE, "container_network": "bridge"})
+
+    result = _by_name(
+        _run(tmp_path, job=_job(concurrency=32), deps=deps), "host_network_concurrency"
+    )
+
+    assert result.ok
+
+
+def test_host_network_concurrency_check_is_in_both_launch_check_lists(
+    tmp_path: Path,
+) -> None:
+    deps = _deps(tmp_path)
+    job = _job()
+
+    run_names = [result.name for result in _run(tmp_path, job=job, deps=deps)]
+    machine_names = [
+        result.name for result in machine_check_launch_checks(job, tmp_path / "runs", deps)
+    ]
+
+    assert "host_network_concurrency" in run_names
+    assert "host_network_concurrency" in machine_names
+
+
 def test_memory_fits_fails_closed_for_task_without_memory_limit(tmp_path: Path) -> None:
     machine_check = _machine_check(
         tasks=[{"name": "task-a", "memory_mb": None}],
@@ -1221,6 +1267,7 @@ def test_run_checks_evaluates_every_check_after_an_early_failure(tmp_path: Path)
         "memory_fits",
         "host_headroom",
         "proxy_host_reachable",
+        "host_network_concurrency",
     ]
     assert not _by_name(results, "model_card").ok
     assert not _by_name(results, "docker_clean").ok
@@ -1257,6 +1304,11 @@ def test_machine_check_launch_checks_pass_and_leave_host_lock_held(tmp_path: Pat
         CheckResult("docker_clean", True, "Docker inventory is clean"),
         CheckResult("single_run", True, "this process holds the host lock"),
         CheckResult("host_resources", True, "host resources meet the job limits"),
+        CheckResult(
+            "host_network_concurrency",
+            True,
+            "task container networking supports the job concurrency",
+        ),
     ]
     assert deps.host_lock.held
     deps.host_lock.release()
@@ -1276,11 +1328,13 @@ def test_machine_check_launch_checks_reports_each_failure(tmp_path: Path) -> Non
         "docker_clean",
         "single_run",
         "host_resources",
+        "host_network_concurrency",
     ]
     assert results[0].ok
     assert not results[1].ok
     assert results[2].ok
     assert not results[3].ok
+    assert results[4].ok
     deps.host_lock.release()
 
 

@@ -35,7 +35,7 @@ Read the summary in this order:
 | `compose` | `0` | Harbor runs trials through `docker compose`; the scripts download the plugin when the engine lacks it. |
 | `net_gateway`, `net_docker_hub`, `net_ghcr` | an HTTP status, not `000` | `000` means the node cannot reach that host. Registries answer `401` when reachable. Without registry access, load images from a `docker save` archive. |
 | `pull`, `run_host_network` | `0` | The engine can pull and run a container with host networking. |
-| `bridge_network`, `run_default_network` | either | Without a bridge, hrr uses host networking for task containers; set `proxy.container_host` (step 3). Tasks whose Compose files add sidecar services need a bridge and are excluded at machine check. |
+| `bridge_network`, `run_default_network` | either | Without a bridge, hrr uses host networking for task containers; set `proxy.container_host` (step 3). Set concurrency to 1 on a host-network engine because concurrent task containers share host ports and fixed-port tasks can collide. Tasks whose Compose files add sidecar services need a bridge and are excluded at machine check. |
 | `memory_cap` | either | `kernel`: Docker enforces each task's memory limit. `none`: it cannot (usual for rootless engines inside a Slurm cgroup), and hrr's memory watchdog enforces the limit instead. |
 | `bind_mount_persistent` | `0`, or use `HRR_RUNS_LOCAL=1` | Whether containers can mount the persistent directory. Rootless user namespaces often cannot read parallel file systems such as Lustre. |
 | `reach_helper` | `0` | The host's temporary HTTP server started and answered a local request. When it is `1`, all `reach_host_*` checks are `skipped`, so a refused connection cannot be mistaken for a failed address. |
