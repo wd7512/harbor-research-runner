@@ -143,14 +143,9 @@ port=$((20000 + RANDOM % 20000))
 . "$script_dir/reach-helper.sh"
 start_reach_helper "$receipt" "$port"
 reach_helper=1
-helper_deadline=$((SECONDS + 10))
-while [ "$SECONDS" -lt "$helper_deadline" ]; do
-    if reach_helper_up "$port"; then
-        reach_helper=0
-        break
-    fi
-    sleep 1
-done
+if reach_helper_up "$port" 10; then
+    reach_helper=0
+fi
 record reach_helper "$reach_helper"
 if [ "$reach_helper" = 0 ]; then
     node_ip="$(hostname -i | awk '{print $1}')"

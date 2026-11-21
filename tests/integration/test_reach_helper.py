@@ -34,10 +34,7 @@ def _assert_reachable(root: Path, port: int, env: dict[str, str]) -> None:
     result = _run(
         f'. "{HELPER}"; start_reach_helper "{root}" {port}; '
         "trap 'kill \"$reach_helper_pid\" 2>/dev/null || true' EXIT; "
-        'kill -0 "$reach_helper_pid" && '
-        "for attempt in {1..10}; do reach_helper_up "
-        + str(port)
-        + " && exit 0; sleep 0.1; done; exit 1",
+        f'kill -0 "$reach_helper_pid" && reach_helper_up {port} 3',
         env,
     )
     assert result.returncode == 0, result.stderr
