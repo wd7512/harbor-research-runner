@@ -802,6 +802,7 @@ def _agent_configs(job: Job, card: ModelCard, manifest_path: Path) -> list[tuple
             job.proxy_port,
             card.default_variant,
             model_card=asdict(card),
+            prompting=arm.prompting,
             fake=arm.fake,
         )
         agents.append((import_path, settings))
@@ -839,6 +840,7 @@ def _arm_rows(job: Job, manifest: dict[tuple[str, str, str], ImageEntry], arch: 
                 "label": arm.label,
                 "harness": arm.harness,
                 "commit": arm.commit,
+                "prompting": arm.prompting,
                 "image_ref": entry.ref if entry is not None else "",
                 "image_digest": entry.digest if entry is not None else "",
                 "build_method": entry.build_method if entry is not None else "",

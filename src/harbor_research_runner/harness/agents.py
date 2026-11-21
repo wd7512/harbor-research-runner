@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from harbor.agents.installed.base import NonZeroAgentExitCodeError, with_prompt_template
 from harbor.agents.installed.opencode import OpenCode, OpenCodeOptions
@@ -128,6 +128,7 @@ class AgentSettings(BaseModel):
     proxy_port: int
     variant: str | None
     model_card: dict
+    prompting: Literal["direct", "plan-first"] = "direct"
 
 
 _SETTINGS_KEYS = tuple(AgentSettings.model_fields)
@@ -155,6 +156,7 @@ def agent_settings(
     variant: str | None,
     *,
     model_card: dict,
+    prompting: Literal["direct", "plan-first"] = "direct",
     fake: dict | None = None,
 ) -> dict:
     """The Harbor agent kwargs for one arm and model."""
@@ -167,6 +169,7 @@ def agent_settings(
         proxy_port=proxy_port,
         variant=variant,
         model_card=model_card,
+        prompting=prompting,
     ).model_dump()
     if fake is not None:
         if harness != "fake":
@@ -228,6 +231,7 @@ class PinnedHarness(ABC):
         self.proxy_port = settings.proxy_port
         self.variant = settings.variant
         self.model_card = settings.model_card
+        self.prompting = settings.prompting
         self._task_arch: str | None = None
         self._facts: HarnessFacts | None = None
 
@@ -391,9 +395,21 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
     def run_command(self, facts: HarnessFacts, model: str, instruction: str) -> str:
         return opencode_eras.run_command(facts, model, instruction, self._selected_variant())
 
+    def plan_command(self, facts: HarnessFacts, model: str, instruction: str) -> str:
+        return opencode_eras.run_command(
+            facts,
+            model,
+            instruction,
+            self._selected_variant(),
+            agent="plan",
+            log_path="/logs/agent/opencode-plan.txt",
+        )
+
     async def probe(self, environment) -> HarnessFacts:
         version = await self._probe_version(environment)
         run_help = await self._probe_help(environment, f"{_OPENCODE_BIN} run --help")
+        if self.prompting == "plan-first" and not opencode_eras.supports_flag(run_help, "--agent"):
+            raise ProbeError(f"opencode {version} has no run --agent flag")
         global_help = await self._probe_help(environment, f"{_OPENCODE_BIN} --help")
         return HarnessFacts(
             version=version,
@@ -442,7 +458,76 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
             await self.exec_as_agent(
                 environment, command=skills_command, env=self._run_environment()
             )
-        await super().run(instruction, environment, context)
+        build_instruction = instruction
+        if self.prompting == "plan-first":
+            facts = self._facts
+            if facts is None:
+                raise ProbeError(
+                    f"capability probe missing for {self.harness}:{self.commit}; "
+                    "install() must run before run()"
+                )
+            model = self._render_model_name()
+            try:
+                result = await self.exec_as_agent(
+                    environment,
+                    command=self.plan_command(facts, model, instruction),
+                    env=self._run_environment(),
+                )
+            except NonZeroAgentExitCodeError as exc:
+                raise NonZeroAgentExitCodeError(f"plan stage produced no plan: {exc}") from exc
+            if result.return_code != 0:
+                raise NonZeroAgentExitCodeError(
+                    f"plan stage produced no plan: command exited {result.return_code}"
+                )
+            output_filename = self._OUTPUT_FILENAME
+            self._OUTPUT_FILENAME = "opencode-plan.txt"
+            try:
+                events = self._parse_stdout()
+                errors = self._error_messages()
+            finally:
+                self._OUTPUT_FILENAME = output_filename
+            if errors:
+                raise NonZeroAgentExitCodeError(
+                    "plan stage produced no plan: OpenCode emitted error event(s): "
+                    + "; ".join(errors[:3])
+                )
+            finish_index = next(
+                (
+                    index
+                    for index in range(len(events) - 1, -1, -1)
+                    if events[index].get("type") == "step_finish"
+                ),
+                None,
+            )
+            start_index = (
+                next(
+                    (
+                        index
+                        for index in range(finish_index - 1, -1, -1)
+                        if events[index].get("type") == "step_start"
+                    ),
+                    -1,
+                )
+                if finish_index is not None
+                else -1
+            )
+            plan = "\n".join(
+                part["text"]
+                for event in events[start_index + 1 : finish_index or len(events)]
+                if event.get("type") == "text"
+                and isinstance((part := event.get("part")), dict)
+                and isinstance(part.get("text"), str)
+            ).strip()
+            if not plan:
+                raise NonZeroAgentExitCodeError("plan stage produced no plan: plan text was empty")
+            await self.exec_as_agent(
+                environment,
+                command=_write_file_command("/logs/agent/plan.md", plan),
+                env=self._run_environment(),
+            )
+            build_instruction = plan
+        self._instruction = build_instruction
+        await super().run(build_instruction, environment, context)
         if messages := self._error_messages():
             raise NonZeroAgentExitCodeError(
                 "OpenCode emitted error event(s): " + "; ".join(messages[:3])

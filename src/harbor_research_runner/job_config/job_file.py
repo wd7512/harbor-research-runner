@@ -4,6 +4,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
@@ -14,6 +15,7 @@ class Arm:
     harness: str
     commit: str
     fake: dict | None = None
+    prompting: Literal["direct", "plan-first"] = "direct"
 
 
 @dataclass(frozen=True)
@@ -179,7 +181,7 @@ def load_job(path: Path) -> Job:
     labels: set[str] = set()
     for index, raw_arm in enumerate(arms_raw):
         arm_data = _mapping(raw_arm, f"arms[{index}]")
-        _keys(arm_data, {"label", "harness", "commit", "fake"}, f"arms[{index}]")
+        _keys(arm_data, {"label", "harness", "commit", "fake", "prompting"}, f"arms[{index}]")
         label = _nonempty_string(_required(arm_data, "label"), f"arms[{index}].label")
         if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", label):
             raise JobFileError(f"arms[{index}].label must match [a-z0-9][a-z0-9.-]*")
@@ -190,6 +192,15 @@ def load_job(path: Path) -> Job:
         commit = _nonempty_string(_required(arm_data, "commit"), f"arms[{index}].commit")
         if not re.fullmatch(r"[0-9a-f]{40}", commit):
             raise JobFileError(f"arms[{index}].commit must be 40 lowercase hexadecimal characters")
+        prompting_value = arm_data.get("prompting", "direct")
+        if prompting_value == "direct":
+            prompting: Literal["direct", "plan-first"] = "direct"
+        elif prompting_value == "plan-first":
+            prompting = "plan-first"
+        else:
+            raise JobFileError("prompting must be direct or plan-first")
+        if prompting == "plan-first" and harness != "opencode":
+            raise JobFileError("prompting plan-first is only allowed for the opencode harness")
         fake = None
         if "fake" in arm_data:
             if harness != "fake":
@@ -197,7 +208,7 @@ def load_job(path: Path) -> Job:
             raw_fake = arm_data["fake"]
             if raw_fake is not None:
                 fake = _mapping(raw_fake, f"arms[{index}].fake")
-        arms.append(Arm(label, harness, commit, fake))
+        arms.append(Arm(label, harness, commit, fake, prompting))
     proxy = _mapping(_required(data, "proxy"), "proxy")
     _keys(proxy, {"host", "port", "container_host"}, "proxy")
     proxy_host = _nonempty_string(_required(proxy, "host"), "proxy.host")

@@ -172,7 +172,7 @@ A request for a trial that is not open gets HTTP 410 with body `{"error": {"mess
 
 Written once, atomically, before anything else starts: write a temporary file in the same folder, `fsync` it, then link it into place without replacing any existing destination. An existing destination, including a dangling symlink, raises `FileExistsError` and is left unchanged. Never rewritten.
 
-Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `tool_revision` (optional string or null; the requested git revision of a git install, or null when unknown or for a work-tree install), `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds).
+Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `tool_revision` (optional string or null; the requested git revision of a git install, or null when unknown or for a work-tree install), `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `prompting` (`direct` or `plan-first`), `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds). New runs record `direct` when an arm omits `prompting`; older run metadata without the field is read as `direct`.
 
 `tool_version` is the installed `harbor-research-runner` package version. `tool_commit` is the 40-hex commit of the checkout containing the package, with `+dirty` appended when tracked files have changes; for a non-work-tree git install it is the 40-hex commit in `direct_url.json`; it is `none` when no commit is available. `tool_revision` is that install's requested git revision, such as `v0.1.0`, and is null when unknown or for a work-tree install. Older run metadata without `tool_revision` remains readable.
 
@@ -222,7 +222,7 @@ Run: `max_set_asides_per_slot` [2 x repetitions; `deferred` and `run_halted` set
 
 One row per judged trial, including set-aside trials and canary trials. Unjudged trial folders in an unfinished run are skipped and counted in `report.md`; a finished run with any unjudged trial folder is refused. Sorted by `task`, `arm`, `agent_started_t`, `trial`.
 
-Identity: `trial`, `task`, `arm`, `harness`, `commit`, `model`, `location` (`harbor-job`, `set-aside-trials` or `canary-job`), `is_first_attempt`, `is_final`.
+Identity: `trial`, `task`, `arm`, `harness`, `commit`, `prompting` (`direct` or `plan-first`), `model`, `location` (`harbor-job`, `set-aside-trials` or `canary-job`), `is_first_attempt`, `is_final`.
 
 Outcome: `reward` (number or null), `is_pass` (`reward == 1.0`), `harbor_exception` (Harbor's label, verbatim, or null), `agent_exit_nonzero` (bool).
 Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null; also null when a malformed memory-watch line overlaps the trial window), `memory_limit_mb` (the task's declared limit, or null), and `oom_source` (`kernel`, `watchdog`, or null).
