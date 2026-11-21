@@ -388,6 +388,28 @@ def test_host_network_with_concurrent_trials_fails_launch_check(tmp_path: Path) 
     assert "concurrency: 1" in result.detail
 
 
+def test_host_network_with_no_fixed_task_ports_allows_concurrent_trials(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, profile={**_HOST_PROFILE, "container_network": "host"})
+    job = _job(concurrency=8)
+    job = replace(job, tasks=replace(job.tasks, host_ports="none"))
+
+    result = _by_name(_run(tmp_path, job=job, deps=deps), "host_network_concurrency")
+
+    assert result.ok
+    assert "tasks declare no host ports (tasks.host_ports: none); concurrency 8" in result.detail
+
+
+def test_host_network_unknown_task_ports_explains_declaration(tmp_path: Path) -> None:
+    deps = _deps(tmp_path, profile={**_HOST_PROFILE, "container_network": "host"})
+
+    result = _by_name(
+        _run(tmp_path, job=_job(concurrency=8), deps=deps), "host_network_concurrency"
+    )
+
+    assert not result.ok
+    assert "tasks.host_ports: none" in result.detail
+
+
 def test_host_network_with_one_trial_passes_launch_check(tmp_path: Path) -> None:
     deps = _deps(tmp_path, profile={**_HOST_PROFILE, "container_network": "host"})
 
