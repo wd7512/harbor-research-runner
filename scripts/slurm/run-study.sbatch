@@ -24,6 +24,8 @@
 #   HRR_ENGINE           auto (default), existing, podman or rootless-docker
 #   HRR_DOCKER_VERSION   static Docker release for rootless-docker (default 29.9.3)
 #   HRR_COMPOSE_VERSION  Compose CLI plugin release (default 2.39.4)
+#   HRR_REGISTRY_AUTH    registry credentials file (mode 600), when registry login is needed
+#   HRR_IMAGE_CACHE      persistent folder for Docker image tar archives
 
 set -eu
 umask 077
@@ -43,6 +45,7 @@ state="$study/.hrr-run-id"
 mkdir -p "$work/tmp" "$work/bin" "$log_dir"
 export TMPDIR="$work/tmp"
 export PATH="$work/bin:$PATH"
+export DOCKER_CONFIG="$work/docker-config"
 
 if [ "$(stat -c %a "$env_file")" != 600 ]; then
     printf 'refusing: %s must have mode 600\n' "$env_file" >&2
@@ -68,9 +71,12 @@ fi
 
 # shellcheck source=scripts/slurm/docker-engine.sh
 . "$script_dir/docker-engine.sh"
+# shellcheck source=scripts/slurm/registry.sh
+. "$script_dir/registry.sh"
 cleanup() {
     rc=$?
     trap - EXIT
+    if [ -n "${HRR_IMAGE_CACHE:-}" ]; then save_image_cache "$HRR_IMAGE_CACHE"; fi
     stop_docker_engine
     if [ "${HRR_RUNS_LOCAL:-0}" = 1 ]; then
         cp -a "$runs_dir/." "$study/$runs_rel/"
@@ -86,6 +92,8 @@ if ! start_docker_engine; then
     printf 'no Docker API or Compose plugin on this node; see %s\n' "$log" >&2
     exit 1
 fi
+if [ -n "${HRR_REGISTRY_AUTH:-}" ]; then registry_login "$HRR_REGISTRY_AUTH"; fi
+if [ -n "${HRR_IMAGE_CACHE:-}" ]; then load_image_cache "$HRR_IMAGE_CACHE"; fi
 
 export UV_TOOL_DIR="$work/uv-tools" UV_TOOL_BIN_DIR="$work/bin"
 uv tool install --quiet "harbor-research-runner @ git+https://github.com/wd7512/harbor-research-runner@$ref"

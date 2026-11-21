@@ -81,6 +81,14 @@ is the same in every job, so resumed runs see the same run folder path.
 
 Do not loop on exit `2` inside one allocation: the stop time has passed, and hrr refuses it.
 
+## Registry limits
+
+Set `HRR_REGISTRY_AUTH` to a mode `600` file with one `REGISTRY USERNAME TOKEN` line per
+registry (for example, `docker.io USERNAME TOKEN`) to log in before Harbor pulls task images.
+Set `HRR_IMAGE_CACHE` to a persistent directory to load cached `.tar` images at job start and
+save newly pulled images before the engine stops. A single full pull fills the cache for later
+jobs; point subsequent allocations at the same directory to reuse it.
+
 ## Known working configuration
 
 Rootless Docker 29.9.3 on Isambard-AI (aarch64) used: Compose v2.39.4 as a CLI plugin under `$DOCKER_CONFIG`, no bridge, no iptables,
