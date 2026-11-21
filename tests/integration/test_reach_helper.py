@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "scripts/slurm/reach-helper.sh"
 
 
+DEAD_PROXY = "http://127.0.0.1:9"
+
+
 def _port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -19,7 +22,7 @@ def _run(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", "-c", script],
         cwd=ROOT,
-        env=env,
+        env={**env, "http_proxy": DEAD_PROXY, "HTTP_PROXY": DEAD_PROXY},
         capture_output=True,
         text=True,
         timeout=4,
