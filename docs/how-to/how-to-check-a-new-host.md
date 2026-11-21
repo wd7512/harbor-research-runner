@@ -32,7 +32,7 @@ The job file's `limits.memory_reserve_mb` can be raised or lowered for each host
 
 On a Slurm cluster, run `scripts/slurm/probe-host.sbatch` first; [How to run on a Slurm cluster](how-to-run-on-a-slurm-cluster.md) explains its report.
 
-When Docker has no bridge network, hrr uses host networking for Harbor's task containers. Set `proxy.container_host` in the job file to the reachable IP address; on Isambard's RootlessKit setup this is `10.0.2.2`. Hosts that cannot emulate a task image architecture (no binfmt or QEMU, such as Isambard) exclude those tasks at machine check with a warning; set `tasks.images: build` to build them natively. Docker Desktop emulates amd64 on Apple silicon, so `prebuilt` works there. Tasks whose own Compose files add sidecar services need Compose's default bridge network; their oracle fails on a host without a bridge and the machine check excludes them.
+When Docker has no bridge network, hrr uses host networking for Harbor's task containers. Set `proxy.container_host` in the job file to the reachable IP address; with the rootless engine from `docker-engine.sh` (RootlessKit) this is usually `10.0.2.2`. Hosts that cannot emulate a task image architecture (no binfmt or QEMU, which is common on HPC nodes) exclude those tasks at machine check with a warning; set `tasks.images: build` to build them natively. Docker Desktop emulates amd64 on Apple silicon, so `prebuilt` works there. Tasks whose own Compose files add sidecar services need Compose's default bridge network; their oracle fails on a host without a bridge and the machine check excludes them.
 
 ## C. Run a free-model pilot
 
