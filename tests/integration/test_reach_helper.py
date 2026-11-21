@@ -3,6 +3,7 @@ import http.server
 import os
 import shlex
 import socket
+import socketserver
 import subprocess
 import threading
 from collections.abc import Iterator
@@ -34,10 +35,16 @@ def _run(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+class _Server(http.server.ThreadingHTTPServer):
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 @contextmanager
 def _serving(root: Path) -> Iterator[int]:
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = _Server(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
