@@ -49,9 +49,9 @@ check() {
     return "$rc"
 }
 
-helper_pid=""
+reach_helper_pid=""
 cleanup() {
-    if [ -n "$helper_pid" ]; then kill "$helper_pid" 2>/dev/null; fi
+    if [ -n "$reach_helper_pid" ]; then kill "$reach_helper_pid" 2>/dev/null; fi
     if command -v docker >/dev/null 2>&1 && [ -n "${DOCKER_HOST:-}" ]; then
         docker ps -aq --filter label=hrr-probe=1 | xargs -r docker rm -f >/dev/null 2>&1
     fi
@@ -142,15 +142,29 @@ check bind_mount_persistent run_probe --network host -v "$receipt/mount:/m" "$im
 
 # 5. Can a container reach a service on the job host (the hrr proxy's path)?
 port=$((20000 + RANDOM % 20000))
-python3 -m http.server "$port" --bind 0.0.0.0 --directory "$receipt" >/dev/null 2>&1 &
-helper_pid=$!
-sleep 2
-for address in 127.0.0.1 10.0.2.2; do
-    check "reach_host_$address" run_probe --network host \
-        "$image" wget -q -O /dev/null -T 5 "http://$address:$port/summary.txt"
-done
-check reach_host_gateway run_probe --add-host host.docker.internal:host-gateway \
-    "$image" wget -q -O /dev/null -T 5 "http://host.docker.internal:$port/summary.txt"
+. "$script_dir/reach-helper.sh"
+start_reach_helper "$receipt" "$port"
+reach_helper=1
+if reach_helper_up "$port" 10; then
+    reach_helper=0
+fi
+record reach_helper "$reach_helper"
+if [ "$reach_helper" = 0 ]; then
+    node_ip="$(hostname -i | awk '{print $1}')"
+    for address in 127.0.0.1 10.0.2.2; do
+        check "reach_host_$address" run_probe --network host \
+            "$image" wget -q -O /dev/null -T 5 "http://$address:$port/summary.txt"
+    done
+    check reach_host_node_ip run_probe --network host \
+        "$image" wget -q -O /dev/null -T 5 "http://$node_ip:$port/summary.txt"
+    check reach_host_gateway run_probe --add-host host.docker.internal:host-gateway \
+        "$image" wget -q -O /dev/null -T 5 "http://host.docker.internal:$port/summary.txt"
+else
+    record reach_host_127.0.0.1 skipped
+    record reach_host_10.0.2.2 skipped
+    record reach_host_node_ip skipped
+    record reach_host_gateway skipped
+fi
 
 # 6. Optional: install hrr and run its machine check against this engine
 if [ -n "${HRR_REF:-}" ]; then
