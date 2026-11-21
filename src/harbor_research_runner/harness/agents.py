@@ -286,8 +286,7 @@ class PinnedHarness(ABC):
             )
         model = self._render_model_name()
         env = self._run_environment()
-        for path, text in self.config_files(facts, model, self.proxy_base_url()).items():
-            await self.exec_as_agent(environment, command=_write_file_command(path, text), env=env)
+        await self._write_config_files(environment, facts, model, env)
         try:
             await self.exec_as_agent(
                 environment, command=self.run_command(facts, model, instruction), env=env
@@ -295,6 +294,12 @@ class PinnedHarness(ABC):
         except asyncio.CancelledError:
             await asyncio.shield(self._stop_agent_processes(environment))
             raise
+
+    async def _write_config_files(
+        self, environment: Any, facts: HarnessFacts, model: str, env: dict[str, str]
+    ) -> None:
+        for path, text in self.config_files(facts, model, self.proxy_base_url()).items():
+            await self.exec_as_agent(environment, command=_write_file_command(path, text), env=env)
 
     def _run_environment(self) -> dict[str, str]:
         return {}
@@ -467,11 +472,13 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
                     "install() must run before run()"
                 )
             model = self._render_model_name()
+            env = self._run_environment()
+            await self._write_config_files(environment, facts, model, env)
             try:
                 result = await self.exec_as_agent(
                     environment,
                     command=self.plan_command(facts, model, instruction),
-                    env=self._run_environment(),
+                    env=env,
                 )
             except NonZeroAgentExitCodeError as exc:
                 raise NonZeroAgentExitCodeError(f"plan stage produced no plan: {exc}") from exc

@@ -715,8 +715,12 @@ def test_plan_first_runs_plan_then_builds_from_its_text(make_agent, tmp_path: Pa
     asyncio.run(agent.install(environment))
     asyncio.run(agent.run("original instruction", environment, None))
 
-    calls = [call["command"] for call in environment.calls if "--format=json" in call["command"]]
+    commands = [call["command"] for call in environment.calls]
+    calls = [command for command in commands if "--format=json" in command]
     assert len(calls) == 2
+    config_command = next(command for command in commands if "opencode.json" in command)
+    assert commands.index(config_command) < commands.index(calls[0])
+    assert _config_payload(config_command)["provider"]["ahe"]["options"]["baseURL"] == _PROXY_URL
     assert "--agent plan" in calls[0]
     assert "original instruction" in calls[0]
     assert "1. Create `count.py` in the working directory." in calls[1]
