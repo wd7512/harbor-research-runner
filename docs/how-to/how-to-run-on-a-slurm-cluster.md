@@ -104,8 +104,13 @@ jobs; point subsequent allocations at the same directory to reuse it.
 
 ## Known working configuration
 
-Rootless Docker 29.9.3 on Isambard-AI (aarch64) used: Compose v2.39.4 as a CLI plugin under `$DOCKER_CONFIG`, no bridge, no iptables,
-`native.cgroupdriver=cgroupfs`, the `vfs` storage driver with job-local data, host loopback
-enabled (task containers reach the host at `10.0.2.2`), and `DETACH_NETNS=false`. `docker-engine.sh`
-starts the daemon with exactly these settings. Keep Docker data and work folders on node-local
+Rootless Docker 29.9.3 has run studies on aarch64 and x86_64 Slurm clusters with:
+- Compose v2.39.4 as a CLI plugin under `$DOCKER_CONFIG`;
+- no bridge and no iptables;
+- `native.cgroupdriver=cgroupfs`;
+- the `overlay2` storage driver where the kernel allows it, else `vfs`, with job-local data;
+- host loopback enabled, so task containers reach the host at `10.0.2.2`;
+- `DETACH_NETNS=false`.
+
+`docker-engine.sh` starts the daemon with exactly these settings. Keep Docker data and work folders on node-local
 `/tmp`; a site's `$LOCALDIR` may not exist on every node.
