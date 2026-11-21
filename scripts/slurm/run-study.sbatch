@@ -21,6 +21,8 @@
 #   HRR_RUNS_LOCAL       1 keeps the runs folder on node-local /tmp during the job and
 #                        copies it back at the end, for storage containers cannot mount
 #   HRR_STOP_MARGIN_MIN  minutes before the allocation ends to stop launching (default 120)
+#   HRR_COMMAND          run (default) or check-machine
+#   HRR_CHECK_OUT        machine-check output relative to HRR_STUDY_DIR (default checks/machine-check.json)
 #   HRR_ENGINE           auto (default), existing, podman or rootless-docker
 #   HRR_DOCKER_VERSION   static Docker release for rootless-docker (default 29.9.3)
 #   HRR_COMPOSE_VERSION  Compose CLI plugin release (default 2.39.4)
@@ -35,6 +37,14 @@ runs_rel="${HRR_RUNS_DIR:-runs}"
 evidence_rel="${HRR_EVIDENCE_DIR:-evidence}"
 margin_min="${HRR_STOP_MARGIN_MIN:-120}"
 job_id="${SLURM_JOB_ID:?run this under Slurm}"
+hrr_command="${HRR_COMMAND:-run}"
+case "$hrr_command" in
+    run|check-machine) ;;
+    *)
+        printf "refusing: unsupported HRR_COMMAND '%s'\n" "$hrr_command" >&2
+        exit 64
+        ;;
+esac
 script_dir="${HRR_SLURM_DIR:-$(dirname "$(scontrol show job "$job_id" | sed -n 's/^ *Command=//p')")}"
 work="/tmp/hrr-study-$job_id"
 log_dir="$study/slurm-logs/$job_id"
@@ -98,7 +108,15 @@ set +a
 
 cd "$study"
 set +e
-if [ -s "$state" ]; then
+if [ "$hrr_command" = check-machine ]; then
+    check_out="${HRR_CHECK_OUT:-checks/machine-check.json}"
+    mkdir -p "$(dirname "$check_out")"
+    hrr check-machine --job "$job_file" --out "$check_out" --with-do-nothing
+    rc=$?
+    set -e
+    printf 'machine check exited %s; see %s\n' "$rc" "$check_out"
+    exit "$rc"
+elif [ -s "$state" ]; then
     run_id="$(cat "$state")"
     hrr run --resume "$run_id" --runs-dir "$runs_dir" --evidence-dir "$evidence_rel" \
         --stop-launching-at "$stop_at"

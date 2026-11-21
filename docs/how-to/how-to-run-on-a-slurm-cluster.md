@@ -51,6 +51,17 @@ Run the machine check inside an allocation, once per host and engine; see
 [How to check a new host](how-to-check-a-new-host.md). Every pass of a run must see the same
 host profile, so keep the partition and engine fixed for the life of a run.
 
+To run that check with the engine set up by `run-study.sbatch`, submit it before the study with
+`HRR_COMMAND=check-machine`:
+
+```sh
+HRR_COMMAND=check-machine HRR_STUDY_DIR=/path/to/study HRR_REF=v0.1.1 \
+  HRR_ENV_FILE=/path/to/key.env sbatch --partition=PARTITION scripts/slurm/run-study.sbatch
+```
+
+Inspect `checks/machine-check.json` and compare its `included` tasks as described in
+[How to check a new host](how-to-check-a-new-host.md) before starting the study.
+
 ## 3. Job file settings for the host
 
 - `proxy.container_host`: the address from the probe's `reach_host_*` lines.
