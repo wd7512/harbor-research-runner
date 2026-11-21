@@ -230,6 +230,39 @@ def test_ordinary_arm_has_no_fake_block(tmp_path: Path) -> None:
     assert load_job(write_job(tmp_path, valid_job())).arms[0].fake is None
 
 
+def test_arm_prompting_defaults_to_direct(tmp_path: Path) -> None:
+    assert load_job(write_job(tmp_path, valid_job())).arms[0].prompting == "direct"
+
+
+def test_opencode_arm_accepts_plan_first_prompting(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "label: old, harness: opencode, commit: " + "a" * 40,
+        "label: old, harness: opencode, commit: " + "a" * 40 + ", prompting: plan-first",
+    )
+
+    assert load_job(write_job(tmp_path, text)).arms[0].prompting == "plan-first"
+
+
+def test_non_opencode_arm_rejects_plan_first_prompting(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "label: old, harness: opencode, commit: " + "a" * 40,
+        "label: fake, harness: fake, commit: " + "a" * 40 + ", prompting: plan-first",
+    )
+
+    with pytest.raises(JobFileError, match="only allowed for the opencode harness"):
+        load_job(write_job(tmp_path, text))
+
+
+def test_arm_rejects_unknown_prompting_value(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "label: old, harness: opencode, commit: " + "a" * 40,
+        "label: old, harness: opencode, commit: " + "a" * 40 + ", prompting: staged",
+    )
+
+    with pytest.raises(JobFileError, match="prompting must be direct or plan-first"):
+        load_job(write_job(tmp_path, text))
+
+
 def test_fake_block_on_a_real_harness_is_rejected(tmp_path: Path) -> None:
     text = valid_job().replace(
         "  - {label: old, harness: opencode, commit: " + "a" * 40 + "}",

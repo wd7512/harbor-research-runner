@@ -51,6 +51,7 @@ class TrialRow:
     agent_wall_s: float | None
     peak_memory_mb: float | None
     memory_limit_mb: int | None
+    prompting: str = "direct"
     type: str = "trial"
 
     def to_row(self) -> dict:

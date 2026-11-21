@@ -102,6 +102,7 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 arm=facts.arm,
                 harness=arm["harness"],
                 commit=arm["commit"],
+                prompting=arm.get("prompting", "direct"),
                 model=metadata["model_card"]["id"],
                 location=location,
                 is_first_attempt=False,

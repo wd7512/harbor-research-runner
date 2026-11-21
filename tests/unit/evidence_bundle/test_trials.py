@@ -18,6 +18,7 @@ def _expected(folder: Path) -> list[dict]:
     machine_check = json.loads((folder / "machine-check.json").read_text(encoding="utf-8"))
     task_memory = {row["name"]: row.get("memory_mb") for row in machine_check["tasks"]}
     for row in rows:
+        row["prompting"] = "direct"
         row["oom_source"] = None
         row["peak_memory_mb"] = None
         row["memory_limit_mb"] = task_memory.get(row["task"])
@@ -121,6 +122,26 @@ def test_canary_is_flagged_and_not_a_first_attempt() -> None:
 def test_reading_same_run_twice_gives_identical_rows() -> None:
     folder = FIXTURES / "clean"
     assert build_trial_rows(folder) == build_trial_rows(folder)
+
+
+def test_legacy_run_metadata_without_prompting_reads_as_direct() -> None:
+    rows = build_trial_rows(FIXTURES / "clean")
+
+    assert rows
+    assert all(row.prompting == "direct" for row in rows)
+
+
+def test_run_metadata_prompting_is_copied_to_trial_rows(tmp_path: Path) -> None:
+    folder = tmp_path / "clean"
+    shutil.copytree(FIXTURES / "clean", folder)
+    metadata_path = folder / "run-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["arms"][0]["prompting"] = "plan-first"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    rows = build_trial_rows(folder)
+
+    assert all(row.prompting == "plan-first" for row in rows if row.arm == "alpha")
 
 
 def test_trial_rows_include_memory_peak_and_task_limit(tmp_path: Path) -> None:
