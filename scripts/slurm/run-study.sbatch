@@ -92,8 +92,8 @@ cleanup() {
     if [ "${HRR_RUNS_LOCAL:-0}" = 1 ]; then
         cp -a "$runs_dir/." "$study/$runs_rel/"
     fi
-    chmod -R u+w "$work" 2>/dev/null
-    rm -rf "$work"
+    chmod -R u+w "$work" 2>/dev/null || true
+    rm -rf "$work" || printf 'warning: could not remove job-local work directory %s\n' "$work" >&2
     printf 'job=%s exit=%s engine=%s storage_driver=%s stop_at=%s\n' "$job_id" "$rc" "$engine_selected" "$engine_storage_driver" "$stop_at" \
         >>"$study/slurm-logs/jobs.txt"
     exit "$rc"

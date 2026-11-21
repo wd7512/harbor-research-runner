@@ -107,8 +107,8 @@ start_rootless_docker_engine() {
 
 stop_docker_engine() {
     if [ -n "$engine_pid" ]; then
-        kill "$engine_pid" 2>/dev/null
-        wait "$engine_pid" 2>/dev/null
+        kill "$engine_pid" 2>/dev/null || true
+        wait "$engine_pid" 2>/dev/null || true
         engine_pid=""
     fi
 }
