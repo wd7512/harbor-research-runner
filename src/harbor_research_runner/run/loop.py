@@ -221,6 +221,7 @@ class RunSession:
         *,
         restart_cooldown_s: float | None = None,
         health_poll_s: float = 0.5,
+        health_timeout_s: float = 30.0,
     ) -> None:
         config = ProxyConfig(
             host=self.job.proxy_host,
@@ -300,7 +301,7 @@ class RunSession:
         except BaseException:
             self.stop_services()
             raise
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + health_timeout_s
         while time.monotonic() < deadline:
             if not self.proxy_alive():
                 self.stop_services()
@@ -316,7 +317,7 @@ class RunSession:
                 pass
             time.sleep(health_poll_s)
         self.stop_services()
-        raise TimeoutError("proxy did not become healthy within 30 seconds")
+        raise TimeoutError(f"proxy did not become healthy within {health_timeout_s:g} seconds")
 
     def stop_services(self, *, grace_s: float = 15.0) -> None:
         try:
@@ -801,6 +802,7 @@ def _agent_configs(job: Job, card: ModelCard, manifest_path: Path) -> list[tuple
             job.proxy_port,
             card.default_variant,
             model_card=asdict(card),
+            prompting=arm.prompting,
             fake=arm.fake,
         )
         agents.append((import_path, settings))
@@ -838,6 +840,7 @@ def _arm_rows(job: Job, manifest: dict[tuple[str, str, str], ImageEntry], arch: 
                 "label": arm.label,
                 "harness": arm.harness,
                 "commit": arm.commit,
+                "prompting": arm.prompting,
                 "image_ref": entry.ref if entry is not None else "",
                 "image_digest": entry.digest if entry is not None else "",
                 "build_method": entry.build_method if entry is not None else "",

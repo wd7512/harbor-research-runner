@@ -398,6 +398,7 @@ def test_legacy_config_uses_object_permission_and_options_npm() -> None:
     entry = config["provider"]["ahe"]
 
     assert config["permission"] == {"edit": "allow", "bash": "allow", "webfetch": "allow"}
+    assert "websearch" not in config
     assert entry["options"]["npm"] == "@ai-sdk/openai-compatible"
 
 
@@ -408,6 +409,7 @@ def test_modern_config_uses_string_permission_without_npm() -> None:
     entry = config["provider"]["ahe"]
 
     assert config["permission"] == "allow"
+    assert "websearch" not in config
     assert "npm" not in entry["options"]
 
 
@@ -418,6 +420,7 @@ def test_v2_config_uses_providers_package_not_npm_or_options() -> None:
     rendered = json.dumps(config)
 
     assert "providers" in config
+    assert config["websearch"] is False
     assert "provider" not in config
     assert '"npm"' not in rendered
     assert '"options"' not in rendered

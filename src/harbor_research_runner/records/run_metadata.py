@@ -39,6 +39,13 @@ class RunMetadata:
             row = {**row, "tool_revision": None}
         if set(row) != expected:
             raise ValueError("run metadata fields do not match")
+        row = {
+            **row,
+            "arms": [
+                {"prompting": "direct", **arm} if "prompting" not in arm else arm
+                for arm in row["arms"]
+            ],
+        }
         return cls(**row)
 
 

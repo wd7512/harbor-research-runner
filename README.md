@@ -19,6 +19,7 @@
 
 - [Architecture](docs/architecture.md): modules, file formats, and trial validity rules
 - [Check a new host](docs/how-to/how-to-check-a-new-host.md)
+- [Run on a Slurm cluster](docs/how-to/how-to-run-on-a-slurm-cluster.md)
 - [Run a study](docs/how-to/how-to-run-a-study.md)
 - [Decisions](docs/decisions.md)
 - [Testing](docs/testing.md)

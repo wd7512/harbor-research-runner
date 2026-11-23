@@ -11,6 +11,7 @@ from harbor.models.trial.config import AgentConfig
 
 from harbor_research_runner.harness.agents import (
     InstallCorruptionError,
+    NonZeroAgentExitCodeError,
     OpenCodeAgent,
     PinnedHarness,
     ProbeError,
@@ -26,7 +27,7 @@ _MODEL = "ahe/mimo-v2.5"
 _PROXY_URL = "http://host.docker.internal:8766/trial/fix-git__Ab3dE9x/v1"
 _AGENT_IMPORT_PATH = "harbor_research_runner.harness.agents:OpenCodeAgent"
 _HELP_GLOBAL = "-m, --model  model to use\n"
-_HELP_RUN = "--thinking\n--dangerously-skip-permissions\n"
+_HELP_RUN = "--thinking\n--dangerously-skip-permissions\n--agent\n"
 
 _ENV = {
     "OPENCODE_FAKE_VCS": "git",
@@ -118,11 +119,19 @@ class _Result:
 
 
 class _FakeEnvironment:
-    def __init__(self, *, block_on: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        block_on: str | None = None,
+        plan_return_code: int = 0,
+        run_help: str = _HELP_RUN,
+    ) -> None:
         self.calls: list[dict] = []
         self.uploads: list[tuple[Path, str]] = []
         self.entered = asyncio.Event()
         self._block_on = block_on
+        self.plan_return_code = plan_return_code
+        self.run_help = run_help
 
     async def exec(self, command: str, **kwargs):
         self.calls.append({"command": command, **kwargs})
@@ -134,9 +143,11 @@ class _FakeEnvironment:
         if command.endswith("opencode --version"):
             return _Result(0, "1.18.25\n")
         if command.endswith("opencode run --help"):
-            return _Result(0, _HELP_RUN)
+            return _Result(0, self.run_help)
         if command.endswith("opencode --help"):
             return _Result(0, _HELP_GLOBAL)
+        if "--agent plan" in command:
+            return _Result(self.plan_return_code)
         return _Result()
 
     async def upload_dir(self, source_dir: Path, target_dir: str) -> None:
@@ -167,7 +178,13 @@ def manifest_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def make_agent(tmp_path: Path, manifest_path: Path):
-    def make(*, variant: str | None = None, card: dict | None = None, **extra) -> _TestAgent:
+    def make(
+        *,
+        variant: str | None = None,
+        card: dict | None = None,
+        prompting: str = "direct",
+        **extra,
+    ) -> _TestAgent:
         settings = agent_settings(
             arm_label="oc-1.18",
             harness="opencode",
@@ -177,6 +194,7 @@ def make_agent(tmp_path: Path, manifest_path: Path):
             proxy_port=8766,
             variant=variant,
             model_card=dict(card) if card is not None else dict(_CARD),
+            prompting=prompting,
         )
         agent = _TestAgent(logs_dir=tmp_path, model_name=_MODEL, **settings, **extra)
         agent.files_root = tmp_path / "harness-root"
@@ -276,6 +294,7 @@ def test_agent_settings_returns_exactly_the_declared_keys(manifest_path: Path) -
         "proxy_port",
         "variant",
         "model_card",
+        "prompting",
     }
     assert settings["model_card"] == _CARD
 
@@ -302,6 +321,7 @@ def test_agent_settings_adds_fake_for_the_fake_harness(manifest_path: Path) -> N
         "proxy_port",
         "variant",
         "model_card",
+        "prompting",
         "fake",
     }
     assert settings["fake"] == {"requests": 2}
@@ -328,6 +348,7 @@ def test_agent_settings_omits_fake_when_not_supplied(manifest_path: Path) -> Non
         "proxy_port",
         "variant",
         "model_card",
+        "prompting",
     }
 
 
@@ -659,6 +680,13 @@ def test_probe_records_version_help_and_era(make_agent) -> None:
     assert facts.global_help_text == _HELP_GLOBAL
 
 
+def test_plan_first_probe_requires_the_agent_flag(make_agent) -> None:
+    agent = make_agent(prompting="plan-first")
+
+    with pytest.raises(ProbeError, match="opencode 1.18.25 has no run --agent flag"):
+        asyncio.run(agent.probe(_FakeEnvironment(run_help="--thinking\n")))
+
+
 def test_run_writes_the_rendered_config_and_the_run_command(make_agent) -> None:
     agent = make_agent()
     environment = _FakeEnvironment()
@@ -675,6 +703,112 @@ def test_run_writes_the_rendered_config_and_the_run_command(make_agent) -> None:
         "/usr/local/bin/opencode --model=ahe/mimo-v2.5 run --format=json " in command
         for command in commands
     )
+    assert sum("--format=json" in command for command in commands) == 1
+
+
+def test_plan_first_runs_plan_then_builds_from_its_text(make_agent, tmp_path: Path) -> None:
+    agent = make_agent(prompting="plan-first")
+    environment = _FakeEnvironment()
+    fixture = Path(__file__).parents[2] / "fixtures" / "opencode_events" / "plan-agent-v2.3.2.jsonl"
+    (tmp_path / "opencode-plan.txt").write_text(fixture.read_text(encoding="utf-8"))
+
+    asyncio.run(agent.install(environment))
+    asyncio.run(agent.run("original instruction", environment, None))
+
+    commands = [call["command"] for call in environment.calls]
+    calls = [command for command in commands if "--format=json" in command]
+    assert len(calls) == 2
+    config_command = next(command for command in commands if "opencode.json" in command)
+    assert commands.index(config_command) < commands.index(calls[0])
+    assert _config_payload(config_command)["provider"]["ahe"]["options"]["baseURL"] == _PROXY_URL
+    assert "--agent plan" in calls[0]
+    assert "original instruction" in calls[0]
+    assert "1. Create `count.py` in the working directory." in calls[1]
+    assert "original instruction" not in calls[1]
+    assert "tee /logs/agent/opencode-plan.txt" in calls[0]
+    plan_write = next(call for call in environment.calls if "plan.md" in call["command"])
+    assert (
+        "1. Create `count.py` in the working directory."
+        in shlex.split(plan_write["command"].split("printf '%s' ", 1)[1].rsplit(" > ", 1)[0])[0]
+    )
+
+
+def test_plan_first_rejects_empty_plan_without_running_build(make_agent, tmp_path: Path) -> None:
+    agent = make_agent(prompting="plan-first")
+    environment = _FakeEnvironment()
+    fixture = Path(__file__).parents[2] / "fixtures" / "opencode_events" / "plan-agent-v2.3.2.jsonl"
+    events = [
+        line
+        for line in fixture.read_text(encoding="utf-8").splitlines()
+        if '"type":"text"' not in line
+    ]
+    (tmp_path / "opencode-plan.txt").write_text("\n".join(events) + "\n", encoding="utf-8")
+
+    asyncio.run(agent.install(environment))
+    with pytest.raises(NonZeroAgentExitCodeError, match="plan stage produced no plan"):
+        asyncio.run(agent.run("original instruction", environment, None))
+
+    calls = [call["command"] for call in environment.calls if "--format=json" in call["command"]]
+    assert len(calls) == 1
+
+
+def test_plan_first_rejects_nonzero_plan_stage(make_agent, tmp_path: Path) -> None:
+    agent = make_agent(prompting="plan-first")
+    environment = _FakeEnvironment(plan_return_code=2)
+    asyncio.run(agent.install(environment))
+
+    with pytest.raises(
+        NonZeroAgentExitCodeError, match=r"plan stage produced no plan: Command failed \(exit 2\)"
+    ):
+        asyncio.run(agent.run("original instruction", environment, None))
+
+    assert not any(
+        "--format=json" in call["command"] and "--agent plan" not in call["command"]
+        for call in environment.calls
+    )
+
+
+def test_plan_first_rejects_error_event(make_agent, tmp_path: Path) -> None:
+    agent = make_agent(prompting="plan-first")
+    environment = _FakeEnvironment()
+    result_path = (
+        Path(__file__).parents[2]
+        / "fixtures"
+        / "harbor_job"
+        / "nonzeroexit-pytorch-2027run"
+        / "result.json"
+    )
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    stdout = (
+        result["exception_info"]["exception_message"]
+        .split("stdout: ", 1)[1]
+        .split("\n\nstderr:", 1)[0]
+    )
+    error_event = next(
+        line
+        for line in stdout.splitlines()
+        if (event := _try_json(line)) is not None and event.get("type") == "error"
+    )
+    (tmp_path / "opencode-plan.txt").write_text(error_event + "\n", encoding="utf-8")
+    asyncio.run(agent.install(environment))
+
+    with pytest.raises(
+        NonZeroAgentExitCodeError, match="plan stage produced no plan: OpenCode emitted error event"
+    ):
+        asyncio.run(agent.run("original instruction", environment, None))
+
+    assert not any(
+        "--format=json" in call["command"] and "--agent plan" not in call["command"]
+        for call in environment.calls
+    )
+
+
+def _try_json(line: str) -> dict | None:
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def test_run_executes_the_agent_command_with_the_fixed_environment(make_agent) -> None:
