@@ -29,6 +29,7 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 ### Internal
 
 - The run loop's proxy health deadline is injectable, and the memory-watch integration test keeps the shortened service waits the other run-loop tests use, so a slow machine fails fast with a clear timeout instead of exceeding the test budget. ([#207](https://github.com/wd7512/harbor-research-runner/issues/207))
+- Set the package version to 0.1.2, and rename three fragments whose types (`added`, `internal`) towncrier does not configure, so the changelog includes them.
 
 
 ## 0.1.1 (2026-11-20)
