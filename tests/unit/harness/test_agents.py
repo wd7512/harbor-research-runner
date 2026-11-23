@@ -687,6 +687,13 @@ def test_plan_first_probe_requires_the_agent_flag(make_agent) -> None:
         asyncio.run(agent.probe(_FakeEnvironment(run_help="--thinking\n")))
 
 
+def test_plan_continue_probe_requires_the_session_flag(make_agent) -> None:
+    agent = make_agent(prompting="plan-continue")
+
+    with pytest.raises(ProbeError, match="opencode 1.18.25 has no run --session flag"):
+        asyncio.run(agent.probe(_FakeEnvironment(run_help="--agent\n")))
+
+
 def test_run_writes_the_rendered_config_and_the_run_command(make_agent) -> None:
     agent = make_agent()
     environment = _FakeEnvironment()
@@ -731,6 +738,64 @@ def test_plan_first_runs_plan_then_builds_from_its_text(make_agent, tmp_path: Pa
         "1. Create `count.py` in the working directory."
         in shlex.split(plan_write["command"].split("printf '%s' ", 1)[1].rsplit(" > ", 1)[0])[0]
     )
+
+
+def test_plan_continue_builds_in_the_plan_session(make_agent, tmp_path: Path) -> None:
+    agent = make_agent(prompting="plan-continue")
+    environment = _FakeEnvironment(run_help=_HELP_RUN + "--session\n")
+    fixture = Path(__file__).parents[2] / "fixtures" / "opencode_events" / "plan-agent-v2.3.2.jsonl"
+    (tmp_path / "opencode-plan.txt").write_text(fixture.read_text(encoding="utf-8"))
+
+    asyncio.run(agent.install(environment))
+    asyncio.run(agent.run("original instruction", environment, None))
+
+    commands = [call["command"] for call in environment.calls]
+    calls = [command for command in commands if "--format=json" in command]
+    assert len(calls) == 2
+    assert "--session ses_e0459ffadffeomydGE6ILWlpKj" in calls[1]
+    assert "--agent build" in calls[1]
+    assert "-- Go" in calls[1]
+    assert "1. Create `count.py`" not in calls[1]
+    assert "--agent plan" in calls[0]
+    assert "tee /logs/agent/opencode-plan.txt" in calls[0]
+    plan_write = next(call for call in environment.calls if "plan.md" in call["command"])
+    assert "1. Create `count.py`" in plan_write["command"]
+
+
+def test_plan_continue_rejects_events_without_session_id(make_agent, tmp_path: Path) -> None:
+    agent = make_agent(prompting="plan-continue")
+    environment = _FakeEnvironment(run_help=_HELP_RUN + "--session\n")
+    fixture = Path(__file__).parents[2] / "fixtures" / "opencode_events" / "plan-agent-v2.3.2.jsonl"
+    events = fixture.read_text(encoding="utf-8").replace(
+        '"sessionID":"ses_e0459ffadffeomydGE6ILWlpKj",', ""
+    )
+    (tmp_path / "opencode-plan.txt").write_text(events, encoding="utf-8")
+
+    asyncio.run(agent.install(environment))
+    with pytest.raises(NonZeroAgentExitCodeError, match="plan stage produced no session"):
+        asyncio.run(agent.run("original instruction", environment, None))
+
+    calls = [call["command"] for call in environment.calls if "--format=json" in call["command"]]
+    assert len(calls) == 1
+
+
+def test_plan_continue_rejects_disagreeing_session_ids(make_agent, tmp_path: Path) -> None:
+    agent = make_agent(prompting="plan-continue")
+    environment = _FakeEnvironment(run_help=_HELP_RUN + "--session\n")
+    fixture = Path(__file__).parents[2] / "fixtures" / "opencode_events" / "plan-agent-v2.3.2.jsonl"
+    events = fixture.read_text(encoding="utf-8").replace(
+        '"sessionID":"ses_e0459ffadffeomydGE6ILWlpKj",',
+        '"sessionID":"ses_different",',
+        1,
+    )
+    (tmp_path / "opencode-plan.txt").write_text(events, encoding="utf-8")
+
+    asyncio.run(agent.install(environment))
+    with pytest.raises(NonZeroAgentExitCodeError, match="plan stage produced no session"):
+        asyncio.run(agent.run("original instruction", environment, None))
+
+    calls = [call["command"] for call in environment.calls if "--format=json" in call["command"]]
+    assert len(calls) == 1
 
 
 def test_plan_first_rejects_empty_plan_without_running_build(make_agent, tmp_path: Path) -> None:
