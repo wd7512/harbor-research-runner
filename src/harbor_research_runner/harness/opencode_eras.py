@@ -216,6 +216,7 @@ def _v2_config(
             },
         },
         "permission": "allow",
+        "websearch": False,
         "share": "disabled",
         "small_model": f"{_TITLE_SUPPRESS_PROVIDER}/{_TITLE_SUPPRESS_MODEL}",
     }
