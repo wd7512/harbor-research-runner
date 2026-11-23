@@ -15,7 +15,7 @@ class Arm:
     harness: str
     commit: str
     fake: dict | None = None
-    prompting: Literal["direct", "plan-first"] = "direct"
+    prompting: Literal["direct", "plan-first", "plan-continue"] = "direct"
 
 
 @dataclass(frozen=True)
@@ -210,13 +210,15 @@ def load_job(path: Path) -> Job:
             raise JobFileError(f"arms[{index}].commit must be 40 lowercase hexadecimal characters")
         prompting_value = arm_data.get("prompting", "direct")
         if prompting_value == "direct":
-            prompting: Literal["direct", "plan-first"] = "direct"
+            prompting: Literal["direct", "plan-first", "plan-continue"] = "direct"
         elif prompting_value == "plan-first":
             prompting = "plan-first"
+        elif prompting_value == "plan-continue":
+            prompting = "plan-continue"
         else:
-            raise JobFileError("prompting must be direct or plan-first")
-        if prompting == "plan-first" and harness != "opencode":
-            raise JobFileError("prompting plan-first is only allowed for the opencode harness")
+            raise JobFileError("prompting must be direct, plan-first or plan-continue")
+        if prompting in {"plan-first", "plan-continue"} and harness != "opencode":
+            raise JobFileError(f"prompting {prompting} is only allowed for the opencode harness")
         fake = None
         if "fake" in arm_data:
             if harness != "fake":

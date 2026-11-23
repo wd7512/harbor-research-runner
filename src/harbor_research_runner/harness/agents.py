@@ -23,6 +23,7 @@ from harbor_research_runner.harness.opencode_eras import HarnessFacts
 from harbor_research_runner.records.proxy_control import trial_base_url
 
 logger = logging.getLogger(__name__)
+PLAN_CONTINUE_MESSAGE = "Go"
 
 _AGENT_IMPORT_PATHS = {
     "opencode": "harbor_research_runner.harness.agents:OpenCodeAgent",
@@ -128,7 +129,7 @@ class AgentSettings(BaseModel):
     proxy_port: int
     variant: str | None
     model_card: dict
-    prompting: Literal["direct", "plan-first"] = "direct"
+    prompting: Literal["direct", "plan-first", "plan-continue"] = "direct"
 
 
 _SETTINGS_KEYS = tuple(AgentSettings.model_fields)
@@ -156,7 +157,7 @@ def agent_settings(
     variant: str | None,
     *,
     model_card: dict,
-    prompting: Literal["direct", "plan-first"] = "direct",
+    prompting: Literal["direct", "plan-first", "plan-continue"] = "direct",
     fake: dict | None = None,
 ) -> dict:
     """The Harbor agent kwargs for one arm and model."""
@@ -398,6 +399,16 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
         )
 
     def run_command(self, facts: HarnessFacts, model: str, instruction: str) -> str:
+        session = getattr(self, "_plan_continue_session", None)
+        if session is not None:
+            return opencode_eras.run_command(
+                facts,
+                model,
+                instruction,
+                self._selected_variant(),
+                agent="build",
+                session=session,
+            )
         return opencode_eras.run_command(facts, model, instruction, self._selected_variant())
 
     def plan_command(self, facts: HarnessFacts, model: str, instruction: str) -> str:
@@ -413,8 +424,14 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
     async def probe(self, environment) -> HarnessFacts:
         version = await self._probe_version(environment)
         run_help = await self._probe_help(environment, f"{_OPENCODE_BIN} run --help")
-        if self.prompting == "plan-first" and not opencode_eras.supports_flag(run_help, "--agent"):
+        if self.prompting in {"plan-first", "plan-continue"} and not opencode_eras.supports_flag(
+            run_help, "--agent"
+        ):
             raise ProbeError(f"opencode {version} has no run --agent flag")
+        if self.prompting == "plan-continue" and not opencode_eras.supports_flag(
+            run_help, "--session"
+        ):
+            raise ProbeError(f"opencode {version} has no run --session flag")
         global_help = await self._probe_help(environment, f"{_OPENCODE_BIN} --help")
         return HarnessFacts(
             version=version,
@@ -464,7 +481,7 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
                 environment, command=skills_command, env=self._run_environment()
             )
         build_instruction = instruction
-        if self.prompting == "plan-first":
+        if self.prompting in {"plan-first", "plan-continue"}:
             facts = self._facts
             if facts is None:
                 raise ProbeError(
@@ -527,14 +544,33 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
             ).strip()
             if not plan:
                 raise NonZeroAgentExitCodeError("plan stage produced no plan: plan text was empty")
+            if self.prompting == "plan-continue":
+                session_ids = {
+                    event["sessionID"]
+                    for event in events
+                    if isinstance(event.get("sessionID"), str) and event["sessionID"]
+                }
+                if not session_ids:
+                    raise NonZeroAgentExitCodeError(
+                        "plan stage produced no session: session ID was missing"
+                    )
+                if len(session_ids) != 1:
+                    raise NonZeroAgentExitCodeError(
+                        "plan stage produced no session: events disagreed about the session ID"
+                    )
             await self.exec_as_agent(
                 environment,
                 command=_write_file_command("/logs/agent/plan.md", plan),
                 env=self._run_environment(),
             )
-            build_instruction = plan
+            build_instruction = PLAN_CONTINUE_MESSAGE if self.prompting == "plan-continue" else plan
+            if self.prompting == "plan-continue":
+                self._plan_continue_session = next(iter(session_ids))
         self._instruction = build_instruction
-        await super().run(build_instruction, environment, context)
+        try:
+            await super().run(build_instruction, environment, context)
+        finally:
+            self._plan_continue_session = None
         if messages := self._error_messages():
             raise NonZeroAgentExitCodeError(
                 "OpenCode emitted error event(s): " + "; ".join(messages[:3])
