@@ -4,6 +4,17 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 
 <!-- towncrier release notes start -->
 
+## 0.1.3 (2026-11-23)
+
+### Added
+
+- OpenCode arms can continue the plan stage's session with the build agent, preserving its exploration context. Job files and evidence records accept the new `plan-continue` prompting value.
+
+### Internal
+
+- Set the package version to 0.1.3.
+
+
 ## 0.1.2 (2026-11-23)
 
 ### Added
