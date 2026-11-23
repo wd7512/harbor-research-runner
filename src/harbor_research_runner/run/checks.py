@@ -165,6 +165,10 @@ def machine_check_launch_checks(job: Job, runs_dir: Path, deps: CheckDeps) -> li
         _evaluate("docker_clean", lambda: docker_clean_check(deps)),
         _evaluate("single_run", lambda: single_run_check(runs_dir, deps)),
         _evaluate("host_resources", lambda: host_resources_check(job, deps, 1.0, runs_dir)),
+        _evaluate(
+            "host_network_concurrency",
+            lambda: host_network_concurrency_check(job, deps),
+        ),
     ]
 
 
@@ -179,6 +183,23 @@ def proxy_host_reachable_check(job: Job, deps: CheckDeps) -> tuple[bool, str]:
             "RootlessKit host-loopback address is 10.0.2.2"
         )
     return True, f"proxy.container_host {job.container_host} is an IP address"
+
+
+def host_network_concurrency_check(job: Job, deps: CheckDeps) -> tuple[bool, str]:
+    if deps.host_profile().get("container_network") != "host" or job.concurrency == 1:
+        return True, "task container networking supports the job concurrency"
+    if job.tasks.host_ports == "none":
+        return (
+            True,
+            "tasks declare no host ports (tasks.host_ports: none); "
+            f"concurrency {job.concurrency} on host networking",
+        )
+    return False, (
+        "task containers use host networking and share the host's ports; concurrent trials "
+        "of a task that serves on a fixed port collide. Set concurrency: 1 and split the task "
+        f"set across hosts for throughput (job concurrency is {job.concurrency}), or declare "
+        "tasks.host_ports: none when no included task listens on a fixed port"
+    )
 
 
 def run_checks(
@@ -397,6 +418,10 @@ def run_checks(
         _evaluate("memory_fits", memory_fits_check),
         _evaluate("host_headroom", host_headroom_check),
         _evaluate("proxy_host_reachable", lambda: proxy_host_reachable_check(job, deps)),
+        _evaluate(
+            "host_network_concurrency",
+            lambda: host_network_concurrency_check(job, deps),
+        ),
     ]
 
 

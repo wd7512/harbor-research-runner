@@ -167,6 +167,7 @@ def _run_deps(
             restart,
             restart_cooldown_s=0.01 if restart else 0.0,
             health_poll_s=0.01,
+            health_timeout_s=4.0,
         ),
         stop_services=lambda session: session.stop_services(grace_s=0.1),
         now=lambda: _NOW,
@@ -675,9 +676,10 @@ def test_run_job_reports_live_memory_and_oom_watch_services(
         tmp_path, upstream_url, harbor_calls, returncode=7
     )
     observed: list[tuple[bool, bool]] = []
+    start_with_short_waits = deps.start_services
 
     def start_services(session, restart: bool) -> None:
-        session.start_services(restart)
+        start_with_short_waits(session, restart)
         observed.append((session.memory_watch_alive(), session.oom_watch_alive()))
 
     deps = replace(deps, start_services=start_services)

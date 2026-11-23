@@ -42,6 +42,7 @@
     }
   },
   "permission": "allow",
+  "websearch": false,
   "share": "disabled",
   "small_model": "_title_suppress/title-suppress"
 }

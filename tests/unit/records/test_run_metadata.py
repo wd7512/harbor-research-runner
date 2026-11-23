@@ -55,6 +55,13 @@ def test_run_metadata_parser_loads_rows_without_tool_revision():
     assert RunMetadata.from_row(row).tool_revision is None
 
 
+def test_run_metadata_reads_legacy_arm_prompting_as_direct():
+    row = _metadata().to_row()
+    row["arms"] = [{"label": "arm", "harness": "opencode", "commit": "a" * 40}]
+
+    assert RunMetadata.from_row(row).arms[0]["prompting"] == "direct"
+
+
 def test_run_metadata_write_is_atomic(tmp_path):
     metadata = _metadata()
     path = tmp_path / "run-metadata.json"

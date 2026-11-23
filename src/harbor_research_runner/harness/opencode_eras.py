@@ -88,7 +88,15 @@ def config_files(
     return {_CONFIG_PATH: json.dumps(config, indent=2)}
 
 
-def run_command(facts: HarnessFacts, model: str, instruction: str, variant: str | None) -> str:
+def run_command(
+    facts: HarnessFacts,
+    model: str,
+    instruction: str,
+    variant: str | None,
+    *,
+    agent: str | None = None,
+    log_path: str = _AGENT_LOG_PATH,
+) -> str:
     """The in-container ``opencode run`` command for the probed capabilities."""
     _require_shell_safe_model_name(model)
     escaped_instruction = shlex.quote(instruction)
@@ -106,6 +114,7 @@ def run_command(facts: HarnessFacts, model: str, instruction: str, variant: str 
         if supports_flag(facts.help_text, "--dangerously-skip-permissions")
         else ""
     )
+    agent_flag = f"--agent {shlex.quote(agent)} " if agent is not None else ""
     if supports_flag(facts.global_help_text, "--model"):
         invocation = f"{_OPENCODE_BIN} {model_arg} run --format=json "
     else:
@@ -113,8 +122,8 @@ def run_command(facts: HarnessFacts, model: str, instruction: str, variant: str 
     return (
         "[ -f ~/.nvm/nvm.sh ] && . ~/.nvm/nvm.sh; "
         f"{invocation}{variant_flag}{thinking_flag}"
-        f"{skip_permissions_flag}-- {escaped_instruction} "
-        f"2>&1 </dev/null | stdbuf -oL tee {_AGENT_LOG_PATH}"
+        f"{skip_permissions_flag}{agent_flag}-- {escaped_instruction} "
+        f"2>&1 </dev/null | stdbuf -oL tee {shlex.quote(log_path)}"
     )
 
 
@@ -207,6 +216,7 @@ def _v2_config(
             },
         },
         "permission": "allow",
+        "websearch": False,
         "share": "disabled",
         "small_model": f"{_TITLE_SUPPRESS_PROVIDER}/{_TITLE_SUPPRESS_MODEL}",
     }

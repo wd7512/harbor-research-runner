@@ -27,6 +27,7 @@ These steps assume you have a pinned task repository, Docker, and a host suitabl
      include: [task-name]
      exclude: []
      images: prebuilt
+     host_ports: unknown
    machine_check: checks/machine-check.json
    arms:
      - label: baseline
@@ -44,7 +45,11 @@ These steps assume you have a pinned task repository, Docker, and a host suitabl
 
    The task source must be exactly one of `dataset`, `path`, or `git`. A git source pins both `url` and a 40-character lowercase commit. `include` selects task names; an empty list means all tasks that pass the machine check. `exclude` removes named tasks from that set. Task names are Harbor task IDs: folder names for `path` and `git` sources, and `org/name` for `dataset` tasks, never `[task].name`. The arms share one model and need unique labels.
 
+   Each arm may set `prompting: direct` or `prompting: plan-first`; omitting it selects `direct`. `plan-first` is available only for the OpenCode harness: OpenCode first writes a plan, then starts a fresh build run that sees only the plan text and not the original task prompt.
+
    The default `prebuilt` mode keeps Harbor's existing image behavior. Set `tasks.images: build` to force task images to build on the Docker host architecture.
+
+   On a host-network engine, concurrent tasks share host ports. Keep `tasks.host_ports: unknown` unless every included task is known not to listen on a fixed port; declare `tasks.host_ports: none` in that case to allow concurrency above 1.
 
    On a Linux Docker Engine host, set `proxy.host` to `0.0.0.0` and `proxy.container_host` to the Docker bridge gateway address reachable from Harbor's Compose network, because Harbor does not add a `host.docker.internal` host mapping.
 
