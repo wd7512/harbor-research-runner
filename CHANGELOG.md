@@ -9,8 +9,10 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 ### Added
 
 - `run-study.sbatch` can run `hrr check-machine` inside the configured Slurm allocation before a study. The Slurm guide documents checking the resulting included task set. ([#90](https://github.com/wd7512/harbor-research-runner/issues/90))
+- Add Slurm scripts: a one-job host probe that reports the Docker API, network reach, memory cap and bind-mount support of a compute node, and a study script that runs or resumes a study across allocations with `--stop-launching-at`. See `docs/how-to/how-to-run-on-a-slurm-cluster.md`. ([#90](https://github.com/wd7512/harbor-research-runner/issues/90))
 - Slurm study jobs can authenticate to registries and load or save task images in a persistent tar cache.
   Configure `HRR_REGISTRY_AUTH` and `HRR_IMAGE_CACHE` to avoid repeated anonymous pulls across allocations. ([#90](https://github.com/wd7512/harbor-research-runner/issues/90))
+- OpenCode arms can plan first and then build from the saved plan, with the build stage receiving only plan text. Run metadata and trial evidence record each arm's prompting mode while older runs default to `direct`. ([#221](https://github.com/wd7512/harbor-research-runner/issues/221))
 - Jobs can declare `tasks.host_ports: none` when no included task listens on a fixed port, allowing concurrency on host-network engines. The default `unknown` declaration keeps the existing concurrency restriction. ([#228](https://github.com/wd7512/harbor-research-runner/issues/228))
 
 ### Fixed
@@ -23,6 +25,10 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 - Refuse run and machine-check launch when host networking would let concurrent task containers collide on host ports. ([#224](https://github.com/wd7512/harbor-research-runner/issues/224))
 - The Slurm rootless Docker engine wraps `runc` to restore umask `022` for processes started with `docker exec`. ([#226](https://github.com/wd7512/harbor-research-runner/issues/226))
 - OpenCode v2 runs disable web search, whose consent form failed headless runs and discarded completed plan-first plans. ([#231](https://github.com/wd7512/harbor-research-runner/issues/231))
+
+### Internal
+
+- The run loop's proxy health deadline is injectable, and the memory-watch integration test keeps the shortened service waits the other run-loop tests use, so a slow machine fails fast with a clear timeout instead of exceeding the test budget. ([#207](https://github.com/wd7512/harbor-research-runner/issues/207))
 
 
 ## 0.1.1 (2026-11-20)
