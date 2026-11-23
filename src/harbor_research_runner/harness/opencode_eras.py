@@ -95,6 +95,7 @@ def run_command(
     variant: str | None,
     *,
     agent: str | None = None,
+    session: str | None = None,
     log_path: str = _AGENT_LOG_PATH,
 ) -> str:
     """The in-container ``opencode run`` command for the probed capabilities."""
@@ -115,6 +116,7 @@ def run_command(
         else ""
     )
     agent_flag = f"--agent {shlex.quote(agent)} " if agent is not None else ""
+    session_flag = f"--session {shlex.quote(session)} " if session is not None else ""
     if supports_flag(facts.global_help_text, "--model"):
         invocation = f"{_OPENCODE_BIN} {model_arg} run --format=json "
     else:
@@ -122,7 +124,7 @@ def run_command(
     return (
         "[ -f ~/.nvm/nvm.sh ] && . ~/.nvm/nvm.sh; "
         f"{invocation}{variant_flag}{thinking_flag}"
-        f"{skip_permissions_flag}{agent_flag}-- {escaped_instruction} "
+        f"{skip_permissions_flag}{session_flag}{agent_flag}-- {escaped_instruction} "
         f"2>&1 </dev/null | stdbuf -oL tee {shlex.quote(log_path)}"
     )
 

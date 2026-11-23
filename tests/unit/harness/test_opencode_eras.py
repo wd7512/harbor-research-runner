@@ -331,6 +331,15 @@ def test_run_command_quotes_hostile_instruction() -> None:
     assert shlex.quote("say 'hi'; rm -rf /") in command
 
 
+def test_run_command_quotes_session_id() -> None:
+    facts = HarnessFacts(version="2.3.2", help_text="--agent\n--session\n", era="v2")
+    session = "session id; touch marker"
+
+    command = run_command(facts, _MODEL, "Go", None, agent="build", session=session)
+
+    assert f"--session {shlex.quote(session)} --agent build -- Go" in command
+
+
 @pytest.mark.parametrize(
     "model",
     [
