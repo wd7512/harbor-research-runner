@@ -103,6 +103,7 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 harness=arm["harness"],
                 commit=arm["commit"],
                 prompting=arm.get("prompting", "direct"),
+                instruction_sha256=details.instruction_sha256,
                 model=metadata["model_card"]["id"],
                 location=location,
                 is_first_attempt=False,
