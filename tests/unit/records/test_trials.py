@@ -59,7 +59,9 @@ def test_trial_row_round_trips():
     assert TrialRow.from_row(row.to_row()) == row
 
 
-@pytest.mark.parametrize("field", list(_trial_row().to_row()))
+@pytest.mark.parametrize(
+    "field", [field for field in _trial_row().to_row() if field != "instruction_sha256"]
+)
 def test_trial_row_parser_rejects_missing_field(field):
     row = _trial_row().to_row()
     row.pop(field)
@@ -74,3 +76,11 @@ def test_trial_row_parser_rejects_unknown_field():
 
     with pytest.raises(ValueError):
         TrialRow.from_row(row)
+
+
+def test_trial_row_parses_legacy_row_without_instruction_hash():
+    row = _trial_row().to_row()
+    row["instruction_sha256"] = "a" * 64
+    row.pop("instruction_sha256")
+
+    assert TrialRow.from_row(row).instruction_sha256 is None

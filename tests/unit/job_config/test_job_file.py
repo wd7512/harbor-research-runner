@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -200,6 +201,78 @@ def test_rejects_non_string_task_order(tmp_path: Path) -> None:
 def test_resolves_machine_check_relative_to_job_file(tmp_path: Path) -> None:
     job_path = write_job(tmp_path, valid_job())
     assert load_job(job_path).machine_check == (tmp_path / "checks/machine.json").resolve()
+
+
+def test_instruction_variants_load_with_relative_path_and_hashes(tmp_path: Path) -> None:
+    variants = tmp_path / "variants.json"
+    raw = b'{"task": {"original_sha256": "' + b"a" * 64 + b'", "text": "variant"}}'
+    variants.write_bytes(raw)
+    job_path = write_job(
+        tmp_path,
+        valid_job().replace(
+            "commit: " + "a" * 40, "commit: " + "a" * 40 + ", instruction_variants: variants.json"
+        ),
+    )
+
+    arm = load_job(job_path).arms[0]
+
+    assert arm.instruction_variants == {"a" * 64: "variant"}
+    assert arm.instruction_variants_sha256 == hashlib.sha256(raw).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"not json",
+        b"[]",
+        b'{"task": {"original_sha256": "' + b"a" * 64 + b'"}}',
+        b'{"task": {"text": "x"}}',
+        b'{"task": {"original_sha256": "' + b"a" * 64 + b'", "text": "x", "extra": 1}}',
+        b'{"task": {"original_sha256": "' + b"A" * 64 + b'", "text": "x"}}',
+        b'{"task": {"original_sha256": "' + b"a" * 63 + b'", "text": "x"}}',
+        b'{"task": {"original_sha256": "' + b"a" * 64 + b'", "text": ""}}',
+        b'{"a": {"original_sha256": "'
+        + b"a" * 64
+        + b'", "text": "x"}, "b": {"original_sha256": "'
+        + b"a" * 64
+        + b'", "text": "y"}}',
+    ],
+    ids=[
+        "invalid-json",
+        "not-object",
+        "missing-text",
+        "missing-sha",
+        "extra-key",
+        "uppercase-sha",
+        "short-sha",
+        "empty-text",
+        "duplicate-sha",
+    ],
+)
+def test_invalid_instruction_variants_raise_job_file_error(tmp_path: Path, content: bytes) -> None:
+    (tmp_path / "variants.json").write_bytes(content)
+    job_path = write_job(
+        tmp_path,
+        valid_job().replace(
+            "commit: " + "a" * 40, "commit: " + "a" * 40 + ", instruction_variants: variants.json"
+        ),
+    )
+
+    with pytest.raises(JobFileError):
+        load_job(job_path)
+
+
+def test_unreadable_instruction_variants_raise_job_file_error(tmp_path: Path) -> None:
+    job_path = write_job(
+        tmp_path,
+        valid_job().replace(
+            "commit: " + "a" * 40,
+            "commit: " + "a" * 40 + ", instruction_variants: absent.json",
+        ),
+    )
+
+    with pytest.raises(JobFileError, match="could not read instruction variants file"):
+        load_job(job_path)
 
 
 def test_resolves_relative_task_path_for_harbor_configs(tmp_path: Path) -> None:

@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from harbor_research_runner.records.run_metadata import RunMetadata, read, write_once
@@ -27,6 +29,12 @@ def test_run_metadata_round_trips():
     metadata = _metadata()
 
     assert RunMetadata.from_row(metadata.to_row()) == metadata
+
+
+def test_new_run_metadata_arm_defaults_instruction_variants_hash_to_null():
+    metadata = replace(_metadata(), arms=[{"label": "arm"}])
+
+    assert metadata.to_row()["arms"] == [{"label": "arm", "instruction_variants_sha256": None}]
 
 
 @pytest.mark.parametrize(
@@ -60,6 +68,13 @@ def test_run_metadata_reads_legacy_arm_prompting_as_direct():
     row["arms"] = [{"label": "arm", "harness": "opencode", "commit": "a" * 40}]
 
     assert RunMetadata.from_row(row).arms[0]["prompting"] == "direct"
+
+
+def test_run_metadata_reads_legacy_arm_instruction_variants_as_null():
+    row = _metadata().to_row()
+    row["arms"] = [{"label": "arm", "harness": "opencode", "commit": "a" * 40}]
+
+    assert RunMetadata.from_row(row).arms[0]["instruction_variants_sha256"] is None
 
 
 def test_run_metadata_write_is_atomic(tmp_path):

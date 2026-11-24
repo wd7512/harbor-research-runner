@@ -172,7 +172,7 @@ A request for a trial that is not open gets HTTP 410 with body `{"error": {"mess
 
 Written once, atomically, before anything else starts: write a temporary file in the same folder, `fsync` it, then link it into place without replacing any existing destination. An existing destination, including a dangling symlink, raises `FileExistsError` and is left unchanged. Never rewritten.
 
-Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `tool_revision` (optional string or null; the requested git revision of a git install, or null when unknown or for a work-tree install), `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `prompting` (`direct`, `plan-first` or `plan-continue`), `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds). New runs record `direct` when an arm omits `prompting`; older run metadata without the field is read as `direct`.
+Fields: `run_id`, `created_t`, `tool_version`, `tool_commit`, `tool_revision` (optional string or null; the requested git revision of a git install, or null when unknown or for a work-tree install), `harbor_version`, `job` (the parsed job file, verbatim), `job_file_sha256`, `model_card` (embedded), `arms` (list of `label`, `harness`, `commit`, `prompting` (`direct`, `plan-first` or `plan-continue`), `instruction_variants_sha256` (the variants file hash or null), `image_ref`, `image_digest`, `build_method`), `task_set` (`ref`, `tasks`: list of `name`, `digest`), `machine_check_sha256`, `host` (`fingerprint`, `arch`, `cpus`, `memory_mb`, `docker_version`), `proxy` (`host`, `port`), `limits`, `sampler_interval_s` (the host resource sampling interval; currently 10 seconds). New runs record `direct` when an arm omits `prompting`; older run metadata without the field is read as `direct`, and older arms without `instruction_variants_sha256` are read as null.
 
 `tool_version` is the installed `harbor-research-runner` package version. `tool_commit` is the 40-hex commit of the checkout containing the package, with `+dirty` appended when tracked files have changes; for a non-work-tree git install it is the 40-hex commit in `direct_url.json`; it is `none` when no commit is available. `tool_revision` is that install's requested git revision, such as `v0.1.0`, and is null when unknown or for a work-tree install. Older run metadata without `tool_revision` remains readable.
 
@@ -224,6 +224,8 @@ One row per judged trial, including set-aside trials and canary trials. Unjudged
 
 Identity: `trial`, `task`, `arm`, `harness`, `commit`, `prompting` (`direct`, `plan-first` or `plan-continue`), `model`, `location` (`harbor-job`, `set-aside-trials` or `canary-job`), `is_first_attempt`, `is_final`.
 
+Instruction: `instruction_sha256` (SHA-256 of the instruction sent to the harness, or null when the trial has no `instruction.json`).
+
 Outcome: `reward` (number or null), `is_pass` (`reward == 1.0`), `harbor_exception` (Harbor's label, verbatim, or null), `agent_exit_nonzero` (bool).
 Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null; also null when a malformed memory-watch line overlaps the trial window), `memory_limit_mb` (the task's declared limit, or null), and `oom_source` (`kernel`, `watchdog`, or null).
 
@@ -257,6 +259,8 @@ machine_check: checks/i5-tb21-m8.json
 arms:
   - {label: oc-1.19.3, harness: opencode, commit: <40 hex>}
   - {label: oc-2.1.4,  harness: opencode, commit: <40 hex>}
+  # Optional reviewed instruction variants: JSON task names map to original_sha256/text entries.
+  - {label: oc-variant, harness: opencode, commit: <40 hex>, instruction_variants: reviewed-variants.json}
 proxy: {host: 127.0.0.1, port: 8766, container_host: host.docker.internal}
 limits: {}                                # overrides for section 4.6
 ```
@@ -264,6 +268,8 @@ limits: {}                                # overrides for section 4.6
 Unknown keys are an error. Arm labels match `[a-z0-9][a-z0-9.-]*` and are unique. Every arm uses the one `model`.
 
 An arm with `harness: fake` may carry one opaque `fake` mapping. The fake harness validates its `requests`, `exit_code`, `sleep_s`, `ignore_stop`, `keep_requesting_s`, `detached_heartbeat`, `detached_requesting_s`, `continue_on_error` and `solve` fields; the job parser keeps the mapping opaque. Every other harness rejects `fake`.
+
+An OpenCode arm may set `instruction_variants` to a JSON file path relative to the job file. Each task entry has exactly `original_sha256` (64 lowercase hexadecimal characters) and non-empty `text`; the digest selects the replacement for the instruction Harbor supplies.
 
 A slot is a (task, arm) pair. Each slot needs `repetitions` valid, measured trials.
 

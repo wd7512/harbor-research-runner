@@ -52,6 +52,7 @@ class TrialRow:
     peak_memory_mb: float | None
     memory_limit_mb: int | None
     prompting: str = "direct"
+    instruction_sha256: str | None = None
     type: str = "trial"
 
     def to_row(self) -> dict:
@@ -62,6 +63,8 @@ class TrialRow:
 
     @classmethod
     def from_row(cls, row: dict) -> "TrialRow":
+        if "instruction_sha256" not in row:
+            row = {**row, "instruction_sha256": None}
         if set(row) != {item.name for item in fields(cls)}:
             raise ValueError("trial fields do not match")
         return cls(**row)
