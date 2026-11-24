@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import shlex
 from pathlib import Path
@@ -183,6 +184,7 @@ def make_agent(tmp_path: Path, manifest_path: Path):
         variant: str | None = None,
         card: dict | None = None,
         prompting: str = "direct",
+        instruction_variants: dict[str, str] | None = None,
         **extra,
     ) -> _TestAgent:
         settings = agent_settings(
@@ -195,6 +197,7 @@ def make_agent(tmp_path: Path, manifest_path: Path):
             variant=variant,
             model_card=dict(card) if card is not None else dict(_CARD),
             prompting=prompting,
+            instruction_variants=instruction_variants,
         )
         agent = _TestAgent(logs_dir=tmp_path, model_name=_MODEL, **settings, **extra)
         agent.files_root = tmp_path / "harness-root"
@@ -295,6 +298,7 @@ def test_agent_settings_returns_exactly_the_declared_keys(manifest_path: Path) -
         "variant",
         "model_card",
         "prompting",
+        "instruction_variants",
     }
     assert settings["model_card"] == _CARD
 
@@ -322,6 +326,7 @@ def test_agent_settings_adds_fake_for_the_fake_harness(manifest_path: Path) -> N
         "variant",
         "model_card",
         "prompting",
+        "instruction_variants",
         "fake",
     }
     assert settings["fake"] == {"requests": 2}
@@ -349,6 +354,7 @@ def test_agent_settings_omits_fake_when_not_supplied(manifest_path: Path) -> Non
         "variant",
         "model_card",
         "prompting",
+        "instruction_variants",
     }
 
 
@@ -713,6 +719,55 @@ def test_run_writes_the_rendered_config_and_the_run_command(make_agent) -> None:
     assert sum("--format=json" in command for command in commands) == 1
 
 
+def test_run_uses_the_instruction_variant_and_records_its_hashes(
+    make_agent, tmp_path: Path
+) -> None:
+    original = "write fizz buzz"
+    variant = "buzz fizz write"
+    digest = hashlib.sha256(original.encode("utf-8")).hexdigest()
+    agent = make_agent(instruction_variants={digest: variant})
+    environment = _FakeEnvironment()
+
+    asyncio.run(agent.install(environment))
+    asyncio.run(agent.run(original, environment, None))
+
+    command = next(
+        call["command"] for call in environment.calls if "--format=json" in call["command"]
+    )
+    record = json.loads((tmp_path / "instruction.json").read_text(encoding="utf-8"))
+    assert variant in command
+    assert original not in command
+    assert record == {
+        "original_sha256": digest,
+        "sent_sha256": hashlib.sha256(variant.encode("utf-8")).hexdigest(),
+    }
+
+
+def test_run_rejects_an_instruction_without_a_variant_before_exec(make_agent) -> None:
+    agent = make_agent(instruction_variants={"a" * 64: "variant"})
+    environment = _FakeEnvironment()
+
+    with pytest.raises(ValueError, match=hashlib.sha256(b"unmapped").hexdigest()):
+        asyncio.run(agent.run("unmapped", environment, None))
+
+    assert environment.calls == []
+
+
+def test_run_without_instruction_variants_records_identical_hashes(
+    make_agent, tmp_path: Path
+) -> None:
+    instruction = "write fizz buzz"
+    agent = make_agent()
+    environment = _FakeEnvironment()
+
+    asyncio.run(agent.install(environment))
+    asyncio.run(agent.run(instruction, environment, None))
+
+    record = json.loads((tmp_path / "instruction.json").read_text(encoding="utf-8"))
+    digest = hashlib.sha256(instruction.encode("utf-8")).hexdigest()
+    assert record == {"original_sha256": digest, "sent_sha256": digest}
+
+
 def test_plan_first_runs_plan_then_builds_from_its_text(make_agent, tmp_path: Path) -> None:
     agent = make_agent(prompting="plan-first")
     environment = _FakeEnvironment()
@@ -738,6 +793,29 @@ def test_plan_first_runs_plan_then_builds_from_its_text(make_agent, tmp_path: Pa
         "1. Create `count.py` in the working directory."
         in shlex.split(plan_write["command"].split("printf '%s' ", 1)[1].rsplit(" > ", 1)[0])[0]
     )
+
+
+def test_plan_first_uses_the_instruction_variant_for_its_plan_command(
+    make_agent, tmp_path: Path
+) -> None:
+    original = "original instruction"
+    variant = "reordered instruction"
+    digest = hashlib.sha256(original.encode("utf-8")).hexdigest()
+    agent = make_agent(prompting="plan-first", instruction_variants={digest: variant})
+    environment = _FakeEnvironment()
+    fixture = Path(__file__).parents[2] / "fixtures" / "opencode_events" / "plan-agent-v2.3.2.jsonl"
+    (tmp_path / "opencode-plan.txt").write_text(fixture.read_text(encoding="utf-8"))
+
+    asyncio.run(agent.install(environment))
+    asyncio.run(agent.run(original, environment, None))
+
+    plan_command = next(
+        call["command"]
+        for call in environment.calls
+        if "--agent plan" in call["command"] and "--format=json" in call["command"]
+    )
+    assert variant in plan_command
+    assert original not in plan_command
 
 
 def test_plan_continue_builds_in_the_plan_session(make_agent, tmp_path: Path) -> None:

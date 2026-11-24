@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import shlex
@@ -130,6 +131,7 @@ class AgentSettings(BaseModel):
     variant: str | None
     model_card: dict
     prompting: Literal["direct", "plan-first", "plan-continue"] = "direct"
+    instruction_variants: dict[str, str] | None = None
 
 
 _SETTINGS_KEYS = tuple(AgentSettings.model_fields)
@@ -158,6 +160,7 @@ def agent_settings(
     *,
     model_card: dict,
     prompting: Literal["direct", "plan-first", "plan-continue"] = "direct",
+    instruction_variants: dict[str, str] | None = None,
     fake: dict | None = None,
 ) -> dict:
     """The Harbor agent kwargs for one arm and model."""
@@ -171,6 +174,7 @@ def agent_settings(
         variant=variant,
         model_card=model_card,
         prompting=prompting,
+        instruction_variants=instruction_variants,
     ).model_dump()
     if fake is not None:
         if harness != "fake":
@@ -233,6 +237,7 @@ class PinnedHarness(ABC):
         self.variant = settings.variant
         self.model_card = settings.model_card
         self.prompting = settings.prompting
+        self.instruction_variants = settings.instruction_variants
         self._task_arch: str | None = None
         self._facts: HarnessFacts | None = None
 
@@ -474,13 +479,31 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
 
     @with_prompt_template
     async def run(self, instruction, environment, context) -> None:
-        self._instruction = instruction
+        original_sha256 = hashlib.sha256(instruction.encode("utf-8")).hexdigest()
+        sent_instruction = instruction
+        if self.instruction_variants is not None:
+            try:
+                sent_instruction = self.instruction_variants[original_sha256]
+            except KeyError:
+                raise ValueError(f"instruction {original_sha256} has no variant") from None
+        sent_sha256 = hashlib.sha256(sent_instruction.encode("utf-8")).hexdigest()
+        instruction_path = Path(self.logs_dir) / "instruction.json"
+        instruction_path.parent.mkdir(parents=True, exist_ok=True)
+        instruction_path.write_text(
+            json.dumps(
+                {"original_sha256": original_sha256, "sent_sha256": sent_sha256},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        self._instruction = sent_instruction
         skills_command = self._build_register_skills_command()
         if skills_command:
             await self.exec_as_agent(
                 environment, command=skills_command, env=self._run_environment()
             )
-        build_instruction = instruction
+        build_instruction = sent_instruction
         if self.prompting in {"plan-first", "plan-continue"}:
             facts = self._facts
             if facts is None:
@@ -494,7 +517,7 @@ class OpenCodeAgent(PinnedHarness, OpenCode):
             try:
                 result = await self.exec_as_agent(
                     environment,
-                    command=self.plan_command(facts, model, instruction),
+                    command=self.plan_command(facts, model, sent_instruction),
                     env=env,
                 )
             except NonZeroAgentExitCodeError as exc:

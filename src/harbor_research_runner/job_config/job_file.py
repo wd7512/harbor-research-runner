@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -16,6 +18,8 @@ class Arm:
     commit: str
     fake: dict | None = None
     prompting: Literal["direct", "plan-first", "plan-continue"] = "direct"
+    instruction_variants: dict[str, str] | None = None
+    instruction_variants_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -197,7 +201,11 @@ def load_job(path: Path) -> Job:
     labels: set[str] = set()
     for index, raw_arm in enumerate(arms_raw):
         arm_data = _mapping(raw_arm, f"arms[{index}]")
-        _keys(arm_data, {"label", "harness", "commit", "fake", "prompting"}, f"arms[{index}]")
+        _keys(
+            arm_data,
+            {"label", "harness", "commit", "fake", "prompting", "instruction_variants"},
+            f"arms[{index}]",
+        )
         label = _nonempty_string(_required(arm_data, "label"), f"arms[{index}].label")
         if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", label):
             raise JobFileError(f"arms[{index}].label must match [a-z0-9][a-z0-9.-]*")
@@ -219,6 +227,47 @@ def load_job(path: Path) -> Job:
             raise JobFileError("prompting must be direct, plan-first or plan-continue")
         if prompting in {"plan-first", "plan-continue"} and harness != "opencode":
             raise JobFileError(f"prompting {prompting} is only allowed for the opencode harness")
+        variants: dict[str, str] | None = None
+        variants_sha256: str | None = None
+        if "instruction_variants" in arm_data:
+            if harness != "opencode":
+                raise JobFileError(
+                    f"arms[{index}].instruction_variants is only allowed for the opencode harness"
+                )
+            variants_path = Path(
+                _nonempty_string(arm_data["instruction_variants"], "instruction_variants")
+            )
+            if not variants_path.is_absolute():
+                variants_path = path.parent / variants_path
+            try:
+                variants_bytes = variants_path.read_bytes()
+                variants_data = json.loads(variants_bytes)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise JobFileError(
+                    f"could not read instruction variants file {variants_path}: {exc}"
+                ) from exc
+            if not isinstance(variants_data, dict):
+                raise JobFileError("instruction variants file must contain a JSON object")
+            variants = {}
+            for task, entry in variants_data.items():
+                if not isinstance(entry, dict) or set(entry) != {"original_sha256", "text"}:
+                    raise JobFileError(
+                        f"instruction variants entry {task!r} must contain original_sha256 and text only"
+                    )
+                digest = entry["original_sha256"]
+                text = entry["text"]
+                if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                    raise JobFileError(
+                        f"instruction variants entry {task!r} original_sha256 must be 64 lowercase hexadecimal characters"
+                    )
+                if not isinstance(text, str) or not text:
+                    raise JobFileError(
+                        f"instruction variants entry {task!r} text must be non-empty"
+                    )
+                if digest in variants:
+                    raise JobFileError(f"duplicate instruction variant original_sha256: {digest}")
+                variants[digest] = text
+            variants_sha256 = hashlib.sha256(variants_bytes).hexdigest()
         fake = None
         if "fake" in arm_data:
             if harness != "fake":
@@ -226,7 +275,7 @@ def load_job(path: Path) -> Job:
             raw_fake = arm_data["fake"]
             if raw_fake is not None:
                 fake = _mapping(raw_fake, f"arms[{index}].fake")
-        arms.append(Arm(label, harness, commit, fake, prompting))
+        arms.append(Arm(label, harness, commit, fake, prompting, variants, variants_sha256))
     proxy = _mapping(_required(data, "proxy"), "proxy")
     _keys(proxy, {"host", "port", "container_host"}, "proxy")
     proxy_host = _nonempty_string(_required(proxy, "host"), "proxy.host")

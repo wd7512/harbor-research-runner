@@ -19,6 +19,7 @@ def _expected(folder: Path) -> list[dict]:
     task_memory = {row["name"]: row.get("memory_mb") for row in machine_check["tasks"]}
     for row in rows:
         row["prompting"] = "direct"
+        row["instruction_sha256"] = None
         row["oom_source"] = None
         row["peak_memory_mb"] = None
         row["memory_limit_mb"] = task_memory.get(row["task"])
@@ -142,6 +143,22 @@ def test_run_metadata_prompting_is_copied_to_trial_rows(tmp_path: Path) -> None:
     rows = build_trial_rows(folder)
 
     assert all(row.prompting == "plan-first" for row in rows if row.arm == "alpha")
+
+
+def test_trial_instruction_hash_is_copied_from_instruction_file(tmp_path: Path) -> None:
+    folder = tmp_path / "clean"
+    shutil.copytree(FIXTURES / "clean", folder)
+    trial_dir = folder / "harbor-job" / "a-alpha-trial"
+    logs_dir = trial_dir / "agent"
+    logs_dir.mkdir(exist_ok=True)
+    digest = "c" * 64
+    (logs_dir / "instruction.json").write_text(
+        json.dumps({"original_sha256": "a" * 64, "sent_sha256": digest}), encoding="utf-8"
+    )
+
+    row = next(row for row in build_trial_rows(folder) if row.trial == "a-alpha-trial")
+
+    assert row.instruction_sha256 == digest
 
 
 def test_trial_rows_include_memory_peak_and_task_limit(tmp_path: Path) -> None:

@@ -27,7 +27,9 @@ class RunMetadata:
     tool_revision: str | None = None
 
     def to_row(self) -> dict:
-        return {item.name: getattr(self, item.name) for item in fields(self)}
+        row = {item.name: getattr(self, item.name) for item in fields(self)}
+        row["arms"] = [{"instruction_variants_sha256": None, **arm} for arm in row["arms"]]
+        return row
 
     def to_json(self) -> str:
         return json.dumps(self.to_row(), sort_keys=True, separators=(",", ":"))
@@ -42,7 +44,11 @@ class RunMetadata:
         row = {
             **row,
             "arms": [
-                {"prompting": "direct", **arm} if "prompting" not in arm else arm
+                {
+                    "prompting": "direct",
+                    "instruction_variants_sha256": None,
+                    **arm,
+                }
                 for arm in row["arms"]
             ],
         }
