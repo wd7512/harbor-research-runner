@@ -48,7 +48,7 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
     memory_result = read_rows(memory_path)
     memory_rows = memory_result.rows
     memory_bad_spans = bad_line_time_spans(memory_result, finished=telemetry_finished(events))
-    memory_stats = memory_watch_stats(memory_rows)
+    memory_stats = memory_watch_stats(memory_rows, declared=True)
     machine_check = json.loads((run_dir / "machine-check.json").read_text(encoding="utf-8"))
     task_memory = {row["name"]: row.get("memory_mb") for row in machine_check["tasks"]}
     sample_locations = {"set-aside-trials": "harbor-job"}
@@ -96,6 +96,12 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                     start <= trial_end and end >= agent_start for start, end in memory_bad_spans
                 )
             )
+            memory_peak, sampled_limit = memory_stats.get(
+                (sample_location, facts.trial), (None, None)
+            )
+            declared_limit = (
+                sampled_limit if sample_location == "canary-job" else task_memory.get(facts.task)
+            )
             row = TrialRow(
                 trial=facts.trial,
                 task=facts.task,
@@ -127,16 +133,8 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 measured=verdict["measured"],
                 unmeasured_reason=verdict["unmeasured_reason"],
                 oom_source=verdict.get("oom_source"),
-                peak_memory_mb=(
-                    None
-                    if memory_damaged
-                    else memory_stats.get((sample_location, facts.trial), (None, None))[0]
-                ),
-                memory_limit_mb=(
-                    memory_stats.get((sample_location, facts.trial), (None, None))[1]
-                    if sample_location == "canary-job"
-                    else task_memory.get(facts.task)
-                ),
+                peak_memory_mb=None if memory_damaged else memory_peak,
+                memory_limit_mb=declared_limit,
                 requests=len(ends),
                 error_requests=sum(row["upstream_status"] in COUNTS_AGAINST_TRIAL for row in ends),
                 refused_requests=sum(row.get("type") == "refused" for row in trial_ledger),

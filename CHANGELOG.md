@@ -4,6 +4,18 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 
 <!-- towncrier release notes start -->
 
+## 0.1.5 (2026-11-24)
+
+### Added
+
+- Add configurable per-task memory warning and hard-cap multipliers, with warning telemetry, scaled admission and kernel enforcement, and evidence recording. Defaults preserve the existing 1× cap. ([#249](https://github.com/wd7512/harbor-research-runner/issues/249))
+- Model cards for the free OpenCode Go models `opencodego/hungerg-free` and `opencodego/hy4-flash-free`.
+
+### Internal
+
+- Set the package version to 0.1.5.
+
+
 ## 0.1.4 (2026-11-24)
 
 ### Added
