@@ -30,6 +30,7 @@ class TrialDetails:
     harbor_exception: str | None
     agent_exit_nonzero: bool
     harness_commit: str | None
+    instruction_sha256: str | None
 
 
 def read_trial(trial_dir: Path, *, arm: str | None = None) -> TrialFacts:
@@ -82,6 +83,15 @@ def read_trial_details(trial_dir: Path) -> TrialDetails:
     finished = _timestamp(execution.get("finished_at"))
     agent_wall_s = finished - started if started is not None and finished is not None else None
     exception = _exception_type(result) if result is not None else None
+    instruction_path = trial_dir / "agent" / "instruction.json"
+    instruction_sha256 = None
+    if instruction_path.is_file():
+        try:
+            instruction = json.loads(instruction_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise HarborFolderError(f"{trial_dir.name}: unreadable instruction.json") from exc
+        sent_sha256 = instruction.get("sent_sha256") if isinstance(instruction, dict) else None
+        instruction_sha256 = sent_sha256 if isinstance(sent_sha256, str) else None
     agent_exit_nonzero = (
         exception is not None
         and exception != "AgentTimeoutError"
@@ -94,6 +104,7 @@ def read_trial_details(trial_dir: Path) -> TrialDetails:
         harbor_exception=exception,
         agent_exit_nonzero=agent_exit_nonzero,
         harness_commit=commit,
+        instruction_sha256=instruction_sha256,
     )
 
 
