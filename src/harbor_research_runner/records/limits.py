@@ -39,7 +39,7 @@ class Limits:
     memory_kill_multiplier: float = DEFAULT_MEMORY_MULTIPLIER
 
     def __post_init__(self) -> None:
-        validate_memory_multipliers(self.memory_warn_multiplier, self.memory_kill_multiplier)
+        _validate_memory_multipliers(self.memory_warn_multiplier, self.memory_kill_multiplier)
 
     @classmethod
     def from_dict(
@@ -87,7 +87,7 @@ def host_breach(sample: dict, limits: Limits) -> bool:
     )
 
 
-def validate_memory_multipliers(warn: float, kill: float) -> None:
+def _validate_memory_multipliers(warn: float, kill: float) -> None:
     for name, value in (("memory_warn_multiplier", warn), ("memory_kill_multiplier", kill)):
         if (
             isinstance(value, bool)

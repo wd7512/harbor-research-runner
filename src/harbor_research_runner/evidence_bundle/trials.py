@@ -11,7 +11,6 @@ from harbor_research_runner.harbor_adapter.job_folder import (
     trial_folders,
 )
 from harbor_research_runner.records.jsonl import bad_line_time_spans, read_rows
-from harbor_research_runner.records.limits import DEFAULT_MEMORY_MULTIPLIER, effective_memory_mb
 from harbor_research_runner.records.memory_watch import memory_watch_stats
 from harbor_research_runner.records.proxy_ledger import (
     COUNTS_AGAINST_TRIAL,
@@ -49,17 +48,9 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
     memory_result = read_rows(memory_path)
     memory_rows = memory_result.rows
     memory_bad_spans = bad_line_time_spans(memory_result, finished=telemetry_finished(events))
-    memory_stats = memory_watch_stats(memory_rows)
-    declared_memory = {
-        row["trial"]: row.get("declared_limit_mb")
-        for row in memory_rows
-        if isinstance(row.get("trial"), str) and "declared_limit_mb" in row
-    }
+    memory_stats = memory_watch_stats(memory_rows, declared=True)
     machine_check = json.loads((run_dir / "machine-check.json").read_text(encoding="utf-8"))
     task_memory = {row["name"]: row.get("memory_mb") for row in machine_check["tasks"]}
-    limits = metadata.get("limits", {})
-    memory_warn_multiplier = limits.get("memory_warn_multiplier", DEFAULT_MEMORY_MULTIPLIER)
-    memory_kill_multiplier = limits.get("memory_kill_multiplier", DEFAULT_MEMORY_MULTIPLIER)
     sample_locations = {"set-aside-trials": "harbor-job"}
     candidates: list[tuple[TrialRow, float]] = []
     missing_verdicts: set[str] = set()
@@ -109,12 +100,7 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 (sample_location, facts.trial), (None, None)
             )
             declared_limit = (
-                declared_memory.get(
-                    facts.trial,
-                    sampled_limit if memory_kill_multiplier == DEFAULT_MEMORY_MULTIPLIER else None,
-                )
-                if sample_location == "canary-job"
-                else task_memory.get(facts.task)
+                sampled_limit if sample_location == "canary-job" else task_memory.get(facts.task)
             )
             row = TrialRow(
                 trial=facts.trial,
@@ -149,8 +135,6 @@ def build_trial_rows(run_dir: Path) -> list[TrialRow]:
                 oom_source=verdict.get("oom_source"),
                 peak_memory_mb=None if memory_damaged else memory_peak,
                 memory_limit_mb=declared_limit,
-                memory_warn_limit_mb=effective_memory_mb(declared_limit, memory_warn_multiplier),
-                memory_kill_limit_mb=effective_memory_mb(declared_limit, memory_kill_multiplier),
                 requests=len(ends),
                 error_requests=sum(row["upstream_status"] in COUNTS_AGAINST_TRIAL for row in ends),
                 refused_requests=sum(row.get("type") == "refused" for row in trial_ledger),

@@ -12,7 +12,7 @@ A study flows top to bottom through six steps. Six helper modules are shared.
 |---|---|---|---|
 | helper | `records` | The format of every file we write, the proxy control messages, the limits record | nothing |
 | helper | `local_http` | Loopback HTTP server base: backlog, no reverse DNS lookup on bind | nothing |
-| helper | `job_config` | The job file and model cards | `records.limits` from `job_config/job_file.py` only |
+| helper | `job_config` | The job file and model cards | nothing |
 | helper | `trial_validity` | The verdict for one trial; the halt rules for a run | `records` |
 | helper | `statistics` | Pass rates, intervals, paired comparison, completeness table | `records` |
 | helper | `harbor_adapter` | Harbor command lines, reading Harbor's job folder, the set-aside move, the Harbor plugin | `records`, `job_config`, `trial_validity`, `docker_host` |
@@ -28,7 +28,7 @@ Rules, enforced by `tests/unit/test_import_rule.py`:
 
 1. A step never imports another step. The one exception is `run` importing `harness`.
 2. A helper never imports a step.
-3. `records` imports nothing of ours. `job_config/job_file.py` may import `records.limits` for shared memory-policy validation and defaults.
+3. `records` and `job_config` import nothing of ours.
 4. Harbor's Python package is imported in exactly four files: `harness/agents.py`, `harness/fake.py`, `harbor_adapter/plugin.py` and `harbor_adapter/task_files.py`.
 5. `run` starts `model_proxy` as a child process (`sys.executable -m harbor_research_runner.model_proxy --config FILE`). It never imports it. Python children use `sys.executable`; Harbor commands use `Path(sys.executable).parent / "harbor"` and refuse to start if that executable is missing.
 
@@ -214,7 +214,7 @@ One record, declared in the job file under `limits`, copied into `run-metadata.j
 
 Upstream: `tolerated_errors` [1], `tolerated_error_fraction` [0.02], `trial_output_rate_min` [2.0 tokens/s], `first_chunk_max_s` [180], `inter_chunk_gap_max_s` [180], `request_latency_max_s` [1200], `halt_after_consecutive_invalid` [5], `halt_after_consecutive_failed_requests` [10].
 
-Host: `memory_reserve_mb` [4096], `host_reserve_mb` [12288], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0], `memory_warn_multiplier` [1.0], `memory_kill_multiplier` [1.0]. The multipliers are finite positive non-boolean numbers and warn must not exceed kill. For declared task cap `M`, each effective cap is `ceil(M * multiplier)` MiB. Admission reserves the effective hard cap; preflight checks the maximum effective hard cap plus `memory_reserve_mb` against Docker memory. On kernel-capable hosts, non-default hard caps use Harbor 0.23.0's environment factory extension `harbor_research_runner.harbor_adapter.plugin:RunDockerEnvironment`, passed in generated job config under `environment.import_path` and `environment.kwargs.memory_multiplier`. The subclass copies the task environment model and passes scaled `override_memory_mb` to `DockerEnvironment`; task files and persisted trial configs stay unchanged. This stable job-level setting is also used by canary and machine-check jobs where applicable and stays identical across resume. The reservation is released at Harbor's trial `END` event. `mem_available_mb` remains telemetry and does not trigger `host_breach`; swap-outs, disk space and Docker health do. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` and `min_spare_memory_mb` fields. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
+Host: `memory_reserve_mb` [4096], `host_reserve_mb` [12288], `max_swapped_out_pages` [0], `min_free_disk_gb` [20], `host_breach_halt_s` [120], `launch_min_interval_s` [0], `memory_warn_multiplier` [1.0], `memory_kill_multiplier` [1.0]. The multipliers are finite positive non-boolean numbers and warn must not exceed kill. For declared task cap `M`, each effective cap is `ceil(M * multiplier)` MiB. Admission reserves the effective hard cap; preflight checks the maximum effective hard cap plus `memory_reserve_mb` against Docker memory. On kernel-capable hosts, all new jobs use Harbor 0.23.0's environment factory extension `harbor_research_runner.harbor_adapter.plugin:RunDockerEnvironment`, passed in generated job config under `environment.import_path` and `environment.kwargs.memory_multiplier`. Harbor accepts a fixed `override_memory_mb` and assigns it to the environment model it receives. The adapter computes the per-task value and passes a shallow copy so later environments for the same task can still start from the original declaration. This stable job-level setting is also used by canary and machine-check jobs where applicable and stays identical across resume. The reservation is released at Harbor's trial `END` event. `mem_available_mb` remains telemetry and does not trigger `host_breach`; swap-outs, disk space and Docker health do. A resource row without `swapped_out_pages` means zero swap-outs; old limits rows may contain the ignored `max_swap_used_mb` and `min_spare_memory_mb` fields. Launch checks sample with no previous counter, so stale swap never blocks launch; activity during the run is caught by the sampler for the host halt and per-trial set-aside.
 
 Run: `max_set_asides_per_slot` [2 x repetitions; `deferred` and `run_halted` set-asides do not count toward the cap], `verifier_timeout_multiplier` [from the machine check], `inactivity_margin_s` [600].
 
@@ -227,7 +227,7 @@ Identity: `trial`, `task`, `arm`, `harness`, `commit`, `prompting` (`direct`, `p
 Instruction: `instruction_sha256` (SHA-256 of the instruction sent to the harness, or null when the trial has no `instruction.json`).
 
 Outcome: `reward` (number or null), `is_pass` (`reward == 1.0`), `harbor_exception` (Harbor's label, verbatim, or null), `agent_exit_nonzero` (bool).
-Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null; also null when a malformed memory-watch line overlaps the trial window), `memory_limit_mb` (the task's declared limit, or null), `memory_warn_limit_mb`, `memory_kill_limit_mb` (effective caps rounded up to whole MiB, or null without a declared cap), and `oom_source` (`kernel`, `watchdog`, or null). Multipliers are stored only in the run metadata. Older evidence rows without threshold fields remain readable and use the historical 1× threshold.
+Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null; also null when a malformed memory-watch line overlaps the trial window), `memory_limit_mb` (the task's declared limit, or null), and `oom_source` (`kernel`, `watchdog`, or null). Derive effective caps from `memory_limit_mb` and the multipliers in run metadata. Older runs without multipliers use 1×.
 
 Phases: `environment_setup_started_t`, `environment_setup_finished_t`, `agent_setup_started_t`, `agent_setup_finished_t`, `agent_started_t`, `agent_finished_t`, `verifier_started_t`, `verifier_finished_t`.
 

@@ -10,11 +10,6 @@ from typing import Literal
 
 import yaml
 
-from harbor_research_runner.records.limits import (
-    DEFAULT_MEMORY_MULTIPLIER,
-    validate_memory_multipliers,
-)
-
 
 @dataclass(frozen=True)
 class Arm:
@@ -300,13 +295,6 @@ def load_job(path: Path) -> Job:
             "limits.min_spare_memory_mb is retired; admission uses memory reservation"
         )
     _keys(limits, _LIMITS, "limits")
-    try:
-        validate_memory_multipliers(
-            limits.get("memory_warn_multiplier", DEFAULT_MEMORY_MULTIPLIER),
-            limits.get("memory_kill_multiplier", DEFAULT_MEMORY_MULTIPLIER),
-        )
-    except ValueError as exc:
-        raise JobFileError(f"limits.{exc}") from exc
     return Job(
         path=path.resolve(),
         name=name,

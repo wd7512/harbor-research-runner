@@ -1,5 +1,9 @@
 def memory_watch_stats(
-    rows: list[dict], *, start: float | None = None, end: float | None = None
+    rows: list[dict],
+    *,
+    start: float | None = None,
+    end: float | None = None,
+    declared: bool = False,
 ) -> dict[tuple[str, str], tuple[int | float | None, int | None]]:
     peaks = {}
     limits = {}
@@ -18,6 +22,8 @@ def memory_watch_stats(
                 continue
         key = (location, trial)
         limit_mb = row.get("limit_mb")
+        if declared:
+            limit_mb = row.get("declared_limit_mb", limit_mb)
         if isinstance(limit_mb, int) or limit_mb is None:
             limits[key] = limit_mb
         if row.get("type") != "sample":

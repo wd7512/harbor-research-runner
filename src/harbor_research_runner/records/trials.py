@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 
 CAP_EXEMPT_REASONS = frozenset({"deferred", "run_halted"})
 
@@ -54,12 +54,6 @@ class TrialRow:
     prompting: str = "direct"
     instruction_sha256: str | None = None
     type: str = "trial"
-    memory_warn_limit_mb: int | None = field(
-        default=None, metadata={"legacy_source": "memory_limit_mb"}
-    )
-    memory_kill_limit_mb: int | None = field(
-        default=None, metadata={"legacy_source": "memory_limit_mb"}
-    )
 
     def to_row(self) -> dict:
         return {item.name: getattr(self, item.name) for item in fields(self)}
@@ -71,16 +65,6 @@ class TrialRow:
     def from_row(cls, row: dict) -> "TrialRow":
         if "instruction_sha256" not in row:
             row = {**row, "instruction_sha256": None}
-        threshold_fields = {
-            item.name: item.metadata["legacy_source"]
-            for item in fields(cls)
-            if "legacy_source" in item.metadata
-        }
-        if threshold_fields.keys().isdisjoint(row):
-            row = {
-                **row,
-                **{name: row.get(source) for name, source in threshold_fields.items()},
-            }
         if set(row) != {item.name for item in fields(cls)}:
             raise ValueError("trial fields do not match")
         return cls(**row)

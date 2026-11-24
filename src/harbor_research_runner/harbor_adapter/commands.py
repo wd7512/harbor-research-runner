@@ -61,12 +61,12 @@ def apply_host_policy(
         environment = config.setdefault("environment", {})
         environment["memory_enforcement_policy"] = "ignore"
         environment["cpu_enforcement_policy"] = "ignore"
-    elif memory_cap != "kernel":
-        raise ValueError(f"unsupported memory cap {memory_cap!r}")
-    if memory_cap == "kernel" and memory_kill_multiplier != DEFAULT_MEMORY_MULTIPLIER:
+    elif memory_cap == "kernel":
         environment = config.setdefault("environment", {})
         environment["import_path"] = MEMORY_ENVIRONMENT
         environment.setdefault("kwargs", {})["memory_multiplier"] = memory_kill_multiplier
+    else:
+        raise ValueError(f"unsupported memory cap {memory_cap!r}")
     if images == "build":
         config.setdefault("environment", {})["force_build"] = True
     elif images != "prebuilt":

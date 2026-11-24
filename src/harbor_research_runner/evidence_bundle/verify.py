@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from harbor_research_runner.records.jsonl import ReadResult, bad_line_time_spans, read_rows
-from harbor_research_runner.records.limits import DEFAULT_MEMORY_MULTIPLIER, effective_memory_mb
 from harbor_research_runner.records.manifest import verify_manifest
 from harbor_research_runner.records.run_events import final_verdicts, telemetry_finished
 from harbor_research_runner.records.trials import CAP_EXEMPT_REASONS
@@ -435,31 +434,6 @@ def verify(bundle_dir: Path) -> list[Problem]:
         samples.setdefault(sample["trial"], []).append(sample["used_mb"])
     memory_bad_spans = bad_line_time_spans(memory_rows_result, finished=finished)
     for row in trials:
-        if "memory_warn_limit_mb" in row or "memory_kill_limit_mb" in row:
-            recorded_limits = metadata.get("limits", {})
-            warn_multiplier = recorded_limits.get(
-                "memory_warn_multiplier", DEFAULT_MEMORY_MULTIPLIER
-            )
-            kill_multiplier = recorded_limits.get(
-                "memory_kill_multiplier", DEFAULT_MEMORY_MULTIPLIER
-            )
-            expected_thresholds = {
-                "memory_warn_limit_mb": effective_memory_mb(
-                    row.get("memory_limit_mb"), warn_multiplier
-                ),
-                "memory_kill_limit_mb": effective_memory_mb(
-                    row.get("memory_limit_mb"), kill_multiplier
-                ),
-            }
-            actual_thresholds = {key: row.get(key) for key in expected_thresholds}
-            if actual_thresholds != expected_thresholds:
-                _problem(
-                    problems,
-                    "memory_thresholds",
-                    row["trial"],
-                    expected_thresholds,
-                    actual_thresholds,
-                )
         values = samples.get(row["trial"], [])
         damaged = _trial_window_overlaps(row, memory_bad_spans)
         if values or damaged:

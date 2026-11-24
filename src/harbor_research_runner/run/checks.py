@@ -131,10 +131,7 @@ def single_run_check(runs_dir: Path, deps: CheckDeps) -> tuple[bool, str]:
     return True, "this process holds the host lock"
 
 
-def host_resources_check(
-    job: Job, deps: CheckDeps, multiplier: float, disk_path: Path
-) -> tuple[bool, str]:
-    limits = Limits.from_dict(job.limit_overrides, job.repetitions, multiplier)
+def host_resources_check(limits: Limits, deps: CheckDeps, disk_path: Path) -> tuple[bool, str]:
     disk_path.mkdir(parents=True, exist_ok=True)
     sample, _ = deps.measure(disk_path=disk_path)
     if host_breach(sample.to_row(), limits):
@@ -159,12 +156,14 @@ def run_folder_not_live_check(run_dir: Path | None, deps: CheckDeps) -> tuple[bo
     return True, f"no process names run folder {run_dir}"
 
 
-def machine_check_launch_checks(job: Job, runs_dir: Path, deps: CheckDeps) -> list[CheckResult]:
+def machine_check_launch_checks(
+    job: Job, runs_dir: Path, deps: CheckDeps, limits: Limits
+) -> list[CheckResult]:
     return [
         _evaluate("children_resolve", deps.children_resolve),
         _evaluate("docker_clean", lambda: docker_clean_check(deps)),
         _evaluate("single_run", lambda: single_run_check(runs_dir, deps)),
-        _evaluate("host_resources", lambda: host_resources_check(job, deps, 1.0, runs_dir)),
+        _evaluate("host_resources", lambda: host_resources_check(limits, deps, runs_dir)),
         _evaluate(
             "host_network_concurrency",
             lambda: host_network_concurrency_check(job, deps),
@@ -406,9 +405,12 @@ def run_checks(
         _evaluate(
             "host_resources",
             lambda: host_resources_check(
-                job,
+                Limits.from_dict(
+                    job.limit_overrides,
+                    job.repetitions,
+                    machine_check.verifier_timeout_multiplier if machine_check else 1.0,
+                ),
                 deps,
-                machine_check.verifier_timeout_multiplier if machine_check else 1.0,
                 runs_dir,
             ),
         ),

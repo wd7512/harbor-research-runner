@@ -121,7 +121,8 @@ def task_memories(
 def run_machine_check(
     job: Job, out: Path, with_do_nothing: bool, runs_dir: Path, deps: MachineCheckDeps
 ) -> MachineCheck:
-    checks = machine_check_launch_checks(job, runs_dir, deps.checks)
+    limits = Limits.from_dict(job.limit_overrides, job.repetitions, verifier_timeout_multiplier=1.0)
+    checks = machine_check_launch_checks(job, runs_dir, deps.checks, limits)
     failed = [f"{check.name}: {check.detail}" for check in checks if not check.ok]
     if failed:
         raise RuntimeError("machine check refused: " + "; ".join(failed))
@@ -131,7 +132,7 @@ def run_machine_check(
     workspace = Path(tempfile.mkdtemp(prefix=f"machine-check-{job.name}-", dir=runs_dir))
     try:
         check = _run_machine_check_in_directory(
-            job, out, with_do_nothing, workspace, deps, created_t
+            job, out, with_do_nothing, workspace, deps, created_t, limits
         )
     except BaseException:
         logger.error("machine check failed; its Harbor workspace is kept at %s", workspace)
@@ -152,12 +153,12 @@ def _run_machine_check_in_directory(
     check_dir: Path,
     deps: MachineCheckDeps,
     created_t: float,
+    limits: Limits,
 ) -> MachineCheck:
     task_names = list(job.tasks.include)
     oracle_name = "harbor-job"
     oracle_config_name = "oracle-job-config.yaml"
     profile = deps.checks.host_profile()
-    limits = Limits.from_dict(job.limit_overrides, job.repetitions, verifier_timeout_multiplier=1.0)
     oracle_config = oracle_job_config(job, task_names, "oracle", oracle_name)
     apply_host_policy(
         oracle_config,

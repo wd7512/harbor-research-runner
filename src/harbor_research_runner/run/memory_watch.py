@@ -73,9 +73,7 @@ def _trial_memory_data(
                 limit_mb = limits[facts.task]
             warning_mb = effective_memory_mb(limit_mb, policy.memory_warn_multiplier)
             kill_mb = effective_memory_mb(limit_mb, policy.memory_kill_multiplier)
-            trials[facts.trial] = TrialMemory(
-                location, limit_mb, warning_mb if warning_mb != kill_mb else None, kill_mb
-            )
+            trials[facts.trial] = TrialMemory(location, limit_mb, warning_mb, kill_mb)
     return trials
 
 
