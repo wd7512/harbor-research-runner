@@ -1,0 +1,34 @@
+{
+  "id": "opencodego/hy4-flash-free",
+  "upstream_model": "hy4-flash-free",
+  "api": "chat",
+  "endpoints": [
+    "https://opencode.ai/zen/go/v1/chat/completions"
+  ],
+  "key_env": [
+    "OPENCODE_GO_API_KEY"
+  ],
+  "tokens_per_minute": null,
+  "pricing": {
+    "input": 0,
+    "output": 0,
+    "cached_read": 0
+  },
+  "variants": {
+    "none": {
+      "reasoningEffort": "none"
+    },
+    "high": {
+      "reasoningEffort": "high"
+    }
+  },
+  "default_variant": null,
+  "withdrawn": false,
+  "reason": null,
+  "request": {
+    "session_header": "x-opencode-session",
+    "headers": {
+      "User-Agent": "OpenAI/Python 1.x"
+    }
+  }
+}
