@@ -12,7 +12,7 @@ A study flows top to bottom through six steps. Six helper modules are shared.
 |---|---|---|---|
 | helper | `records` | The format of every file we write, the proxy control messages, the limits record | nothing |
 | helper | `local_http` | Loopback HTTP server base: backlog, no reverse DNS lookup on bind | nothing |
-| helper | `job_config` | The job file and model cards | nothing |
+| helper | `job_config` | The job file and model cards | `records.limits` from `job_config/job_file.py` only |
 | helper | `trial_validity` | The verdict for one trial; the halt rules for a run | `records` |
 | helper | `statistics` | Pass rates, intervals, paired comparison, completeness table | `records` |
 | helper | `harbor_adapter` | Harbor command lines, reading Harbor's job folder, the set-aside move, the Harbor plugin | `records`, `job_config`, `trial_validity`, `docker_host` |
@@ -28,7 +28,7 @@ Rules, enforced by `tests/unit/test_import_rule.py`:
 
 1. A step never imports another step. The one exception is `run` importing `harness`.
 2. A helper never imports a step.
-3. `records` and `job_config` import nothing of ours.
+3. `records` imports nothing of ours. `job_config/job_file.py` may import `records.limits` for shared memory-policy validation and defaults.
 4. Harbor's Python package is imported in exactly four files: `harness/agents.py`, `harness/fake.py`, `harbor_adapter/plugin.py` and `harbor_adapter/task_files.py`.
 5. `run` starts `model_proxy` as a child process (`sys.executable -m harbor_research_runner.model_proxy --config FILE`). It never imports it. Python children use `sys.executable`; Harbor commands use `Path(sys.executable).parent / "harbor"` and refuse to start if that executable is missing.
 
@@ -227,7 +227,7 @@ Identity: `trial`, `task`, `arm`, `harness`, `commit`, `prompting` (`direct`, `p
 Instruction: `instruction_sha256` (SHA-256 of the instruction sent to the harness, or null when the trial has no `instruction.json`).
 
 Outcome: `reward` (number or null), `is_pass` (`reward == 1.0`), `harbor_exception` (Harbor's label, verbatim, or null), `agent_exit_nonzero` (bool).
-Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null; also null when a malformed memory-watch line overlaps the trial window), `memory_limit_mb` (the task's declared limit, or null), `memory_warn_limit_mb`, `memory_kill_limit_mb` (effective caps rounded up to whole MiB, or null without a declared cap), `memory_warn_multiplier`, `memory_kill_multiplier`, and `oom_source` (`kernel`, `watchdog`, or null). Older evidence rows without threshold fields remain readable and use the historical 1× threshold.
+Memory: `peak_memory_mb` (maximum sampled `used_mb`, or null; also null when a malformed memory-watch line overlaps the trial window), `memory_limit_mb` (the task's declared limit, or null), `memory_warn_limit_mb`, `memory_kill_limit_mb` (effective caps rounded up to whole MiB, or null without a declared cap), and `oom_source` (`kernel`, `watchdog`, or null). Multipliers are stored only in the run metadata. Older evidence rows without threshold fields remain readable and use the historical 1× threshold.
 
 Phases: `environment_setup_started_t`, `environment_setup_finished_t`, `agent_setup_started_t`, `agent_setup_finished_t`, `agent_started_t`, `agent_finished_t`, `verifier_started_t`, `verifier_finished_t`.
 

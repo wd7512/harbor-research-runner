@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from harbor_research_runner.job_config.job_file import Job
+from harbor_research_runner.records.limits import DEFAULT_MEMORY_MULTIPLIER
 
 NEUTRAL_RESUME_FILTER = "hrr-erases-nothing"
 PLUGIN = "harbor_research_runner.harbor_adapter.plugin:RunPlugin"
@@ -52,7 +53,8 @@ def apply_host_policy(
     profile: Mapping,
     images: str,
     overlay_path: Path,
-    memory_kill_multiplier: float = 1.0,
+    *,
+    memory_kill_multiplier: float = DEFAULT_MEMORY_MULTIPLIER,
 ) -> dict:
     memory_cap = profile["memory_cap"]
     if memory_cap == "none":
@@ -61,10 +63,10 @@ def apply_host_policy(
         environment["cpu_enforcement_policy"] = "ignore"
     elif memory_cap != "kernel":
         raise ValueError(f"unsupported memory cap {memory_cap!r}")
-    if memory_cap == "kernel" and memory_kill_multiplier != 1.0:
+    if memory_cap == "kernel" and memory_kill_multiplier != DEFAULT_MEMORY_MULTIPLIER:
         environment = config.setdefault("environment", {})
         environment["import_path"] = MEMORY_ENVIRONMENT
-        environment["kwargs"] = {"memory_multiplier": memory_kill_multiplier}
+        environment.setdefault("kwargs", {})["memory_multiplier"] = memory_kill_multiplier
     if images == "build":
         config.setdefault("environment", {})["force_build"] = True
     elif images != "prebuilt":

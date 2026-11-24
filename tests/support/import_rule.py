@@ -98,6 +98,11 @@ def _violations(path: str, source: str) -> list[str]:
     violations = []
 
     for imported_name in sorted(_imported_modules(tree, module_name)):
+        if (
+            normalized_path == "job_config/job_file.py"
+            and imported_name == f"{PACKAGE}.records.limits"
+        ):
+            continue
         package = _internal_package(imported_name)
         if package is not None and package not in allowed:
             violations.append(f"{normalized_path} imports forbidden package {package}")

@@ -1,10 +1,15 @@
 import pytest
 
-from harbor_research_runner.records.limits import Limits, host_breach
+from harbor_research_runner.records.limits import Limits, effective_memory_mb, host_breach
 
 
 def _limits(**overrides):
     return Limits.from_dict(overrides, repetitions=1, verifier_timeout_multiplier=1.5)
+
+
+@pytest.mark.parametrize(("declared", "multiplier", "effective"), [(100, 1.1, 110), (1, 1.1, 2)])
+def test_effective_memory_rounds_up_only_for_a_fractional_mib(declared, multiplier, effective):
+    assert effective_memory_mb(declared, multiplier) == effective
 
 
 def test_limits_defaults_include_repetition_derived_cap():

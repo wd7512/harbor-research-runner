@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from harbor_research_runner.docker_host import container_memory
@@ -25,31 +26,30 @@ logger = logging.getLogger(__name__)
 MAX_CONSECUTIVE_SAMPLE_FAILURES = 30
 
 
+@dataclass(frozen=True)
+class TrialMemory:
+    location: str
+    declared_mb: int | None
+    warning_mb: int | None
+    kill_mb: int | None
+
+
+def _read_limits(run_dir: Path) -> Limits:
+    try:
+        recorded = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        recorded = {}
+    if "limits" in recorded:
+        return Limits.from_row(recorded["limits"])
+    return Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.0)
+
+
 def _trial_memory_data(
-    run_dir: Path, trial_cache: dict[str, TrialFacts] | None = None
-) -> tuple[
-    dict[str, int | None],
-    dict[str, str],
-    dict[str, int | None],
-    dict[str, int | None],
-]:
+    run_dir: Path, policy: Limits, trial_cache: dict[str, TrialFacts] | None = None
+) -> dict[str, TrialMemory]:
     check = read_machine_check(run_dir / "machine-check.json")
-    metadata_path = run_dir / "run-metadata.json"
-    if metadata_path.exists():
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        recorded_limits = metadata.get("limits", {})
-        limits_config = (
-            Limits.from_row(recorded_limits)
-            if recorded_limits
-            else Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.0)
-        )
-    else:
-        limits_config = Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.0)
     limits = {row["name"]: row.get("memory_mb") for row in check.tasks}
-    trial_limits = {}
-    declared_limits = {}
-    warning_limits = {}
-    trial_locations = {}
+    trials = {}
     trial_cache = {} if trial_cache is None else trial_cache
     for location in ("harbor-job", "canary-job"):
         location_dir = run_dir / location
@@ -71,19 +71,19 @@ def _trial_memory_data(
                 if facts.task not in limits:
                     raise ValueError(f"machine check has no memory limit for task {facts.task!r}")
                 limit_mb = limits[facts.task]
-            declared_limits[facts.trial] = limit_mb
-            warning_limits[facts.trial] = effective_memory_mb(
-                limit_mb, limits_config.memory_warn_multiplier
+            warning_mb = effective_memory_mb(limit_mb, policy.memory_warn_multiplier)
+            kill_mb = effective_memory_mb(limit_mb, policy.memory_kill_multiplier)
+            trials[facts.trial] = TrialMemory(
+                location, limit_mb, warning_mb if warning_mb != kill_mb else None, kill_mb
             )
-            trial_limits[facts.trial] = effective_memory_mb(
-                limit_mb, limits_config.memory_kill_multiplier
-            )
-            trial_locations[facts.trial] = location
-    return trial_limits, trial_locations, warning_limits, declared_limits
+    return trials
 
 
 def trial_memory_limits(run_dir: Path) -> dict[str, int | None]:
-    return _trial_memory_data(run_dir)[0]
+    return {
+        trial: memory.kill_mb
+        for trial, memory in _trial_memory_data(run_dir, _read_limits(run_dir)).items()
+    }
 
 
 def kill_decision(container: str, used_mb: float, limit_mb: int | None, killed: set[str]) -> bool:
@@ -103,12 +103,13 @@ def sample_once(
     killed: set[str] | None = None,
     warned: set[str] | None = None,
     trial_cache: dict[str, TrialFacts] | None = None,
+    policy: Limits | None = None,
     read_text=Path.read_text,
     list_dir: Callable[[Path], list[Path]] = lambda path: list(path.iterdir()),
     readlink: Callable[[Path], str] = os.readlink,
 ) -> None:
-    limits, locations, warning_limits, declared_limits = _trial_memory_data(run_dir, trial_cache)
-    trial_by_project = {compose_project(trial): trial for trial in limits}
+    trials = _trial_memory_data(run_dir, policy or _read_limits(run_dir), trial_cache)
+    trial_by_project = {compose_project(trial): trial for trial in trials}
     containers = container_memory.running_containers(run)
     reader = container_memory.reader_for_memory_cap(memory_cap)
     stats = (
@@ -139,27 +140,27 @@ def sample_once(
             continue
         if used_mb is None:
             continue
-        limit_mb = limits[trial]
+        memory = trials[trial]
         row = {
             "type": "sample",
             "t": now(),
             "trial": trial,
-            "location": locations[trial],
+            "location": memory.location,
             "container": container_id,
             "used_mb": used_mb,
-            "limit_mb": limit_mb,
-            "declared_limit_mb": declared_limits[trial],
+            "limit_mb": memory.kill_mb,
+            "declared_limit_mb": memory.declared_mb,
             "reader": used_reader,
         }
-        should_kill = kill_decision(container_id, used_mb, limit_mb, killed)
         append_row(out_fd, row)
-        warning_mb = warning_limits[trial]
+        if container_id in killed:
+            continue
+        should_kill = kill_decision(container_id, used_mb, memory.kill_mb, killed)
+        warning_mb = memory.warning_mb
         if (
             warning_mb is not None
-            and limit_mb is not None
-            and warning_mb < limit_mb
             and used_mb > warning_mb
-            and used_mb <= limit_mb
+            and not should_kill
             and container_id not in warned
         ):
             warned.add(container_id)
@@ -194,6 +195,7 @@ def run_memory_watch(
     stopped = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopped.set())
     start_lifeline_watch(lifeline_fd, stopped)
+    policy = _read_limits(run_dir)
     out_fd = open_for_append(run_dir / "memory-watch.jsonl")
     killed: set[str] = set()
     warned: set[str] = set()
@@ -211,6 +213,7 @@ def run_memory_watch(
                     killed=killed,
                     warned=warned,
                     trial_cache=trial_cache,
+                    policy=policy,
                 )
             except (subprocess.CalledProcessError, OSError) as exc:
                 consecutive_failures += 1

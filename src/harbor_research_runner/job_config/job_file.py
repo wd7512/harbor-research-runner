@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -10,6 +9,11 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+
+from harbor_research_runner.records.limits import (
+    DEFAULT_MEMORY_MULTIPLIER,
+    validate_memory_multipliers,
+)
 
 
 @dataclass(frozen=True)
@@ -296,20 +300,13 @@ def load_job(path: Path) -> Job:
             "limits.min_spare_memory_mb is retired; admission uses memory reservation"
         )
     _keys(limits, _LIMITS, "limits")
-    memory_warn = limits.get("memory_warn_multiplier", 1.0)
-    memory_kill = limits.get("memory_kill_multiplier", 1.0)
-    for name, value in (
-        ("memory_warn_multiplier", memory_warn),
-        ("memory_kill_multiplier", memory_kill),
-    ):
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-            raise JobFileError(f"limits.{name} must be a finite positive number")
-        if not math.isfinite(value):
-            raise JobFileError(f"limits.{name} must be finite")
-    if memory_warn > memory_kill:
-        raise JobFileError(
-            "limits.memory_warn_multiplier must be less than or equal to memory_kill_multiplier"
+    try:
+        validate_memory_multipliers(
+            limits.get("memory_warn_multiplier", DEFAULT_MEMORY_MULTIPLIER),
+            limits.get("memory_kill_multiplier", DEFAULT_MEMORY_MULTIPLIER),
         )
+    except ValueError as exc:
+        raise JobFileError(f"limits.{exc}") from exc
     return Job(
         path=path.resolve(),
         name=name,

@@ -1,16 +1,18 @@
 import json
 import math
 from dataclasses import dataclass, field, fields
-from typing import Any, cast
+from decimal import Decimal
+from typing import Any, cast, overload
 
+DEFAULT_MEMORY_MULTIPLIER = 1.0
 _RETIRED_FIELDS = {"max_swap_used_mb", "zero_billed_window_s", "min_spare_memory_mb"}
 _ADDED_FIELDS = {
     "max_swapped_out_pages": 0,
     "memory_reserve_mb": 4096,
     "halt_after_consecutive_failed_requests": 10,
     "host_reserve_mb": 12288,
-    "memory_warn_multiplier": 1.0,
-    "memory_kill_multiplier": 1.0,
+    "memory_warn_multiplier": DEFAULT_MEMORY_MULTIPLIER,
+    "memory_kill_multiplier": DEFAULT_MEMORY_MULTIPLIER,
 }
 
 
@@ -33,22 +35,11 @@ class Limits:
     max_set_asides_per_slot: int = field(kw_only=True)
     verifier_timeout_multiplier: float = field(kw_only=True)
     inactivity_margin_s: float = 600
-    memory_warn_multiplier: float = 1.0
-    memory_kill_multiplier: float = 1.0
+    memory_warn_multiplier: float = DEFAULT_MEMORY_MULTIPLIER
+    memory_kill_multiplier: float = DEFAULT_MEMORY_MULTIPLIER
 
     def __post_init__(self) -> None:
-        for name in ("memory_warn_multiplier", "memory_kill_multiplier"):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError(f"{name} must be a finite positive number")
-            if not math.isfinite(value):
-                raise ValueError(f"{name} must be finite")
-            if value <= 0:
-                raise ValueError(f"{name} must be positive")
-        if self.memory_warn_multiplier > self.memory_kill_multiplier:
-            raise ValueError(
-                "memory_warn_multiplier must be less than or equal to memory_kill_multiplier"
-            )
+        validate_memory_multipliers(self.memory_warn_multiplier, self.memory_kill_multiplier)
 
     @classmethod
     def from_dict(
@@ -73,11 +64,13 @@ class Limits:
     @classmethod
     def from_row(cls, row: dict) -> "Limits":
         names = {item.name for item in fields(cls)}
-        row = {key: value for key, value in row.items() if key not in _RETIRED_FIELDS}
-        row = {**_ADDED_FIELDS, **row}
-        if set(row) != names:
+        values: dict[str, Any] = {
+            **_ADDED_FIELDS,
+            **{key: value for key, value in row.items() if key not in _RETIRED_FIELDS},
+        }
+        if set(values) != names:
             raise ValueError("limits fields do not match")
-        return cls(**cast(Any, row))
+        return cls(**values)
 
     def to_row(self) -> dict:
         return {item.name: getattr(self, item.name) for item in fields(self)}
@@ -94,7 +87,31 @@ def host_breach(sample: dict, limits: Limits) -> bool:
     )
 
 
+def validate_memory_multipliers(warn: float, kill: float) -> None:
+    for name, value in (("memory_warn_multiplier", warn), ("memory_kill_multiplier", kill)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or (isinstance(value, float) and not math.isfinite(value))
+            or value <= 0
+        ):
+            raise ValueError(f"{name} must be a finite positive number")
+    if warn > kill:
+        raise ValueError(
+            "memory_warn_multiplier must be less than or equal to memory_kill_multiplier"
+        )
+
+
+@overload
+def effective_memory_mb(memory_mb: int, multiplier: float) -> int: ...
+
+
+@overload
+def effective_memory_mb(memory_mb: None, multiplier: float) -> None: ...
+
+
 def effective_memory_mb(memory_mb: int | None, multiplier: float) -> int | None:
     if memory_mb is None:
         return None
-    return math.ceil(memory_mb * multiplier)
+    numerator, denominator = Decimal(str(multiplier)).as_integer_ratio()
+    return -(-memory_mb * numerator // denominator)

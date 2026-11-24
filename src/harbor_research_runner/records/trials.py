@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 
 CAP_EXEMPT_REASONS = frozenset({"deferred", "run_halted"})
 
@@ -54,10 +54,12 @@ class TrialRow:
     prompting: str = "direct"
     instruction_sha256: str | None = None
     type: str = "trial"
-    memory_warn_limit_mb: int | None = None
-    memory_kill_limit_mb: int | None = None
-    memory_warn_multiplier: float = 1.0
-    memory_kill_multiplier: float = 1.0
+    memory_warn_limit_mb: int | None = field(
+        default=None, metadata={"legacy_source": "memory_limit_mb"}
+    )
+    memory_kill_limit_mb: int | None = field(
+        default=None, metadata={"legacy_source": "memory_limit_mb"}
+    )
 
     def to_row(self) -> dict:
         return {item.name: getattr(self, item.name) for item in fields(self)}
@@ -70,18 +72,14 @@ class TrialRow:
         if "instruction_sha256" not in row:
             row = {**row, "instruction_sha256": None}
         threshold_fields = {
-            "memory_warn_limit_mb",
-            "memory_kill_limit_mb",
-            "memory_warn_multiplier",
-            "memory_kill_multiplier",
+            item.name: item.metadata["legacy_source"]
+            for item in fields(cls)
+            if "legacy_source" in item.metadata
         }
-        if threshold_fields.isdisjoint(row):
+        if threshold_fields.keys().isdisjoint(row):
             row = {
                 **row,
-                "memory_warn_limit_mb": row.get("memory_limit_mb"),
-                "memory_kill_limit_mb": row.get("memory_limit_mb"),
-                "memory_warn_multiplier": 1.0,
-                "memory_kill_multiplier": 1.0,
+                **{name: row.get(source) for name, source in threshold_fields.items()},
             }
         if set(row) != {item.name for item in fields(cls)}:
             raise ValueError("trial fields do not match")

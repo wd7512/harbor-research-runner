@@ -332,12 +332,8 @@ def run_checks(
             if value is None:
                 missing.append(name)
             else:
-                effective = effective_memory_mb(value, limits.memory_kill_multiplier)
-                assert effective is not None
-                memory_values.append(effective)
-        canary_memory = effective_memory_mb(canary_memory_mb(), limits.memory_kill_multiplier)
-        assert canary_memory is not None
-        memory_values.append(canary_memory)
+                memory_values.append(effective_memory_mb(value, limits.memory_kill_multiplier))
+        memory_values.append(effective_memory_mb(canary_memory_mb(), limits.memory_kill_multiplier))
         max_task_memory = max(memory_values) if not missing else None
         concurrency = job.concurrency
         reserve = limits.memory_reserve_mb

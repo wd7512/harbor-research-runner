@@ -451,7 +451,7 @@ def run_job(
             profile,
             job.tasks.images,
             session.run_dir / "compose-host-network.yaml",
-            session.limits.memory_kill_multiplier,
+            memory_kill_multiplier=session.limits.memory_kill_multiplier,
         )
         commands.write_job_config(session.run_dir / "canary-job-config.yaml", canary_config)
         canary_argv = commands.run_command(
@@ -481,7 +481,7 @@ def run_job(
             profile,
             job.tasks.images,
             session.run_dir / "compose-host-network.yaml",
-            session.limits.memory_kill_multiplier,
+            memory_kill_multiplier=session.limits.memory_kill_multiplier,
         )
         commands.write_job_config(session.run_dir / "harbor-job-config.yaml", main_config)
         result = _pass_loop(session, planned_slots(job, task_names), deps, 0)
