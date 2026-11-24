@@ -4,6 +4,17 @@ Entries are built from the fragments in `changes/` at release time (`uv run town
 
 <!-- towncrier release notes start -->
 
+## 0.1.4 (2026-11-24)
+
+### Added
+
+- OpenCode arms can replace task instructions with reviewed variants selected by the original instruction hash. Evidence records the variants file hash and the instruction hash sent to each trial.
+
+### Internal
+
+- Set the package version to 0.1.4.
+
+
 ## 0.1.3 (2026-11-23)
 
 ### Added
