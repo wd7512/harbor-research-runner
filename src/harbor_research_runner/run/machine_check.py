@@ -21,6 +21,7 @@ from harbor_research_runner.harbor_adapter.commands import (
 from harbor_research_runner.harbor_adapter.task_files import task_tomls
 from harbor_research_runner.harness.manifest import host_arch, local_image_arch
 from harbor_research_runner.job_config.job_file import Job
+from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.machine_check import MachineCheck, write
 from harbor_research_runner.run.checks import (
     CheckDeps,
@@ -120,7 +121,8 @@ def task_memories(
 def run_machine_check(
     job: Job, out: Path, with_do_nothing: bool, runs_dir: Path, deps: MachineCheckDeps
 ) -> MachineCheck:
-    checks = machine_check_launch_checks(job, runs_dir, deps.checks)
+    limits = Limits.from_dict(job.limit_overrides, job.repetitions, verifier_timeout_multiplier=1.0)
+    checks = machine_check_launch_checks(job, runs_dir, deps.checks, limits)
     failed = [f"{check.name}: {check.detail}" for check in checks if not check.ok]
     if failed:
         raise RuntimeError("machine check refused: " + "; ".join(failed))
@@ -130,7 +132,7 @@ def run_machine_check(
     workspace = Path(tempfile.mkdtemp(prefix=f"machine-check-{job.name}-", dir=runs_dir))
     try:
         check = _run_machine_check_in_directory(
-            job, out, with_do_nothing, workspace, deps, created_t
+            job, out, with_do_nothing, workspace, deps, created_t, limits
         )
     except BaseException:
         logger.error("machine check failed; its Harbor workspace is kept at %s", workspace)
@@ -151,6 +153,7 @@ def _run_machine_check_in_directory(
     check_dir: Path,
     deps: MachineCheckDeps,
     created_t: float,
+    limits: Limits,
 ) -> MachineCheck:
     task_names = list(job.tasks.include)
     oracle_name = "harbor-job"
@@ -162,6 +165,7 @@ def _run_machine_check_in_directory(
         profile,
         job.tasks.images,
         check_dir / "compose-host-network.yaml",
+        memory_kill_multiplier=limits.memory_kill_multiplier,
     )
     write_job_config(check_dir / oracle_config_name, oracle_config)
     command = machine_check_command(check_dir, oracle_name, oracle_config_name)
@@ -198,6 +202,7 @@ def _run_machine_check_in_directory(
             profile,
             job.tasks.images,
             check_dir / "compose-host-network.yaml",
+            memory_kill_multiplier=limits.memory_kill_multiplier,
         )
         write_job_config(check_dir / nop_config_name, config)
         command = machine_check_command(check_dir, nop_name, nop_config_name)

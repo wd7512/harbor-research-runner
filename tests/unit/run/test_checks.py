@@ -16,6 +16,7 @@ from harbor_research_runner.harness.manifest import ImageEntry
 from harbor_research_runner.job_config.job_file import Arm, Job, TaskSource
 from harbor_research_runner.job_config.model_cards import ModelCard
 from harbor_research_runner.model_proxy.adapters import select_adapter
+from harbor_research_runner.records.limits import Limits
 from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
 from harbor_research_runner.run.checks import (
@@ -32,6 +33,7 @@ from harbor_research_runner.run.checks import (
 _COMMIT = "a" * 40
 _DIGEST = "sha256:" + "b" * 64
 _TASK_SOURCE = {"dataset": "bench/tasks"}
+_LIMITS = Limits.from_dict({}, repetitions=1, verifier_timeout_multiplier=1.0)
 _HOST_PROFILE = {
     "arch": "arm64",
     "cpus": 8,
@@ -438,7 +440,7 @@ def test_host_network_concurrency_check_is_in_both_launch_check_lists(
 
     run_names = [result.name for result in _run(tmp_path, job=job, deps=deps)]
     machine_names = [
-        result.name for result in machine_check_launch_checks(job, tmp_path / "runs", deps)
+        result.name for result in machine_check_launch_checks(job, tmp_path / "runs", deps, _LIMITS)
     ]
 
     assert "host_network_concurrency" in run_names
@@ -545,7 +547,7 @@ def test_proxy_port_free_is_a_run_check_and_not_a_machine_check(tmp_path: Path) 
     deps = _deps(tmp_path)
     job = _job()
     run_results = _run(tmp_path, deps=deps)
-    machine_results = machine_check_launch_checks(job, tmp_path / "runs", deps)
+    machine_results = machine_check_launch_checks(job, tmp_path / "runs", deps, _LIMITS)
     deps.host_lock.release()
 
     assert "proxy_port_free" in {result.name for result in run_results}
@@ -942,7 +944,7 @@ def test_host_resources_check_creates_missing_parent_directories(tmp_path: Path)
     disk_path = tmp_path / "runs" / "nested"
     deps = _deps(tmp_path)
 
-    result = host_resources_check(_job(), deps, 1.0, disk_path)
+    result = host_resources_check(_LIMITS, deps, disk_path)
 
     assert result[0]
     assert disk_path.is_dir()
@@ -1319,7 +1321,7 @@ def test_resolve_tasks_empty_include_selects_all_machine_tasks_except_excluded()
 def test_machine_check_launch_checks_pass_and_leave_host_lock_held(tmp_path: Path) -> None:
     deps = _deps(tmp_path)
 
-    results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
+    results = machine_check_launch_checks(_job(), tmp_path / "runs", deps, _LIMITS)
 
     assert results == [
         CheckResult("children_resolve", True, "Python child and Harbor executable resolve"),
@@ -1343,7 +1345,7 @@ def test_machine_check_launch_checks_reports_each_failure(tmp_path: Path) -> Non
         measure=lambda **_kwargs: (_sample(swapped_out_pages=1), 0),
     )
 
-    results = machine_check_launch_checks(_job(), tmp_path / "runs", deps)
+    results = machine_check_launch_checks(_job(), tmp_path / "runs", deps, _LIMITS)
 
     assert [result.name for result in results] == [
         "children_resolve",
@@ -1371,7 +1373,7 @@ def test_machine_check_single_run_reports_the_lock_holder(tmp_path: Path) -> Non
             host_lock=HostLock(lock_path),
             live_run=lambda path: "run-holder" if path == runs_dir else None,
         )
-        results = machine_check_launch_checks(_job(), runs_dir, deps)
+        results = machine_check_launch_checks(_job(), runs_dir, deps, _LIMITS)
     finally:
         holder.release()
 

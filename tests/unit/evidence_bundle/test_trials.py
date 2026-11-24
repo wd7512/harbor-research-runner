@@ -2,6 +2,8 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from harbor_research_runner.evidence_bundle.trials import (
     build_trial_rows,
     unjudged_trial_names,
@@ -234,7 +236,10 @@ def test_memory_damage_in_trial_window_nulls_peak_memory(tmp_path: Path) -> None
     assert row.peak_memory_mb is None
 
 
-def test_canary_trial_evidence_uses_its_recorded_memory_limit(tmp_path: Path) -> None:
+@pytest.mark.parametrize("scaled", [False, True])
+def test_canary_trial_evidence_uses_its_recorded_declared_limit(
+    tmp_path: Path, scaled: bool
+) -> None:
     folder = tmp_path / "clean"
     shutil.copytree(FIXTURES / "clean", folder)
     canary = next(row for row in build_trial_rows(folder) if row.location == "canary-job")
@@ -247,7 +252,8 @@ def test_canary_trial_evidence_uses_its_recorded_memory_limit(tmp_path: Path) ->
                 "location": "canary-job",
                 "container": "container-a",
                 "used_mb": 16,
-                "limit_mb": canary_memory_mb(),
+                "limit_mb": canary_memory_mb() * (4 if scaled else 1),
+                **({"declared_limit_mb": canary_memory_mb()} if scaled else {}),
                 "reader": "docker_stats",
             }
         )
