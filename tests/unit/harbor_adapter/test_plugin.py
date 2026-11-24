@@ -5,9 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from harbor.environments.factory import EnvironmentFactory
+from harbor.models.task.config import EnvironmentConfig as TaskEnvironmentConfig
+from harbor.models.trial.config import EnvironmentConfig as TrialEnvironmentConfig
+from harbor.models.trial.paths import TrialPaths
 from harbor.trial.hooks import TrialEvent
 
 from harbor_research_runner.harbor_adapter.plugin import (
+    RunDockerEnvironment,
     RunPlugin,
     StopLaunchingGate,
 )
@@ -80,6 +85,27 @@ def test_run_plugin_registers_start_and_agent_hooks(tmp_path: Path) -> None:
         TrialEvent.AGENT_END,
         TrialEvent.END,
     ]
+
+
+def test_harbor_factory_applies_scaled_memory_without_mutating_task_environment(tmp_path):
+    task_environment = TaskEnvironmentConfig(memory_mb=128, docker_image="python:3.12-slim")
+    trial_environment = TrialEnvironmentConfig(
+        import_path="harbor_research_runner.harbor_adapter.plugin:RunDockerEnvironment",
+        kwargs={"memory_multiplier": 1.5},
+    )
+
+    environment = EnvironmentFactory.create_environment_from_config(
+        trial_environment,
+        environment_dir=tmp_path,
+        environment_name="trial",
+        session_id="trial-session",
+        trial_paths=TrialPaths(tmp_path / "trial"),
+        task_env_config=task_environment,
+    )
+
+    assert isinstance(environment, RunDockerEnvironment)
+    assert environment._effective_memory_mb == 192
+    assert task_environment.memory_mb == 128
 
 
 def test_run_plugin_slowest_first_sorts_by_agent_timeout_stably(tmp_path: Path) -> None:

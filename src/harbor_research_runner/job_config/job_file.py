@@ -78,6 +78,8 @@ _LIMITS = {
     "halt_after_consecutive_invalid",
     "halt_after_consecutive_failed_requests",
     "memory_reserve_mb",
+    "memory_warn_multiplier",
+    "memory_kill_multiplier",
     "max_swapped_out_pages",
     "min_free_disk_gb",
     "host_breach_halt_s",

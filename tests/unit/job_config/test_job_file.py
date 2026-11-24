@@ -46,6 +46,17 @@ def test_rejects_unknown_job_keys(tmp_path: Path, text: str) -> None:
         load_job(write_job(tmp_path, text))
 
 
+def test_job_file_preserves_memory_multiplier_overrides(tmp_path: Path) -> None:
+    text = valid_job().replace(
+        "limits: {}", "limits: {memory_warn_multiplier: 1.25, memory_kill_multiplier: 4}"
+    )
+
+    assert load_job(write_job(tmp_path, text)).limit_overrides == {
+        "memory_warn_multiplier": 1.25,
+        "memory_kill_multiplier": 4,
+    }
+
+
 def test_rejects_obsolete_swap_limit_with_replacement_name(tmp_path: Path) -> None:
     text = valid_job().replace("limits: {}", "limits: {max_swap_used_mb: 10}")
 

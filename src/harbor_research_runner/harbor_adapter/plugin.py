@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
+from harbor.environments.docker.docker import DockerEnvironment
 from harbor.job import Job
 from harbor.models.job.plugin import BaseJobPlugin
 from harbor.models.job.result import JobResult
@@ -19,7 +20,7 @@ from harbor.trial.hooks import TrialEvent, TrialHookEvent
 
 from harbor_research_runner.docker_host.cleanup import docker_memory_mb
 from harbor_research_runner.harbor_adapter.job_folder import HarborFolderError, task_timeouts
-from harbor_research_runner.records.limits import Limits
+from harbor_research_runner.records.limits import Limits, effective_memory_mb
 from harbor_research_runner.records.proxy_control import (
     CloseMessage,
     OpenMessage,
@@ -33,6 +34,15 @@ logger = logging.getLogger(__name__)
 _TASK_TOML = "task.toml"
 _INITIAL_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 60.0
+
+
+class RunDockerEnvironment(DockerEnvironment):
+    def __init__(self, *, task_env_config, memory_multiplier: float, **kwargs):
+        if task_env_config.memory_mb is not None:
+            kwargs["override_memory_mb"] = effective_memory_mb(
+                task_env_config.memory_mb, memory_multiplier
+            )
+        super().__init__(task_env_config=task_env_config.model_copy(), **kwargs)
 
 
 class MemoryReservationGate:
@@ -188,12 +198,12 @@ class RunPlugin(BaseJobPlugin):
         if task_order not in {"as_listed", "slowest_first"}:
             raise ValueError(f"task_order must be as_listed or slowest_first; got {task_order!r}")
         proxy_config = read_proxy_config(Path(limits_file))
-        limits = Limits.from_row(proxy_config.limits)
+        self._limits = Limits.from_row(proxy_config.limits)
         self.proxy_url = proxy_url.rstrip("/")
         self.task_order = task_order
         self._gate = MemoryReservationGate(
-            memory_reserve_mb=limits.memory_reserve_mb,
-            launch_min_interval_s=limits.launch_min_interval_s,
+            memory_reserve_mb=self._limits.memory_reserve_mb,
+            launch_min_interval_s=self._limits.launch_min_interval_s,
         )
         self._job: Job | None = None
         deadline = None
@@ -262,7 +272,9 @@ class RunPlugin(BaseJobPlugin):
     async def _on_trial_start(self, event: TrialHookEvent) -> None:
         memory_mb = self._task_memory_mb(event.config)
         await self._gate.wait_for_headroom(
-            trial=event.trial_name, task=event.task_name, memory_mb=memory_mb
+            trial=event.trial_name,
+            task=event.task_name,
+            memory_mb=effective_memory_mb(memory_mb, self._limits.memory_kill_multiplier),
         )
 
     async def _on_agent_start(self, event: TrialHookEvent) -> None:
