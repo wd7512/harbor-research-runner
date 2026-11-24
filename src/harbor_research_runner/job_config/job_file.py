@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -78,6 +79,8 @@ _LIMITS = {
     "halt_after_consecutive_invalid",
     "halt_after_consecutive_failed_requests",
     "memory_reserve_mb",
+    "memory_warn_multiplier",
+    "memory_kill_multiplier",
     "max_swapped_out_pages",
     "min_free_disk_gb",
     "host_breach_halt_s",
@@ -293,6 +296,20 @@ def load_job(path: Path) -> Job:
             "limits.min_spare_memory_mb is retired; admission uses memory reservation"
         )
     _keys(limits, _LIMITS, "limits")
+    memory_warn = limits.get("memory_warn_multiplier", 1.0)
+    memory_kill = limits.get("memory_kill_multiplier", 1.0)
+    for name, value in (
+        ("memory_warn_multiplier", memory_warn),
+        ("memory_kill_multiplier", memory_kill),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise JobFileError(f"limits.{name} must be a finite positive number")
+        if not math.isfinite(value):
+            raise JobFileError(f"limits.{name} must be finite")
+    if memory_warn > memory_kill:
+        raise JobFileError(
+            "limits.memory_warn_multiplier must be less than or equal to memory_kill_multiplier"
+        )
     return Job(
         path=path.resolve(),
         name=name,

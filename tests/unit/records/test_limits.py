@@ -16,6 +16,22 @@ def test_limits_defaults_include_repetition_derived_cap():
     assert limits.verifier_timeout_multiplier == 1.5
     assert limits.memory_reserve_mb == 4096
     assert limits.host_reserve_mb == 12288
+    assert limits.memory_warn_multiplier == 1.0
+    assert limits.memory_kill_multiplier == 1.0
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"memory_warn_multiplier": 0}, "positive"),
+        ({"memory_kill_multiplier": float("inf")}, "finite"),
+        ({"memory_warn_multiplier": True}, "positive"),
+        ({"memory_warn_multiplier": 2, "memory_kill_multiplier": 1}, "less than or equal"),
+    ],
+)
+def test_memory_multipliers_must_be_finite_positive_and_ordered(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        _limits(**overrides)
 
 
 def test_limits_rejects_job_override_of_machine_value():
@@ -74,6 +90,8 @@ def test_limits_row_with_retired_zero_billed_window_loads_with_new_default():
             "memory_reserve_mb",
             "halt_after_consecutive_failed_requests",
             "host_reserve_mb",
+            "memory_warn_multiplier",
+            "memory_kill_multiplier",
         }
     ],
 )

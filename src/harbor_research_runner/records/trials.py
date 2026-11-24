@@ -54,6 +54,10 @@ class TrialRow:
     prompting: str = "direct"
     instruction_sha256: str | None = None
     type: str = "trial"
+    memory_warn_limit_mb: int | None = None
+    memory_kill_limit_mb: int | None = None
+    memory_warn_multiplier: float = 1.0
+    memory_kill_multiplier: float = 1.0
 
     def to_row(self) -> dict:
         return {item.name: getattr(self, item.name) for item in fields(self)}
@@ -65,6 +69,20 @@ class TrialRow:
     def from_row(cls, row: dict) -> "TrialRow":
         if "instruction_sha256" not in row:
             row = {**row, "instruction_sha256": None}
+        threshold_fields = {
+            "memory_warn_limit_mb",
+            "memory_kill_limit_mb",
+            "memory_warn_multiplier",
+            "memory_kill_multiplier",
+        }
+        if threshold_fields.isdisjoint(row):
+            row = {
+                **row,
+                "memory_warn_limit_mb": row.get("memory_limit_mb"),
+                "memory_kill_limit_mb": row.get("memory_limit_mb"),
+                "memory_warn_multiplier": 1.0,
+                "memory_kill_multiplier": 1.0,
+            }
         if set(row) != {item.name for item in fields(cls)}:
             raise ValueError("trial fields do not match")
         return cls(**row)

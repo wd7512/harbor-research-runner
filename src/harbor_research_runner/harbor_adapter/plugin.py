@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
+from harbor.environments.docker.docker import DockerEnvironment
 from harbor.job import Job
 from harbor.models.job.plugin import BaseJobPlugin
 from harbor.models.job.result import JobResult
@@ -19,7 +20,7 @@ from harbor.trial.hooks import TrialEvent, TrialHookEvent
 
 from harbor_research_runner.docker_host.cleanup import docker_memory_mb
 from harbor_research_runner.harbor_adapter.job_folder import HarborFolderError, task_timeouts
-from harbor_research_runner.records.limits import Limits
+from harbor_research_runner.records.limits import Limits, effective_memory_mb
 from harbor_research_runner.records.proxy_control import (
     CloseMessage,
     OpenMessage,
@@ -35,11 +36,28 @@ _INITIAL_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 60.0
 
 
+class RunDockerEnvironment(DockerEnvironment):
+    def __init__(self, *, task_env_config, memory_multiplier: float = 1.0, **kwargs):
+        if (
+            isinstance(memory_multiplier, bool)
+            or not isinstance(memory_multiplier, (int, float))
+            or not math.isfinite(memory_multiplier)
+            or memory_multiplier <= 0
+        ):
+            raise ValueError("memory_multiplier must be a finite positive number")
+        task_env_config = task_env_config.model_copy(deep=True)
+        declared_memory = task_env_config.memory_mb
+        if declared_memory is not None:
+            kwargs["override_memory_mb"] = effective_memory_mb(declared_memory, memory_multiplier)
+        super().__init__(task_env_config=task_env_config, **kwargs)
+
+
 class MemoryReservationGate:
     def __init__(
         self,
         *,
         memory_reserve_mb: int,
+        memory_multiplier: float = 1.0,
         launch_min_interval_s: float = 0.0,
         docker_memory_reader: Callable[[], int] = docker_memory_mb,
         sleep: Callable[[float], Any] = asyncio.sleep,
@@ -64,6 +82,7 @@ class MemoryReservationGate:
         if initial_backoff_s <= 0 or max_backoff_s < initial_backoff_s:
             raise ValueError("backoff bounds must satisfy 0 < initial <= max")
         self.memory_reserve_mb = memory_reserve_mb
+        self.memory_multiplier = memory_multiplier
         self.launch_min_interval_s = float(launch_min_interval_s)
         self._docker_memory_reader = docker_memory_reader
         self._sleep = sleep
@@ -194,6 +213,7 @@ class RunPlugin(BaseJobPlugin):
         self._gate = MemoryReservationGate(
             memory_reserve_mb=limits.memory_reserve_mb,
             launch_min_interval_s=limits.launch_min_interval_s,
+            memory_multiplier=limits.memory_kill_multiplier,
         )
         self._job: Job | None = None
         deadline = None
@@ -262,7 +282,9 @@ class RunPlugin(BaseJobPlugin):
     async def _on_trial_start(self, event: TrialHookEvent) -> None:
         memory_mb = self._task_memory_mb(event.config)
         await self._gate.wait_for_headroom(
-            trial=event.trial_name, task=event.task_name, memory_mb=memory_mb
+            trial=event.trial_name,
+            task=event.task_name,
+            memory_mb=effective_memory_mb(memory_mb, self._gate.memory_multiplier) or 0,
         )
 
     async def _on_agent_start(self, event: TrialHookEvent) -> None:

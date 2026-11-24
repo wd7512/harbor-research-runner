@@ -30,7 +30,7 @@ from harbor_research_runner.harness.manifest import (
 from harbor_research_runner.harness.request_path import request_path
 from harbor_research_runner.job_config.job_file import Job
 from harbor_research_runner.job_config.model_cards import ModelCard
-from harbor_research_runner.records.limits import Limits, host_breach
+from harbor_research_runner.records.limits import Limits, effective_memory_mb, host_breach
 from harbor_research_runner.records.machine_check import MachineCheck
 from harbor_research_runner.records.resource_stats import Sample
 from harbor_research_runner.run.canary import canary_memory_mb
@@ -332,8 +332,12 @@ def run_checks(
             if value is None:
                 missing.append(name)
             else:
-                memory_values.append(value)
-        memory_values.append(canary_memory_mb())
+                effective = effective_memory_mb(value, limits.memory_kill_multiplier)
+                assert effective is not None
+                memory_values.append(effective)
+        canary_memory = effective_memory_mb(canary_memory_mb(), limits.memory_kill_multiplier)
+        assert canary_memory is not None
+        memory_values.append(canary_memory)
         max_task_memory = max(memory_values) if not missing else None
         concurrency = job.concurrency
         reserve = limits.memory_reserve_mb

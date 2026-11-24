@@ -156,12 +156,14 @@ def _run_machine_check_in_directory(
     oracle_name = "harbor-job"
     oracle_config_name = "oracle-job-config.yaml"
     profile = deps.checks.host_profile()
+    memory_kill_multiplier = job.limit_overrides.get("memory_kill_multiplier", 1.0)
     oracle_config = oracle_job_config(job, task_names, "oracle", oracle_name)
     apply_host_policy(
         oracle_config,
         profile,
         job.tasks.images,
         check_dir / "compose-host-network.yaml",
+        memory_kill_multiplier,
     )
     write_job_config(check_dir / oracle_config_name, oracle_config)
     command = machine_check_command(check_dir, oracle_name, oracle_config_name)
@@ -198,6 +200,7 @@ def _run_machine_check_in_directory(
             profile,
             job.tasks.images,
             check_dir / "compose-host-network.yaml",
+            memory_kill_multiplier,
         )
         write_job_config(check_dir / nop_config_name, config)
         command = machine_check_command(check_dir, nop_name, nop_config_name)

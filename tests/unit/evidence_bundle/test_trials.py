@@ -23,6 +23,10 @@ def _expected(folder: Path) -> list[dict]:
         row["oom_source"] = None
         row["peak_memory_mb"] = None
         row["memory_limit_mb"] = task_memory.get(row["task"])
+        row["memory_warn_limit_mb"] = row["memory_limit_mb"]
+        row["memory_kill_limit_mb"] = row["memory_limit_mb"]
+        row["memory_warn_multiplier"] = 1.0
+        row["memory_kill_multiplier"] = 1.0
     return rows
 
 

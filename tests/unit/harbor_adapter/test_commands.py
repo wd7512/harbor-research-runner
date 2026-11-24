@@ -170,6 +170,33 @@ def test_kernel_memory_policy_leaves_harbor_defaults_untouched():
     assert environment.memory_enforcement_policy == ResourceMode.AUTO
 
 
+def test_kernel_memory_policy_installs_scaled_docker_environment_only_when_requested():
+    config = apply_host_policy(
+        {"job_name": "harbor-job"},
+        {"memory_cap": "kernel", "container_network": "bridge"},
+        "prebuilt",
+        Path("unused.yaml"),
+        1.5,
+    )
+
+    environment = JobConfig.model_validate(config).environment
+    assert environment.import_path == (
+        "harbor_research_runner.harbor_adapter.plugin:RunDockerEnvironment"
+    )
+    assert environment.kwargs == {"memory_multiplier": 1.5}
+
+
+def test_kernel_memory_policy_default_multiplier_keeps_environment_unchanged():
+    config = apply_host_policy(
+        {"job_name": "harbor-job"},
+        {"memory_cap": "kernel", "container_network": "bridge"},
+        "prebuilt",
+        Path("unused.yaml"),
+    )
+
+    assert "environment" not in config
+
+
 def test_apply_environment_policy_round_trips_native_build_and_host_network(tmp_path: Path):
     job = make_job(TaskSource("dataset", "org/dataset", None, None, None, (), ()))
     configs = {

@@ -46,6 +46,21 @@ def test_rejects_unknown_job_keys(tmp_path: Path, text: str) -> None:
         load_job(write_job(tmp_path, text))
 
 
+@pytest.mark.parametrize(
+    ("limits", "message"),
+    [
+        ("memory_warn_multiplier: true", "finite positive"),
+        ("memory_kill_multiplier: .nan", "finite"),
+        ("memory_warn_multiplier: 2\n  memory_kill_multiplier: 1", "less than or equal"),
+    ],
+)
+def test_memory_multipliers_are_validated_in_job_file(tmp_path: Path, limits: str, message: str):
+    text = valid_job().replace("limits: {}", f"limits:\n  {limits}")
+
+    with pytest.raises(JobFileError, match=message):
+        load_job(write_job(tmp_path, text))
+
+
 def test_rejects_obsolete_swap_limit_with_replacement_name(tmp_path: Path) -> None:
     text = valid_job().replace("limits: {}", "limits: {max_swap_used_mb: 10}")
 

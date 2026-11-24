@@ -1,4 +1,5 @@
 import json
+import math
 from dataclasses import dataclass, field, fields
 from typing import Any, cast
 
@@ -8,6 +9,8 @@ _ADDED_FIELDS = {
     "memory_reserve_mb": 4096,
     "halt_after_consecutive_failed_requests": 10,
     "host_reserve_mb": 12288,
+    "memory_warn_multiplier": 1.0,
+    "memory_kill_multiplier": 1.0,
 }
 
 
@@ -30,6 +33,22 @@ class Limits:
     max_set_asides_per_slot: int = field(kw_only=True)
     verifier_timeout_multiplier: float = field(kw_only=True)
     inactivity_margin_s: float = 600
+    memory_warn_multiplier: float = 1.0
+    memory_kill_multiplier: float = 1.0
+
+    def __post_init__(self) -> None:
+        for name in ("memory_warn_multiplier", "memory_kill_multiplier"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{name} must be a finite positive number")
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if self.memory_warn_multiplier > self.memory_kill_multiplier:
+            raise ValueError(
+                "memory_warn_multiplier must be less than or equal to memory_kill_multiplier"
+            )
 
     @classmethod
     def from_dict(
@@ -58,7 +77,7 @@ class Limits:
         row = {**_ADDED_FIELDS, **row}
         if set(row) != names:
             raise ValueError("limits fields do not match")
-        return cls(**row)
+        return cls(**cast(Any, row))
 
     def to_row(self) -> dict:
         return {item.name: getattr(self, item.name) for item in fields(self)}
@@ -73,3 +92,9 @@ def host_breach(sample: dict, limits: Limits) -> bool:
         or sample["disk_free_gb"] < limits.min_free_disk_gb
         or not sample["docker_ok"]
     )
+
+
+def effective_memory_mb(memory_mb: int | None, multiplier: float) -> int | None:
+    if memory_mb is None:
+        return None
+    return math.ceil(memory_mb * multiplier)
