@@ -66,6 +66,15 @@ HRR_COMMAND=check-machine HRR_STUDY_DIR=/path/to/study HRR_REF=v0.1.1 \
 Inspect `checks/machine-check.json` and compare its `included` tasks as described in
 [How to check a new host](how-to-check-a-new-host.md) before starting the study.
 
+A saved check can be reused for later runs on the same host, including runs of other studies,
+without running `check-machine` again. `hrr run` re-validates the check at launch and refuses to
+start (as a failed launch check) when the task source, the Harbor version, the recorded host
+profile, or a job concurrency above the checked value no longer matches; for `path` task sources
+it also refuses when any task's content has drifted. A different node or Docker engine changes the
+host profile, so an out-of-date check is caught rather than used silently. Reuse is therefore safe
+when the run is pinned to the same node and engine and the Harbor version is unchanged; rerun
+`check-machine` whenever any of these change.
+
 ## 3. Job file settings for the host
 
 - `proxy.container_host`: the address from the probe's `reach_host_*` lines.
@@ -100,6 +109,10 @@ Do not loop on exit `2` inside one allocation: the stop time has passed, and hrr
 
 Set `HRR_REGISTRY_AUTH` to a mode `600` file with one `REGISTRY USERNAME TOKEN` line per
 registry (for example, `docker.io USERNAME TOKEN`) to log in before Harbor pulls task images.
+Each line must hold exactly three whitespace-separated fields: the scripts refuse to start with
+`registry credentials lines must have exactly three fields` when a line is missing a field, is a
+bare token, or carries trailing text. Point `HRR_REGISTRY_AUTH` at a file in this format, not at a
+Docker `config.json` or a single-token file.
 Set `HRR_IMAGE_CACHE` to a persistent directory to load cached `.tar` images at job start and
 save newly pulled images before the engine stops. A single full pull fills the cache for later
 jobs; point subsequent allocations at the same directory to reuse it.
