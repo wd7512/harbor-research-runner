@@ -919,7 +919,11 @@ def test_run_job_records_the_unset_key_variable_launch_check(tmp_path: Path) -> 
 
 
 def _finished_session(
-    tmp_path: Path, *, repetitions: int = 1, finished: bool = True
+    tmp_path: Path,
+    *,
+    repetitions: int = 1,
+    finished: bool = True,
+    variants: dict[str, str] | None = None,
 ) -> tuple[Path, Path, MachineCheck]:
     job_path = tmp_path / "job.yaml"
     job_path.write_text("job", encoding="utf-8")
@@ -936,7 +940,15 @@ def _finished_session(
         task_order="as_listed",
         tasks=TaskSource("dataset", "bench/tasks", None, None, None, (), ()),
         machine_check=machine_path,
-        arms=(Arm("arm-a", "fake", "a" * 40),),
+        arms=(
+            Arm(
+                "arm-a",
+                "fake",
+                "a" * 40,
+                instruction_variants=variants,
+                instruction_variants_sha256="b" * 64 if variants else None,
+            ),
+        ),
         proxy_host="127.0.0.1",
         proxy_port=8766,
         container_host="host.docker.internal",
@@ -1871,3 +1883,28 @@ def test_resume_refuses_a_run_that_predates_host_profile_recording(tmp_path: Pat
     log = (run_dir / "runner.log").read_text(encoding="utf-8")
     assert "predates host profile recording" in log
     assert "resume failed" not in log
+
+
+def test_run_metadata_omits_instruction_variant_text_but_keeps_its_hash(tmp_path: Path) -> None:
+    replacement = "replacement instruction text that must not be recorded"
+    run_dir, _manifest, _check = _finished_session(tmp_path, variants={"c" * 64: replacement})
+
+    raw = (run_dir / "run-metadata.json").read_text(encoding="utf-8")
+    row = json.loads(raw)
+
+    assert replacement not in raw
+    assert row["job"]["arms"][0]["instruction_variants"] is None
+    assert row["job"]["arms"][0]["instruction_variants_sha256"] == "b" * 64
+
+
+def test_run_session_loads_from_metadata_without_instruction_variant_text(
+    tmp_path: Path,
+) -> None:
+    run_dir, _manifest, _check = _finished_session(
+        tmp_path, variants={"c" * 64: "replacement instruction text"}
+    )
+
+    session = RunSession.load(run_dir, {})
+
+    assert session.job.arms[0].instruction_variants is None
+    assert session.job.arms[0].instruction_variants_sha256 == "b" * 64

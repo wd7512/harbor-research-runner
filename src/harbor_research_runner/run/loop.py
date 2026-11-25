@@ -861,6 +861,8 @@ def _job_to_row(job: Job) -> dict:
     row = asdict(job)
     row["path"] = str(job.path)
     row["machine_check"] = str(job.machine_check)
+    for arm in row["arms"]:
+        arm["instruction_variants"] = None
     return row
 
 
