@@ -115,7 +115,26 @@ bare token, or carries trailing text. Point `HRR_REGISTRY_AUTH` at a file in thi
 Docker `config.json` or a single-token file.
 Set `HRR_IMAGE_CACHE` to a persistent directory to load cached `.tar` images at job start and
 save newly pulled images before the engine stops. A single full pull fills the cache for later
-jobs; point subsequent allocations at the same directory to reuse it.
+jobs; point subsequent allocations at the same directory to reuse it. The cache must also hold the
+harness image(s) named in `harness-manifest.toml`, not only the task images: with
+`tasks.images: prebuilt` hrr loads the harness image from the cache rather than building or pulling
+it, and the `arms_pinned` launch check fails with `local image '<ref>' is missing` when it is
+absent. Save the harness image tar (from `hrr build-harness`) into the cache directory alongside
+the task images.
+
+## Replay arms and the canary
+
+hrr runs a one-trial canary per arm before the scored run and refuses to start unless each arm's
+canary trial is valid and scores reward `1.0`. The canary task is `say-hello`.
+
+An arm that sets `instruction_variants` — for example a plan-replay arm whose saved plan replaces
+each task's instruction — applies that map to the canary too. The map must therefore also contain
+an entry for the `say-hello` instruction, or the agent raises `instruction <hash> has no variant`
+and the canary trial is invalid. Map the canary instruction's `sha256` to the canary instruction
+text itself (an identity passthrough); the entry is never used by a scored task.
+
+A canary trial can also be marked invalid for transient reasons, such as `upstream_slow` (the proxy
+judged the model-gateway response too slow). This is not a configuration error; resubmit the run.
 
 ## Known working configuration
 
