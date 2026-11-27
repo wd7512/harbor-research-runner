@@ -66,6 +66,15 @@ HRR_COMMAND=check-machine HRR_STUDY_DIR=/path/to/study HRR_REF=v0.1.1 \
 Inspect `checks/machine-check.json` and compare its `included` tasks as described in
 [How to check a new host](how-to-check-a-new-host.md) before starting the study.
 
+A saved check can be reused for later runs on the same host, including runs of other studies,
+without running `check-machine` again. `hrr run` re-validates the check at launch and refuses to
+start (as a failed launch check) when the task source, the Harbor version, the recorded host
+profile, or a job concurrency above the checked value no longer matches; for `path` task sources
+it also refuses when any task's content has drifted. A different node or Docker engine changes the
+host profile, so an out-of-date check is caught rather than used silently. Reuse is therefore safe
+when the run is pinned to the same node and engine and the Harbor version is unchanged; rerun
+`check-machine` whenever any of these change.
+
 ## 3. Job file settings for the host
 
 - `proxy.container_host`: the address from the probe's `reach_host_*` lines.
@@ -100,9 +109,32 @@ Do not loop on exit `2` inside one allocation: the stop time has passed, and hrr
 
 Set `HRR_REGISTRY_AUTH` to a mode `600` file with one `REGISTRY USERNAME TOKEN` line per
 registry (for example, `docker.io USERNAME TOKEN`) to log in before Harbor pulls task images.
+Each line must hold exactly three whitespace-separated fields: the scripts refuse to start with
+`registry credentials lines must have exactly three fields` when a line is missing a field, is a
+bare token, or carries trailing text. Point `HRR_REGISTRY_AUTH` at a file in this format, not at a
+Docker `config.json` or a single-token file.
 Set `HRR_IMAGE_CACHE` to a persistent directory to load cached `.tar` images at job start and
 save newly pulled images before the engine stops. A single full pull fills the cache for later
-jobs; point subsequent allocations at the same directory to reuse it.
+jobs; point subsequent allocations at the same directory to reuse it. The cache must also hold the
+harness image(s) named in `harness-manifest.toml`, not only the task images: with
+`tasks.images: prebuilt` hrr loads the harness image from the cache rather than building or pulling
+it, and the `arms_pinned` launch check fails with `local image '<ref>' is missing` when it is
+absent. Save the harness image tar (from `hrr build-harness`) into the cache directory alongside
+the task images.
+
+## Replay arms and the canary
+
+hrr runs a one-trial canary per arm before the scored run and refuses to start unless each arm's
+canary trial is valid and scores reward `1.0`. The canary task is `say-hello`.
+
+An arm that sets `instruction_variants` — for example a plan-replay arm whose saved plan replaces
+each task's instruction — applies that map to the canary too. The map must therefore also contain
+an entry for the `say-hello` instruction, or the agent raises `instruction <hash> has no variant`
+and the canary trial is invalid. Map the canary instruction's `sha256` to the canary instruction
+text itself (an identity passthrough); the entry is never used by a scored task.
+
+A canary trial can also be marked invalid for transient reasons, such as `upstream_slow` (the proxy
+judged the model-gateway response too slow). This is not a configuration error; resubmit the run.
 
 ## Known working configuration
 

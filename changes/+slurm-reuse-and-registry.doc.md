@@ -1,0 +1,1 @@
+Expand the Slurm how-to with launch pitfalls found in practice: reusing a machine check across runs on the same host (and how `hrr run` re-validates it), the exact three-field `HRR_REGISTRY_AUTH` format, keeping the harness image in `HRR_IMAGE_CACHE` for `tasks.images: prebuilt`, and that `instruction_variants` arms must cover the `say-hello` canary instruction.
